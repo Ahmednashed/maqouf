@@ -1,0 +1,73 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: #ffffff;
+  --foreground: #111827;
+  --brand: #ef4444;
+  --line: #e5e7eb;
+  --mist: #f8fafc;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  background:
+    radial-gradient(circle at top, rgba(239, 68, 68, 0.1), transparent 24%),
+    linear-gradient(180deg, #ffffff 0%, #fffdfd 100%);
+  color: var(--foreground);
+  font-family: "IBM Plex Sans Arabic", "Segoe UI", Tahoma, Arial, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+.section-shell {
+  @apply mx-auto w-full max-w-7xl px-6 sm:px-8 lg:px-10;
+}
+
+.glass-card {
+  @apply rounded-3xl border border-slate-200/80 bg-white/90 shadow-soft backdrop-blur;
+}
+
+.section-label {
+  @apply inline-flex items-center rounded-full border border-brand/15 bg-brand/5 px-4 py-2 text-sm font-semibold text-brand;
+}
+
+.feature-card {
+  @apply glass-card p-6 transition-transform duration-300 hover:-translate-y-1;
+}
+
+.mockup-grid {
+  background-image: linear-gradient(rgba(148, 163, 184, 0.14) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(148, 163, 184, 0.14) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+.fade-in {
+  animation: fadeInUp 700ms ease-out both;
+}
+
+.fade-in-delay {
+  animation: fadeInUp 700ms 120ms ease-out both;
+}
+
+.fade-in-delay-2 {
+  animation: fadeInUp 700ms 240ms ease-out both;
+}
+
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
