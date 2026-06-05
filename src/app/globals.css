@@ -1,0 +1,75 @@
+/* ── Google Fonts — must be first in file ─────────────────── */
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@300;400;500;600;700&family=Inter:wght@300;400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── CSS Variables ────────────────────────────────────────── */
+:root {
+  --font-inter:       "Inter", sans-serif;
+  --font-ibm-arabic:  "IBM Plex Sans Arabic", sans-serif;
+}
+
+/* ── RTL/LTR base ─────────────────────────────────────────── */
+html[lang="ar"] {
+  font-family: var(--font-ibm-arabic);
+  direction: rtl;
+}
+html[lang="en"] {
+  font-family: var(--font-inter);
+  direction: ltr;
+}
+
+/* ── Smooth scroll ────────────────────────────────────────── */
+html { scroll-behavior: smooth; }
+
+/* ── Scrollbar ────────────────────────────────────────────── */
+::-webkit-scrollbar        { width: 6px; height: 6px; }
+::-webkit-scrollbar-track  { background: transparent; }
+::-webkit-scrollbar-thumb  { background: #CBD5E1; border-radius: 999px; }
+::-webkit-scrollbar-thumb:hover { background: #94A3B8; }
+
+/* ── RTL flip utility ─────────────────────────────────────── */
+html[dir="rtl"] .rtl-flip { transform: scaleX(-1); }
+
+/* ── Numeric font ─────────────────────────────────────────── */
+.num { font-variant-numeric: tabular-nums; font-feature-settings: "tnum"; }
+
+/* ── Fade-in page transition ──────────────────────────────── */
+.page-enter { animation: fadeIn 0.2s ease-out; }
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ── Focus ring ───────────────────────────────────────────── */
+*:focus-visible {
+  outline: 2px solid theme('colors.brand.500');
+  outline-offset: 2px;
+}
+
+/* ── Safe-area utilities (PWA / iPhone notch / Dynamic Island) ── */
+/*
+ * Use these classes on elements that must not be obscured by the device
+ * chrome when running as a standalone PWA with viewportFit=cover.
+ *
+ *   .pb-safe  — sticky bars at the bottom of the screen
+ *   .pt-safe  — headers / banners at the top of the screen
+ *
+ * The env() fallback (0px) means they're no-ops on non-notch devices.
+ */
+.pb-safe { padding-bottom: max(12px, env(safe-area-inset-bottom, 0px)); }
+.pt-safe { padding-top:    env(safe-area-inset-top, 0px); }
+.ps-safe { padding-inline-start: env(safe-area-inset-left, 0px); }
+.pe-safe { padding-inline-end:   env(safe-area-inset-right, 0px); }
+
+/* Ensure the offline banner clears the notch when installed as PWA */
+@media (display-mode: standalone) {
+  /* Add top padding equal to the status-bar height so the topbar
+     sits below the status bar on devices with a notch. */
+  .pwa-topbar-offset {
+    padding-top: env(safe-area-inset-top, 0px);
+  }
+}
