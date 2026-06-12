@@ -313,6 +313,12 @@ export const translations = {
     "users.inviteAdded":          "تمت إضافة العضو مباشرةً إلى الفريق",
     "users.alreadyMember":        "هذا الشخص موجود بالفعل في الفريق",
     "users.errorInvite":          "فشل في إرسال الدعوة",
+    // Soft-delete / inactive users
+    "users.inactive":             "مستخدم غير نشط",
+    "users.orphaned":             "محذوف",
+    "users.filterStatusAll":      "جميع المستخدمين",
+    "users.filterStatusActive":   "النشطون",
+    "users.filterStatusInactive": "غير النشطين",
     // Visits module
     "visits.pageTitle":             "الزيارات",
     "visits.pageSubtitle":          "متابعة جولات الميدان",
@@ -933,6 +939,12 @@ export const translations = {
     "users.inviteAdded":          "Member added directly to your team",
     "users.alreadyMember":        "This person is already a member of your company",
     "users.errorInvite":          "Failed to send invitation",
+    // Soft-delete / inactive users
+    "users.inactive":             "Inactive User",
+    "users.orphaned":             "Deleted",
+    "users.filterStatusAll":      "All Users",
+    "users.filterStatusActive":   "Active",
+    "users.filterStatusInactive": "Inactive",
     // Visits module
     "visits.pageTitle":             "Visits",
     "visits.pageSubtitle":          "Track field execution",

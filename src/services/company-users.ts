@@ -5,13 +5,50 @@ import { getMyCompanyId } from "@/lib/supabase/helpers";
 // ─── Extended type ────────────────────────────────────────────────────────────
 
 /**
- * A company_users row with the joined public.users profile always present.
- * Used by the schedule module (needs full_name / avatar_url only) and
- * the users management page (needs email too).
+ * A company_users row with the joined public.users profile.
+ *
+ * `user` is typed as nullable because Supabase returns null when the
+ * referenced auth user has been hard-deleted from auth.users while the
+ * company_users row still exists (orphaned record scenario).
+ *
+ * ALWAYS use optional-chaining on `user`:
+ *   member.user?.full_name ?? fallback
  */
 export type CompanyUserWithProfile = Omit<CompanyUser, "user"> & {
-  user: Pick<User, "id" | "email" | "full_name" | "avatar_url" | "phone">;
+  user: Pick<User, "id" | "email" | "full_name" | "avatar_url" | "phone"> | null;
 };
+
+// ─── Safe display helpers ─────────────────────────────────────────────────────
+
+/**
+ * Return the user's full name or a localised fallback when the user is null
+ * (orphaned record — the auth user was deleted).
+ *
+ * @param user     The nullable user profile from CompanyUserWithProfile.
+ * @param fallback Override the default "—" fallback.
+ */
+export function safeUserName(
+  user: Pick<User, "full_name"> | null | undefined,
+  fallback = "—",
+): string {
+  return user?.full_name?.trim() || fallback;
+}
+
+/**
+ * Return the user's 1-2 letter initials or "?" when the user is null.
+ */
+export function safeUserInitials(
+  user: Pick<User, "full_name"> | null | undefined,
+): string {
+  return (
+    (user?.full_name ?? "")
+      .split(" ")
+      .map((w) => w[0])
+      .slice(0, 2)
+      .join("")
+      .toUpperCase() || "?"
+  );
+}
 
 // ─── Payload types ────────────────────────────────────────────────────────────
 

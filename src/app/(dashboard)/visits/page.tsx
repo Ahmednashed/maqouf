@@ -133,8 +133,9 @@ function VisitCard({
   const branchName = locale === "ar" ? visit.place.branch_ar : visit.place.branch_en;
   const chainName  = locale === "ar" ? visit.place.chain?.name_ar : visit.place.chain?.name_en;
   const chainColor = visit.place.chain?.color ?? "#6366F1";
-  const merchName  = visit.merch.user.full_name;
-  const initials   = merchantInitials(visit.merch.user.full_name);
+  // merch.user can be null if the auth user was deleted — always use safe access
+  const merchName  = visit.merch.user?.full_name ?? t("users.inactive");
+  const initials   = merchantInitials(visit.merch.user?.full_name ?? "");
   const merchColor = visit.merch.color ?? "#6366F1";
 
   const statusKey = `visits.status.${visit.status}` as const;
@@ -363,7 +364,7 @@ export default function VisitsPage() {
             <option value="">{t("visits.allMerchs")}</option>
             {members.map((m) => (
               <option key={m.id} value={m.id}>
-                {m.user.full_name}
+                {m.user?.full_name ?? t("users.inactive")}
               </option>
             ))}
           </select>

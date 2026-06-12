@@ -128,7 +128,7 @@ export function VisitCreateModal({ onClose }: VisitCreateModalProps) {
                 <option value="">{t("visits.assignMerchPlaceholder")}</option>
                 {activeMembers.map((m) => (
                   <option key={m.id} value={m.id}>
-                    {m.user.full_name}
+                    {m.user?.full_name ?? "—"}
                   </option>
                 ))}
               </select>

@@ -17,6 +17,7 @@ import { cn } from "@/lib/utils/cn";
 import { useTranslation, type TranslationFn } from "@/hooks/use-translation";
 import { useUsers } from "@/hooks/use-users";
 import type { CompanyUserWithProfile } from "@/services/company-users";
+import { safeUserName, safeUserInitials } from "@/services/company-users";
 import type { UserRole } from "@/types";
 import { UserModal }   from "./_components/UserModal";
 import { StatusModal } from "./_components/StatusModal";
@@ -141,12 +142,7 @@ interface UserRowProps {
 }
 
 function UserRow({ user, t, onEdit, onToggle }: UserRowProps) {
-  const initials = user.user.full_name
-    ?.split(" ")
-    .map((n) => n[0])
-    .slice(0, 2)
-    .join("")
-    .toUpperCase() ?? "?";
+  const initials = safeUserInitials(user.user);
 
   const joinedDate = new Date(user.created_at).toLocaleDateString(undefined, {
     year: "numeric", month: "short", day: "numeric",
@@ -165,7 +161,12 @@ function UserRow({ user, t, onEdit, onToggle }: UserRowProps) {
           </div>
           <div>
             <p className="font-semibold text-ink-800 text-[13px] leading-tight">
-              {user.user.full_name}
+              {safeUserName(user.user, t("users.inactive"))}
+              {!user.user && (
+                <span className="ms-1.5 text-[10.5px] font-normal text-rose-400 bg-rose-50 px-1.5 py-0.5 rounded-full border border-rose-200">
+                  {t("users.orphaned")}
+                </span>
+              )}
             </p>
             {user.emp_id && (
               <p className="text-[11px] text-ink-400 leading-tight font-mono">
@@ -179,7 +180,7 @@ function UserRow({ user, t, onEdit, onToggle }: UserRowProps) {
       {/* Email */}
       <td className="px-4 py-3.5">
         <span className="text-[13px] text-ink-600" dir="ltr">
-          {user.user.email}
+          {user.user?.email ?? "—"}
         </span>
       </td>
 
@@ -252,8 +253,9 @@ export default function UsersPage() {
   const [statusTarget,  setStatusTarget]  = useState<CompanyUserWithProfile | null>(null);
 
   // ── Filters ─────────────────────────────────────────────────────────────────
-  const [search,     setSearch]     = useState("");
-  const [roleFilter, setRoleFilter] = useState<UserRole | "all">("all");
+  const [search,       setSearch]       = useState("");
+  const [roleFilter,   setRoleFilter]   = useState<UserRole | "all">("all");
+  const [statusFilter, setStatusFilter] = useState<"all" | "active" | "inactive">("all");
 
   const ROLES: Array<{ value: UserRole | "all"; label: string }> = [
     { value: "all",          label: t("users.allRoles") },
@@ -262,18 +264,25 @@ export default function UsersPage() {
     { value: "merchandiser", label: t("role.merchandiser") },
   ];
 
+  const STATUS_OPTS: Array<{ value: "all" | "active" | "inactive"; label: string }> = [
+    { value: "all",      label: t("users.filterStatusAll") },
+    { value: "active",   label: t("users.filterStatusActive") },
+    { value: "inactive", label: t("users.filterStatusInactive") },
+  ];
+
   // ── Filtered data ───────────────────────────────────────────────────────────
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return users.filter((u) => {
       const matchesRole   = roleFilter === "all" || u.role === roleFilter;
+      const matchesStatus = statusFilter === "all" || u.status === statusFilter;
       const matchesSearch = !q ||
-        u.user.full_name?.toLowerCase().includes(q) ||
-        u.user.email?.toLowerCase().includes(q) ||
+        u.user?.full_name?.toLowerCase().includes(q) ||
+        u.user?.email?.toLowerCase().includes(q) ||
         u.emp_id?.toLowerCase().includes(q);
-      return matchesRole && matchesSearch;
+      return matchesRole && matchesStatus && matchesSearch;
     });
-  }, [users, search, roleFilter]);
+  }, [users, search, roleFilter, statusFilter]);
 
   // ── Summary stats ───────────────────────────────────────────────────────────
   const totalCount  = users.length;
@@ -344,6 +353,20 @@ export default function UsersPage() {
               >
                 {ROLES.map((r) => (
                   <option key={r.value} value={r.value}>{r.label}</option>
+                ))}
+              </select>
+              <ChevronDown className="absolute end-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-ink-400 pointer-events-none" />
+            </div>
+
+            {/* Status filter */}
+            <div className="relative">
+              <select
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value as "all" | "active" | "inactive")}
+                className="h-9 ps-3 pe-8 rounded-lg border border-ink-200 bg-ink-50 text-[13px] text-ink-700 outline-none focus:border-brand-400 focus:ring-1 focus:ring-brand-100 transition-all appearance-none"
+              >
+                {STATUS_OPTS.map((s) => (
+                  <option key={s.value} value={s.value}>{s.label}</option>
                 ))}
               </select>
               <ChevronDown className="absolute end-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-ink-400 pointer-events-none" />

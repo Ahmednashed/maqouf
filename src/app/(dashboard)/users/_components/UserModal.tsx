@@ -322,14 +322,14 @@ export function UserModal({ user, onClose }: UserModalProps) {
                 className="w-10 h-10 rounded-xl flex items-center justify-center text-white font-bold text-[14px] shrink-0"
                 style={{ backgroundColor: editColor }}
               >
-                {user.user.full_name?.charAt(0)?.toUpperCase() ?? "?"}
+                {user.user?.full_name?.charAt(0)?.toUpperCase() ?? "?"}
               </div>
               <div>
                 <p className="text-[13.5px] font-semibold text-ink-800 leading-tight">
-                  {user.user.full_name}
+                  {user.user?.full_name ?? "—"}
                 </p>
                 <p className="text-[12px] text-ink-400 leading-tight" dir="ltr">
-                  {user.user.email}
+                  {user.user?.email ?? "—"}
                 </p>
               </div>
             </div>

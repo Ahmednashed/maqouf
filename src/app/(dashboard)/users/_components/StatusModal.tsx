@@ -5,6 +5,7 @@ import { cn } from "@/lib/utils/cn";
 import { useTranslation } from "@/hooks/use-translation";
 import { useToggleUserStatus } from "@/hooks/use-users";
 import type { CompanyUserWithProfile } from "@/services/company-users";
+import { safeUserName } from "@/services/company-users";
 
 // ─── Props ────────────────────────────────────────────────────────────────────
 interface StatusModalProps {
@@ -68,7 +69,7 @@ export function StatusModal({ user, onClose }: StatusModalProps) {
 
           {/* User name */}
           <p className="text-[13px] font-semibold text-ink-600 mb-2">
-            {user.user.full_name}
+            {safeUserName(user.user)}
           </p>
 
           {/* Message */}

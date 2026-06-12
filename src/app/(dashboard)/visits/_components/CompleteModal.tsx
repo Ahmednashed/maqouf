@@ -37,7 +37,8 @@ export function CompleteModal({
 
   const branchName =
     locale === "ar" ? visit.place.branch_ar : visit.place.branch_en;
-  const merchName  = visit.merch.user.full_name;
+  // merch.user can be null when the auth user was hard-deleted
+  const merchName  = visit.merch.user?.full_name ?? "—";
 
   async function handleConfirm() {
     await complete.mutateAsync({ id: visit.id, notes: extraNotes || undefined });

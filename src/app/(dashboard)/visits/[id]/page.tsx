@@ -741,7 +741,7 @@ export default function VisitDetailPage() {
     ? (locale === "ar" ? visit.place.chain?.name_ar : visit.place.chain?.name_en)
     : "";
   const chainColor = visit?.place.chain?.color ?? "#6366F1";
-  const merchName  = visit?.merch.user.full_name ?? "";
+  const merchName  = visit?.merch.user?.full_name ?? "";
   const merchColor = visit?.merch.color ?? "#6366F1";
   const isRtl      = locale === "ar";
   const BackIcon   = isRtl ? ArrowRight : ArrowLeft;
