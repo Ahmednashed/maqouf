@@ -12,6 +12,7 @@ import {
   ToggleRight,
   ToggleLeft,
   ChevronDown,
+  Mail,
 } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
 import { useTranslation, type TranslationFn } from "@/hooks/use-translation";
@@ -19,8 +20,9 @@ import { useUsers } from "@/hooks/use-users";
 import type { CompanyUserWithProfile } from "@/services/company-users";
 import { safeUserName, safeUserInitials } from "@/services/company-users";
 import type { UserRole } from "@/types";
-import { UserModal }   from "./_components/UserModal";
-import { StatusModal } from "./_components/StatusModal";
+import { UserModal }           from "./_components/UserModal";
+import { StatusModal }         from "./_components/StatusModal";
+import { InvitationLinkModal } from "./_components/InvitationLinkModal";
 
 // ─── Skeleton row ─────────────────────────────────────────────────────────────
 function SkeletonRow() {
@@ -71,7 +73,7 @@ function ErrorState({ message }: { message: string }) {
   );
 }
 
-// ─── Status badge ─────────────────────────────────────────────────────────────
+// ─── Status badge (Status column) ─────────────────────────────────────────────
 function StatusBadge({ status, t }: { status: "active" | "inactive"; t: TranslationFn }) {
   const active = status === "active";
   return (
@@ -91,9 +93,9 @@ function StatusBadge({ status, t }: { status: "active" | "inactive"; t: Translat
 
 // ─── Role badge ───────────────────────────────────────────────────────────────
 const ROLE_COLORS: Record<UserRole, string> = {
-  owner:       "bg-amber-50 text-amber-700",
-  admin:       "bg-blue-50 text-blue-700",
-  merchandiser:"bg-violet-50 text-violet-700",
+  owner:        "bg-amber-50 text-amber-700",
+  admin:        "bg-blue-50 text-blue-700",
+  merchandiser: "bg-violet-50 text-violet-700",
 };
 
 function RoleBadge({ role, t }: { role: UserRole; t: TranslationFn }) {
@@ -135,39 +137,61 @@ function TableHead({ t }: { t: TranslationFn }) {
 
 // ─── Table row ────────────────────────────────────────────────────────────────
 interface UserRowProps {
-  user:         CompanyUserWithProfile;
-  t:            TranslationFn;
-  onEdit:       () => void;
-  onToggle:     () => void;
+  user:     CompanyUserWithProfile;
+  t:        TranslationFn;
+  onEdit:   () => void;
+  onToggle: () => void;
+  onInvite: () => void;
 }
 
-function UserRow({ user, t, onEdit, onToggle }: UserRowProps) {
-  const initials = safeUserInitials(user.user);
+function UserRow({ user, t, onEdit, onToggle, onInvite }: UserRowProps) {
+  const initials  = safeUserInitials(user.user);
+  const isActive  = user.status === "active";
+  const isOrphan  = !user.user;                 // auth row was hard-deleted
+  const canInvite = !isActive && !isOrphan;     // inactive but has a real email
 
   const joinedDate = new Date(user.created_at).toLocaleDateString(undefined, {
     year: "numeric", month: "short", day: "numeric",
   });
 
   return (
-    <tr className="border-b border-ink-100 hover:bg-ink-50/50 transition-colors group">
+    <tr className={cn(
+      "border-b border-ink-100 hover:bg-ink-50/50 transition-colors group",
+      !isActive && "opacity-80"
+    )}>
       {/* Name + avatar */}
       <td className="px-4 py-3.5">
         <div className="flex items-center gap-3">
           <div
-            className="w-9 h-9 rounded-xl flex items-center justify-center text-white font-bold text-[12px] shrink-0"
+            className={cn(
+              "w-9 h-9 rounded-xl flex items-center justify-center text-white font-bold text-[12px] shrink-0",
+              !isActive && "grayscale-[30%]"
+            )}
             style={{ backgroundColor: user.color ?? "#6366F1" }}
           >
             {initials}
           </div>
           <div>
-            <p className="font-semibold text-ink-800 text-[13px] leading-tight">
-              {safeUserName(user.user, t("users.inactive"))}
-              {!user.user && (
-                <span className="ms-1.5 text-[10.5px] font-normal text-rose-400 bg-rose-50 px-1.5 py-0.5 rounded-full border border-rose-200">
+            {/* Feature 3: real name + inline inactive badge */}
+            <p className="font-semibold text-ink-800 text-[13px] leading-tight flex flex-wrap items-center gap-1">
+              {/* Always show real name when user record exists */}
+              {safeUserName(user.user, t("users.unknown"))}
+
+              {/* Inactive badge: shown when user exists but status = inactive */}
+              {!isActive && !isOrphan && (
+                <span className="text-[10px] font-semibold text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded-full border border-amber-200">
+                  {t("common.inactive")}
+                </span>
+              )}
+
+              {/* Orphaned badge: shown when the auth user was deleted */}
+              {isOrphan && (
+                <span className="text-[10.5px] font-normal text-rose-400 bg-rose-50 px-1.5 py-0.5 rounded-full border border-rose-200">
                   {t("users.orphaned")}
                 </span>
               )}
             </p>
+
             {user.emp_id && (
               <p className="text-[11px] text-ink-400 leading-tight font-mono">
                 {user.emp_id}
@@ -189,7 +213,7 @@ function UserRow({ user, t, onEdit, onToggle }: UserRowProps) {
         <RoleBadge role={user.role} t={t} />
       </td>
 
-      {/* Status */}
+      {/* Feature 4: Status column with green/gray badge */}
       <td className="px-4 py-3.5">
         <StatusBadge status={user.status} t={t} />
       </td>
@@ -212,9 +236,11 @@ function UserRow({ user, t, onEdit, onToggle }: UserRowProps) {
         <span className="text-[13px] text-ink-500">{joinedDate}</span>
       </td>
 
-      {/* Actions */}
+      {/* Feature 1 + Feature 5: actions — edit / toggle status / send invitation */}
       <td className="px-4 py-3.5">
         <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+
+          {/* Edit */}
           <button
             onClick={onEdit}
             title={t("common.edit")}
@@ -222,17 +248,30 @@ function UserRow({ user, t, onEdit, onToggle }: UserRowProps) {
           >
             <Pencil className="w-3.5 h-3.5" />
           </button>
+
+          {/* Feature 1: Send Invitation — only for inactive users who have a real profile */}
+          {canInvite && (
+            <button
+              onClick={onInvite}
+              title={t("users.sendInvitation")}
+              className="w-8 h-8 rounded-lg flex items-center justify-center text-ink-400 hover:text-brand-500 hover:bg-brand-50 transition-all"
+            >
+              <Mail className="w-3.5 h-3.5" />
+            </button>
+          )}
+
+          {/* Feature 5: Deactivate / Reactivate */}
           <button
             onClick={onToggle}
-            title={user.status === "active" ? t("users.deactivate") : t("users.activate")}
+            title={isActive ? t("users.deactivate") : t("users.activate")}
             className={cn(
               "w-8 h-8 rounded-lg flex items-center justify-center transition-all",
-              user.status === "active"
+              isActive
                 ? "text-ink-400 hover:text-rose-500 hover:bg-rose-50"
                 : "text-ink-400 hover:text-emerald-500 hover:bg-emerald-50"
             )}
           >
-            {user.status === "active"
+            {isActive
               ? <UserX    className="w-3.5 h-3.5" />
               : <UserCheck className="w-3.5 h-3.5" />}
           </button>
@@ -248,14 +287,16 @@ export default function UsersPage() {
   const { data: users = [], isLoading, isError, error } = useUsers();
 
   // ── Modal state ─────────────────────────────────────────────────────────────
-  const [showCreate,    setShowCreate]    = useState(false);
-  const [editTarget,    setEditTarget]    = useState<CompanyUserWithProfile | null>(null);
-  const [statusTarget,  setStatusTarget]  = useState<CompanyUserWithProfile | null>(null);
+  const [showCreate,      setShowCreate]      = useState(false);
+  const [editTarget,      setEditTarget]      = useState<CompanyUserWithProfile | null>(null);
+  const [statusTarget,    setStatusTarget]    = useState<CompanyUserWithProfile | null>(null);
+  const [invitationTarget, setInvitationTarget] = useState<CompanyUserWithProfile | null>(null);
 
   // ── Filters ─────────────────────────────────────────────────────────────────
   const [search,       setSearch]       = useState("");
   const [roleFilter,   setRoleFilter]   = useState<UserRole | "all">("all");
-  const [statusFilter, setStatusFilter] = useState<"all" | "active" | "inactive">("all");
+  // Feature 2: default filter is "active" (not "all")
+  const [statusFilter, setStatusFilter] = useState<"all" | "active" | "inactive">("active");
 
   const ROLES: Array<{ value: UserRole | "all"; label: string }> = [
     { value: "all",          label: t("users.allRoles") },
@@ -329,7 +370,7 @@ export default function UsersPage() {
       {/* ── Card ─────────────────────────────────────────────────────────── */}
       <div className="bg-white rounded-2xl border border-ink-100 shadow-soft overflow-hidden">
 
-        {/* Toolbar */}
+        {/* Toolbar — Feature 2: status filter + search + role filter */}
         {!isLoading && !isError && totalCount > 0 && (
           <div className="px-4 py-3.5 border-b border-ink-100 flex flex-wrap items-center gap-3">
             {/* Search */}
@@ -344,6 +385,20 @@ export default function UsersPage() {
               />
             </div>
 
+            {/* Status filter (Feature 2) */}
+            <div className="relative">
+              <select
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value as "all" | "active" | "inactive")}
+                className="h-9 ps-3 pe-8 rounded-lg border border-ink-200 bg-ink-50 text-[13px] text-ink-700 outline-none focus:border-brand-400 focus:ring-1 focus:ring-brand-100 transition-all appearance-none"
+              >
+                {STATUS_OPTS.map((s) => (
+                  <option key={s.value} value={s.value}>{s.label}</option>
+                ))}
+              </select>
+              <ChevronDown className="absolute end-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-ink-400 pointer-events-none" />
+            </div>
+
             {/* Role filter */}
             <div className="relative">
               <select
@@ -353,20 +408,6 @@ export default function UsersPage() {
               >
                 {ROLES.map((r) => (
                   <option key={r.value} value={r.value}>{r.label}</option>
-                ))}
-              </select>
-              <ChevronDown className="absolute end-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-ink-400 pointer-events-none" />
-            </div>
-
-            {/* Status filter */}
-            <div className="relative">
-              <select
-                value={statusFilter}
-                onChange={(e) => setStatusFilter(e.target.value as "all" | "active" | "inactive")}
-                className="h-9 ps-3 pe-8 rounded-lg border border-ink-200 bg-ink-50 text-[13px] text-ink-700 outline-none focus:border-brand-400 focus:ring-1 focus:ring-brand-100 transition-all appearance-none"
-              >
-                {STATUS_OPTS.map((s) => (
-                  <option key={s.value} value={s.value}>{s.label}</option>
                 ))}
               </select>
               <ChevronDown className="absolute end-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-ink-400 pointer-events-none" />
@@ -414,8 +455,9 @@ export default function UsersPage() {
                       key={user.id}
                       user={user}
                       t={t}
-                      onEdit={() => setEditTarget(user)}
-                      onToggle={() => setStatusTarget(user)}
+                      onEdit={()   => setEditTarget(user)}
+                      onToggle={()  => setStatusTarget(user)}
+                      onInvite={() => setInvitationTarget(user)}
                     />
                   ))
                 )}
@@ -434,6 +476,12 @@ export default function UsersPage() {
       )}
       {statusTarget && (
         <StatusModal user={statusTarget} onClose={() => setStatusTarget(null)} />
+      )}
+      {invitationTarget && (
+        <InvitationLinkModal
+          user={invitationTarget}
+          onClose={() => setInvitationTarget(null)}
+        />
       )}
     </>
   );
