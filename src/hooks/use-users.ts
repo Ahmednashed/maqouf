@@ -16,6 +16,7 @@ import {
 import { uploadUserAvatar } from "@/services/storage";
 import { useTranslation } from "@/hooks/use-translation";
 import { COMPANY_USERS_QUERY_KEY } from "@/hooks/use-company-users";
+import { CURRENT_MEMBER_KEY } from "@/hooks/use-current-member";
 
 // ─── Query key ────────────────────────────────────────────────────────────────
 export const USERS_QUERY_KEY = ["users"] as const;
@@ -106,6 +107,8 @@ export function useUpdateUser() {
     onSettled: () => {
       qc.invalidateQueries({ queryKey: USERS_QUERY_KEY });
       qc.invalidateQueries({ queryKey: COMPANY_USERS_QUERY_KEY() });
+      // Refresh topbar account chip if the user updated their own display_name
+      qc.invalidateQueries({ queryKey: CURRENT_MEMBER_KEY });
     },
   });
 }
@@ -143,6 +146,8 @@ export function useUpdateUserAvatar() {
     onSettled: () => {
       qc.invalidateQueries({ queryKey: USERS_QUERY_KEY });
       qc.invalidateQueries({ queryKey: COMPANY_USERS_QUERY_KEY() });
+      // Refresh topbar if the user updated their own avatar
+      qc.invalidateQueries({ queryKey: CURRENT_MEMBER_KEY });
     },
   });
 }

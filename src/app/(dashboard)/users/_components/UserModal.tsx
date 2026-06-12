@@ -104,10 +104,21 @@ export function UserModal({ user, onClose }: UserModalProps) {
   }, [user, editForm]);
 
   // ── Watched values ──────────────────────────────────────────────────────────
-  const createColor  = createForm.watch("color");
-  const editColor    = editForm.watch("color");
-  const editStatus   = editForm.watch("status");
-  const selectedColor = isEdit ? editColor : createColor;
+  const createColor     = createForm.watch("color");
+  const editColor       = editForm.watch("color");
+  const editStatus      = editForm.watch("status");
+  const editDisplayName = editForm.watch("display_name");
+  const selectedColor   = isEdit ? editColor : createColor;
+
+  // Live banner name: typed display_name → user.full_name → email username → fallback
+  const bannerName = isEdit && user
+    ? editDisplayName?.trim()           ||
+      user.user?.full_name?.trim()       ||
+      (memberEmail(user).includes("@")
+        ? memberEmail(user).split("@")[0]
+        : null)                          ||
+      t("users.unknown")
+    : t("users.unknown");
 
   // ── Submit ──────────────────────────────────────────────────────────────────
   async function onSubmitCreate(data: CreateFormData) {
@@ -367,8 +378,9 @@ export function UserModal({ user, onClose }: UserModalProps) {
                 </label>
               </div>
               <div>
+                {/* Live name: reflects what's typed in display_name field immediately */}
                 <p className="text-[13.5px] font-semibold text-ink-800 leading-tight">
-                  {memberDisplayName(user, t("users.unknown"))}
+                  {bannerName}
                 </p>
                 <p className="text-[12px] text-ink-400 leading-tight" dir="ltr">
                   {memberEmail(user)}
@@ -393,7 +405,7 @@ export function UserModal({ user, onClose }: UserModalProps) {
                     <User className="absolute start-3 top-1/2 -translate-y-1/2 w-4 h-4 text-ink-400 pointer-events-none" />
                     <input
                       {...editForm.register("display_name")}
-                      placeholder={memberDisplayName(user, t("users.unknown"))}
+                      placeholder={user.user?.full_name || memberEmail(user).split("@")[0] || t("users.unknown")}
                       className={inputCls(false)}
                     />
                   </div>

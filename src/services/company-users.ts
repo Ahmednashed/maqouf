@@ -24,17 +24,19 @@ export type CompanyUserWithProfile = Omit<CompanyUser, "user"> & {
 
 /**
  * Best available display name:
- *   auth-user full_name → cached display_name → fallback
+ *   company_users.display_name (admin override) → auth-user full_name → fallback
  *
- * Using the member row means orphaned records still show their real name.
+ * display_name is checked first so admins can override the name shown in the
+ * UI without touching the auth account.  Orphaned records (null user join)
+ * still show their cached name via the display_name column.
  */
 export function memberDisplayName(
   member: CompanyUserWithProfile,
   fallback = "—",
 ): string {
   return (
-    member.user?.full_name?.trim() ||
     member.display_name?.trim()    ||
+    member.user?.full_name?.trim() ||
     fallback
   );
 }
@@ -60,8 +62,8 @@ export function memberAvatarUrl(member: CompanyUserWithProfile): string | null {
  */
 export function memberInitials(member: CompanyUserWithProfile): string {
   const name =
-    member.user?.full_name?.trim() ||
     member.display_name?.trim()    ||
+    member.user?.full_name?.trim() ||
     "";
   return (
     name
