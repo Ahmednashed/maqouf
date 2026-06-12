@@ -13,7 +13,7 @@ import {
 import { toast }               from "sonner";
 import { useTranslation }      from "@/hooks/use-translation";
 import type { CompanyUserWithProfile } from "@/services/company-users";
-import { safeUserName }        from "@/services/company-users";
+import { memberDisplayName, memberEmail, memberInitials } from "@/services/company-users";
 
 // ─── Props ────────────────────────────────────────────────────────────────────
 
@@ -91,8 +91,9 @@ export function InvitationLinkModal({ user, onClose }: InvitationLinkModalProps)
     window.open(link, "_blank", "noopener,noreferrer");
   }
 
-  const displayName = safeUserName(user.user);
-  const email       = user.user?.email ?? "—";
+  const displayName = memberDisplayName(user, t("users.unknown"));
+  const email       = memberEmail(user);
+  const initials    = memberInitials(user);
 
   return (
     <div
@@ -131,7 +132,7 @@ export function InvitationLinkModal({ user, onClose }: InvitationLinkModalProps)
               className="w-9 h-9 rounded-xl flex items-center justify-center text-white font-bold text-[12px] shrink-0"
               style={{ backgroundColor: user.color ?? "#6366F1" }}
             >
-              {(user.user?.full_name ?? "?")[0]?.toUpperCase() ?? "?"}
+              {initials[0] ?? "?"}
             </div>
             <div className="min-w-0">
               <p className="text-[13.5px] font-semibold text-ink-800 leading-tight truncate">

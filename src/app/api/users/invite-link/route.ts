@@ -14,8 +14,9 @@ interface UserRow {
 }
 
 interface CompanyUserRow {
-  id:   string;
-  user: UserRow | null;
+  id:            string;
+  display_email: string | null;
+  user:          UserRow | null;
 }
 
 // ─── POST /api/users/invite-link ─────────────────────────────────────────────
@@ -64,17 +65,17 @@ export async function POST(request: NextRequest) {
     // ── 4. Fetch target user — scoped to the caller's company ────────────────
     const { data: target } = await supabase
       .from("company_users")
-      .select("id, user:users!company_users_user_id_fkey(id, email)")
+      .select("id, display_email, user:users!company_users_user_id_fkey(id, email)")
       .eq("id", body.company_user_id)
       .eq("company_id", membership.company_id as string)
       .maybeSingle();
 
     const targetRow = target as CompanyUserRow | null;
-    if (!targetRow || !targetRow.user?.email) {
+    // Prefer live auth-user email; fall back to cached display_email for orphaned rows
+    const email = targetRow?.user?.email ?? targetRow?.display_email ?? null;
+    if (!targetRow || !email) {
       return NextResponse.json({ message: "User not found in your company." }, { status: 404 });
     }
-
-    const email = targetRow.user.email;
 
     // ── 5. Build admin client — service_role stays server-side ───────────────
     const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;

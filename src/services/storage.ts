@@ -126,6 +126,57 @@ export async function uploadVisitPhoto(
   };
 }
 
+// ─── User avatar upload ───────────────────────────────────────────────────────
+
+/**
+ * Upload a user avatar for a company_users row and return a long-lived signed
+ * URL that can be stored in company_users.avatar_url.
+ *
+ * Path: {company_id}/avatars/{companyUserId}/avatar.{ext}
+ * Bucket: visit-photos (existing private bucket, reused with an "avatars/" prefix)
+ *
+ * The signed URL is valid for 1 year.  If it ever expires the UI falls back to
+ * initials automatically because the <img> onerror handler clears the src.
+ */
+export async function uploadUserAvatar(
+  file:          File,
+  companyUserId: string
+): Promise<string> {
+  if (!file.type.startsWith("image/")) {
+    throw new Error("Only image files (JPEG, PNG, WebP) are allowed.");
+  }
+  if (file.size > MAX_PHOTO_SIZE_BYTES) {
+    const mb = (file.size / 1024 / 1024).toFixed(1);
+    throw new Error(`Image is ${mb} MB — maximum allowed size is 5 MB.`);
+  }
+
+  const companyId   = await getMyCompanyId();
+  const ext         = (file.type.split("/")[1] ?? "jpg").replace("jpeg", "jpg");
+  const storagePath = `${companyId}/avatars/${companyUserId}/avatar.${ext}`;
+
+  const supabase = createClient();
+
+  const { error: uploadErr } = await supabase.storage
+    .from(VISIT_PHOTOS_BUCKET)
+    .upload(storagePath, file, {
+      contentType: file.type,
+      upsert:      true,          // replace existing avatar
+    });
+
+  if (uploadErr) throw new Error(uploadErr.message);
+
+  const TTL_SECONDS = 365 * 24 * 3600;  // 1 year
+  const { data, error: urlErr } = await supabase.storage
+    .from(VISIT_PHOTOS_BUCKET)
+    .createSignedUrl(storagePath, TTL_SECONDS);
+
+  if (urlErr || !data?.signedUrl) {
+    throw new Error("Avatar uploaded but could not generate preview URL.");
+  }
+
+  return data.signedUrl;
+}
+
 // ─── Delete ───────────────────────────────────────────────────────────────────
 
 /**

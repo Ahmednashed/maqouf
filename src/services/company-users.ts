@@ -11,21 +11,73 @@ import { getMyCompanyId } from "@/lib/supabase/helpers";
  * referenced auth user has been hard-deleted from auth.users while the
  * company_users row still exists (orphaned record scenario).
  *
- * ALWAYS use optional-chaining on `user`:
- *   member.user?.full_name ?? fallback
+ * Use the member-level helpers (memberDisplayName, memberEmail, memberInitials,
+ * memberAvatarUrl) instead of accessing `user` directly — they automatically
+ * fall back to the cached display_name / display_email columns so orphaned
+ * users never appear as "Unknown User".
  */
 export type CompanyUserWithProfile = Omit<CompanyUser, "user"> & {
   user: Pick<User, "id" | "email" | "full_name" | "avatar_url" | "phone"> | null;
 };
 
-// ─── Safe display helpers ─────────────────────────────────────────────────────
+// ─── Member-level display helpers (prefer these over safeUserName) ────────────
 
 /**
- * Return the user's full name or a localised fallback when the user is null
- * (orphaned record — the auth user was deleted).
+ * Best available display name:
+ *   auth-user full_name → cached display_name → fallback
  *
- * @param user     The nullable user profile from CompanyUserWithProfile.
- * @param fallback Override the default "—" fallback.
+ * Using the member row means orphaned records still show their real name.
+ */
+export function memberDisplayName(
+  member: CompanyUserWithProfile,
+  fallback = "—",
+): string {
+  return (
+    member.user?.full_name?.trim() ||
+    member.display_name?.trim()    ||
+    fallback
+  );
+}
+
+/**
+ * Best available email:
+ *   auth-user email → cached display_email → "—"
+ */
+export function memberEmail(member: CompanyUserWithProfile): string {
+  return member.user?.email || member.display_email || "—";
+}
+
+/**
+ * Best available avatar URL:
+ *   company-level avatar_url → auth-user avatar_url → null
+ */
+export function memberAvatarUrl(member: CompanyUserWithProfile): string | null {
+  return member.avatar_url || member.user?.avatar_url || null;
+}
+
+/**
+ * 1-2 letter initials derived from the best available name.
+ */
+export function memberInitials(member: CompanyUserWithProfile): string {
+  const name =
+    member.user?.full_name?.trim() ||
+    member.display_name?.trim()    ||
+    "";
+  return (
+    name
+      .split(" ")
+      .filter(Boolean)
+      .map((w) => w[0])
+      .slice(0, 2)
+      .join("")
+      .toUpperCase() || "?"
+  );
+}
+
+// ─── Legacy helpers (kept for call-sites that pass the nested user object) ────
+
+/**
+ * @deprecated Prefer memberDisplayName(member) — it uses the cached fallback.
  */
 export function safeUserName(
   user: Pick<User, "full_name"> | null | undefined,
@@ -35,7 +87,7 @@ export function safeUserName(
 }
 
 /**
- * Return the user's 1-2 letter initials or "?" when the user is null.
+ * @deprecated Prefer memberInitials(member) — it uses the cached fallback.
  */
 export function safeUserInitials(
   user: Pick<User, "full_name"> | null | undefined,
@@ -53,11 +105,16 @@ export function safeUserInitials(
 // ─── Payload types ────────────────────────────────────────────────────────────
 
 export interface CompanyUserUpdate {
-  role?:   UserRole;
-  color?:  string;
-  emp_id?: string;
-  region?: string;
-  status?: "active" | "inactive";
+  role?:            UserRole;
+  color?:           string;
+  emp_id?:          string | null;
+  region?:          string | null;
+  status?:          "active" | "inactive";
+  // Cached display overrides (migration 011)
+  display_name?:    string | null;
+  display_email?:   string | null;
+  avatar_url?:      string | null;
+  last_mobile_sync?: string | null;
 }
 
 export interface CompanyUserManualCreate {

@@ -15,8 +15,10 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
 import { useTranslation, type TranslationFn } from "@/hooks/use-translation";
-import { useInviteUser, useUpdateUser } from "@/hooks/use-users";
+import { useInviteUser, useUpdateUser, useUpdateUserAvatar } from "@/hooks/use-users";
 import type { CompanyUserWithProfile } from "@/services/company-users";
+import { memberDisplayName, memberEmail, memberInitials, memberAvatarUrl } from "@/services/company-users";
+import { Camera } from "lucide-react";
 import type { UserRole } from "@/types";
 
 // ─── Preset colour palette ────────────────────────────────────────────────────
@@ -36,11 +38,12 @@ const createSchema = z.object({
 });
 
 const editSchema = z.object({
-  role:   z.enum(["owner", "admin", "merchandiser"] as const),
-  color:  z.string().default("#6366F1"),
-  emp_id: z.string().optional(),
-  region: z.string().optional(),
-  status: z.enum(["active", "inactive"]).default("active"),
+  display_name: z.string().optional(),
+  role:         z.enum(["owner", "admin", "merchandiser"] as const),
+  color:        z.string().default("#6366F1"),
+  emp_id:       z.string().optional(),
+  region:       z.string().optional(),
+  status:       z.enum(["active", "inactive"]).default("active"),
 });
 
 type CreateFormData = z.infer<typeof createSchema>;
@@ -54,11 +57,12 @@ interface UserModalProps {
 
 // ─── Component ────────────────────────────────────────────────────────────────
 export function UserModal({ user, onClose }: UserModalProps) {
-  const { t }     = useTranslation();
-  const isEdit    = Boolean(user);
-  const create    = useInviteUser();
-  const update    = useUpdateUser();
-  const isPending = create.isPending || update.isPending;
+  const { t }       = useTranslation();
+  const isEdit      = Boolean(user);
+  const create      = useInviteUser();
+  const update      = useUpdateUser();
+  const avatarMut   = useUpdateUserAvatar();
+  const isPending   = create.isPending || update.isPending;
 
   // ── Create form ─────────────────────────────────────────────────────────────
   const createForm = useForm<CreateFormData>({
@@ -76,11 +80,12 @@ export function UserModal({ user, onClose }: UserModalProps) {
   const editForm = useForm<EditFormData>({
     resolver: zodResolver(editSchema),
     defaultValues: {
-      role:   (user?.role ?? "merchandiser") as UserRole,
-      color:  user?.color  ?? "#6366F1",
-      emp_id: user?.emp_id ?? "",
-      region: user?.region ?? "",
-      status: (user?.status ?? "active") as "active" | "inactive",
+      display_name: user?.display_name ?? "",
+      role:         (user?.role ?? "merchandiser") as UserRole,
+      color:        user?.color  ?? "#6366F1",
+      emp_id:       user?.emp_id ?? "",
+      region:       user?.region ?? "",
+      status:       (user?.status ?? "active") as "active" | "inactive",
     },
   });
 
@@ -88,11 +93,12 @@ export function UserModal({ user, onClose }: UserModalProps) {
   useEffect(() => {
     if (user) {
       editForm.reset({
-        role:   user.role,
-        color:  user.color  ?? "#6366F1",
-        emp_id: user.emp_id ?? "",
-        region: user.region ?? "",
-        status: user.status,
+        display_name: user.display_name ?? "",
+        role:         user.role,
+        color:        user.color  ?? "#6366F1",
+        emp_id:       user.emp_id ?? "",
+        region:       user.region ?? "",
+        status:       user.status,
       });
     }
   }, [user, editForm]);
@@ -120,14 +126,23 @@ export function UserModal({ user, onClose }: UserModalProps) {
     await update.mutateAsync({
       id: user.id,
       payload: {
-        role:   data.role,
-        color:  data.color,
-        emp_id: data.emp_id || undefined,
-        region: data.region || undefined,
-        status: data.status,
+        display_name: data.display_name || null,
+        role:         data.role,
+        color:        data.color,
+        emp_id:       data.emp_id || undefined,
+        region:       data.region || undefined,
+        status:       data.status,
       },
     });
     onClose();
+  }
+
+  function handleAvatarChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (file && user) {
+      avatarMut.mutate({ id: user.id, file });
+    }
+    e.target.value = "";
   }
 
   // ── Input class helper ──────────────────────────────────────────────────────
@@ -316,20 +331,47 @@ export function UserModal({ user, onClose }: UserModalProps) {
             onSubmit={editForm.handleSubmit(onSubmitEdit)}
             className="px-6 py-5 space-y-5"
           >
-            {/* User identity banner */}
+            {/* User identity banner with avatar */}
             <div className="flex items-center gap-3 p-3.5 rounded-xl bg-ink-50 border border-ink-100">
-              <div
-                className="w-10 h-10 rounded-xl flex items-center justify-center text-white font-bold text-[14px] shrink-0"
-                style={{ backgroundColor: editColor }}
-              >
-                {user.user?.full_name?.charAt(0)?.toUpperCase() ?? "?"}
+              <div className="relative shrink-0">
+                {memberAvatarUrl(user) ? (
+                  <img
+                    src={memberAvatarUrl(user)!}
+                    alt=""
+                    className="w-12 h-12 rounded-xl object-cover"
+                    onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+                  />
+                ) : (
+                  <div
+                    className="w-12 h-12 rounded-xl flex items-center justify-center text-white font-bold text-[15px]"
+                    style={{ backgroundColor: editColor }}
+                  >
+                    {memberInitials(user)}
+                  </div>
+                )}
+                <label
+                  className={cn(
+                    "absolute -bottom-1 -end-1 w-6 h-6 rounded-full bg-white border border-ink-200 shadow-sm",
+                    "flex items-center justify-center cursor-pointer hover:bg-ink-50 transition-colors",
+                    avatarMut.isPending && "opacity-50 pointer-events-none"
+                  )}
+                  title={t("users.changeAvatar")}
+                >
+                  <Camera className="w-3 h-3 text-ink-500" />
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={handleAvatarChange}
+                  />
+                </label>
               </div>
               <div>
                 <p className="text-[13.5px] font-semibold text-ink-800 leading-tight">
-                  {user.user?.full_name ?? "—"}
+                  {memberDisplayName(user, t("users.unknown"))}
                 </p>
                 <p className="text-[12px] text-ink-400 leading-tight" dir="ltr">
-                  {user.user?.email ?? "—"}
+                  {memberEmail(user)}
                 </p>
               </div>
             </div>
@@ -341,21 +383,39 @@ export function UserModal({ user, onClose }: UserModalProps) {
                 {t("users.sectionProfile")}
               </p>
 
-              {/* Role */}
-              <div>
-                <label className="block text-[12.5px] font-semibold text-ink-700 mb-1.5">
-                  {t("users.role")} <span className="text-brand-500">*</span>
-                </label>
-                <div className="relative">
-                  <ShieldCheck className="absolute start-3 top-1/2 -translate-y-1/2 w-4 h-4 text-ink-400 pointer-events-none" />
-                  <select
-                    {...editForm.register("role")}
-                    className={selectCls(!!editForm.formState.errors.role)}
-                  >
-                    <option value="merchandiser">{t("role.merchandiser")}</option>
-                    <option value="admin">{t("role.admin")}</option>
-                    <option value="owner">{t("role.owner")}</option>
-                  </select>
+              <div className="space-y-4">
+                {/* Display Name override */}
+                <div>
+                  <label className="block text-[12.5px] font-semibold text-ink-700 mb-1.5">
+                    {t("users.displayName")}
+                  </label>
+                  <div className="relative">
+                    <User className="absolute start-3 top-1/2 -translate-y-1/2 w-4 h-4 text-ink-400 pointer-events-none" />
+                    <input
+                      {...editForm.register("display_name")}
+                      placeholder={memberDisplayName(user, t("users.unknown"))}
+                      className={inputCls(false)}
+                    />
+                  </div>
+                  <p className="mt-1 text-[11px] text-ink-400">{t("users.displayNameHint")}</p>
+                </div>
+
+                {/* Role */}
+                <div>
+                  <label className="block text-[12.5px] font-semibold text-ink-700 mb-1.5">
+                    {t("users.role")} <span className="text-brand-500">*</span>
+                  </label>
+                  <div className="relative">
+                    <ShieldCheck className="absolute start-3 top-1/2 -translate-y-1/2 w-4 h-4 text-ink-400 pointer-events-none" />
+                    <select
+                      {...editForm.register("role")}
+                      className={selectCls(!!editForm.formState.errors.role)}
+                    >
+                      <option value="merchandiser">{t("role.merchandiser")}</option>
+                      <option value="admin">{t("role.admin")}</option>
+                      <option value="owner">{t("role.owner")}</option>
+                    </select>
+                  </div>
                 </div>
               </div>
             </div>

@@ -13,6 +13,7 @@ import {
   type InvitePayload,
   type InviteStatus,
 } from "@/services/invitations";
+import { uploadUserAvatar } from "@/services/storage";
 import { useTranslation } from "@/hooks/use-translation";
 import { COMPANY_USERS_QUERY_KEY } from "@/hooks/use-company-users";
 
@@ -85,7 +86,7 @@ export function useUpdateUser() {
       const previous = qc.getQueryData<CompanyUserWithProfile[]>(USERS_QUERY_KEY);
 
       qc.setQueryData<CompanyUserWithProfile[]>(USERS_QUERY_KEY, (old = []) =>
-        old.map((u) => (u.id === id ? { ...u, ...payload } : u))
+        old.map((u) => (u.id === id ? { ...u, ...payload } as CompanyUserWithProfile : u))
       );
 
       return { previous };
@@ -100,6 +101,43 @@ export function useUpdateUser() {
 
     onSuccess: () => {
       toast.success(t("users.updatedOk"));
+    },
+
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: USERS_QUERY_KEY });
+      qc.invalidateQueries({ queryKey: COMPANY_USERS_QUERY_KEY() });
+    },
+  });
+}
+
+// ─── Upload avatar ────────────────────────────────────────────────────────────
+
+export function useUpdateUserAvatar() {
+  const qc    = useQueryClient();
+  const { t } = useTranslation();
+
+  return useMutation({
+    mutationFn: async ({ id, file }: { id: string; file: File }) => {
+      const avatarUrl = await uploadUserAvatar(file, id);
+      await updateCompanyUser(id, { avatar_url: avatarUrl });
+      return avatarUrl;
+    },
+
+    onMutate: async ({ id }) => {
+      await qc.cancelQueries({ queryKey: USERS_QUERY_KEY });
+      return { previous: qc.getQueryData<CompanyUserWithProfile[]>(USERS_QUERY_KEY) };
+    },
+
+    onError: (err: Error, _vars, ctx) => {
+      if (ctx?.previous) qc.setQueryData(USERS_QUERY_KEY, ctx.previous);
+      toast.error(err.message || t("users.errorUpdate"));
+    },
+
+    onSuccess: (avatarUrl, { id }) => {
+      qc.setQueryData<CompanyUserWithProfile[]>(USERS_QUERY_KEY, (old = []) =>
+        old.map((u) => (u.id === id ? { ...u, avatar_url: avatarUrl } : u))
+      );
+      toast.success(t("users.avatarUpdated"));
     },
 
     onSettled: () => {
@@ -124,7 +162,7 @@ export function useToggleUserStatus() {
       const previous = qc.getQueryData<CompanyUserWithProfile[]>(USERS_QUERY_KEY);
 
       qc.setQueryData<CompanyUserWithProfile[]>(USERS_QUERY_KEY, (old = []) =>
-        old.map((u) => (u.id === id ? { ...u, status } : u))
+        old.map((u) => (u.id === id ? { ...u, status } as CompanyUserWithProfile : u))
       );
 
       return { previous };

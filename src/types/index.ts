@@ -34,20 +34,29 @@ export interface User {
 }
 
 export interface CompanyUser {
-  id:           string;
-  company_id:   string;
-  user_id:      string;
-  role:         UserRole;
-  emp_id?:      string;
-  region?:      string;
-  color?:       string;  // avatar / badge colour — DB default '#6366F1'
-  status:       "active" | "inactive";
-  invited_by?:  string;
-  created_at:   string;
-  updated_at:   string;
+  id:               string;
+  company_id:       string;
+  user_id:          string;
+  role:             UserRole;
+  emp_id?:          string;
+  region?:          string;
+  color?:           string;    // avatar / badge colour — DB default '#6366F1'
+  status:           "active" | "inactive";
+  invited_by?:      string;
+  // Cached display info (migration 011) — survives auth-user deletion
+  display_name?:    string | null;
+  display_email?:   string | null;
+  // Company-level avatar override (migration 011)
+  avatar_url?:      string | null;
+  // Mobile app sync timestamp (migration 011)
+  last_mobile_sync?: string | null;
+  // Denormalised last-activity from visits (migration 011)
+  last_activity_at?: string | null;
+  created_at:       string;
+  updated_at:       string;
   // joined
-  user?:        User;
-  company?:     Company;
+  user?:            User;
+  company?:         Company;
 }
 
 // ─── Chain ────────────────────────────────────────────────────────────────────

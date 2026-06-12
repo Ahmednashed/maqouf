@@ -320,16 +320,36 @@ export const translations = {
     "users.filterStatusAll":      "جميع المستخدمين",
     "users.filterStatusActive":   "النشطون",
     "users.filterStatusInactive": "غير النشطين",
-    // Invitation link feature
+    // Invitation link / activation email
     "users.sendInvitation":       "إرسال دعوة",
-    "users.invitationLinkTitle":  "رابط الدعوة",
+    "users.sendActivationEmail":  "إرسال بريد التفعيل",
+    "users.invitationLinkTitle":  "بريد التفعيل والرابط",
     "users.invitationLinkDesc":   "أرسل هذا الرابط للمستخدم ليتمكن من تسجيل الدخول وتعيين كلمة مروره",
     "users.copyLink":             "نسخ الرابط",
     "users.openLink":             "فتح الرابط",
     "users.linkCopied":           "تم نسخ الرابط!",
     "users.rateLimitError":       "تم تجاوز الحد المسموح للإرسال. يرجى المحاولة مجدداً لاحقاً.",
     "users.generatingLink":       "جارٍ إنشاء الرابط…",
-    "users.invitationSentOk":     "تم إرسال الدعوة وإنشاء الرابط بنجاح",
+    "users.invitationSentOk":     "تم إنشاء رابط التفعيل وإرسال البريد بنجاح",
+    // Avatar / profile image
+    "users.profileImage":         "صورة الملف الشخصي",
+    "users.changeAvatar":         "تغيير الصورة",
+    "users.avatarUpdated":        "تم تحديث الصورة بنجاح",
+    "users.removeAvatar":         "إزالة الصورة",
+    // Edit display name
+    "users.displayName":          "الاسم المعروض",
+    "users.displayNameHint":      "يُستخدم هذا الاسم عند تعذّر الوصول إلى بيانات المستخدم",
+    // Latest activity / sync
+    "users.colLastActivity":      "آخر نشاط",
+    "users.colLastSync":          "آخر مزامنة",
+    "users.noActivity":           "لا يوجد نشاط",
+    "users.neverSynced":          "لم تتم المزامنة",
+    // Summary cards
+    "users.cardTotal":            "إجمالي الأعضاء",
+    "users.cardActive":           "نشطون",
+    "users.cardInactive":         "غير نشطين",
+    "users.cardOnlineToday":      "نشطوا اليوم",
+    "users.onlineToday":          "نشطوا اليوم",
     // Visits module
     "visits.pageTitle":             "الزيارات",
     "visits.pageSubtitle":          "متابعة جولات الميدان",
@@ -966,7 +986,27 @@ export const translations = {
     "users.linkCopied":           "Link copied!",
     "users.rateLimitError":       "Email sending limit reached. Please try again later.",
     "users.generatingLink":       "Generating link…",
-    "users.invitationSentOk":     "Invitation sent and link generated successfully",
+    "users.sendActivationEmail":  "Send Activation Email",
+    "users.invitationSentOk":     "Activation email sent and link generated successfully",
+    // Avatar / profile image
+    "users.profileImage":         "Profile Image",
+    "users.changeAvatar":         "Change Photo",
+    "users.avatarUpdated":        "Profile photo updated",
+    "users.removeAvatar":         "Remove Photo",
+    // Edit display name
+    "users.displayName":          "Display Name",
+    "users.displayNameHint":      "Used when auth account is unavailable",
+    // Latest activity / sync
+    "users.colLastActivity":      "Last Activity",
+    "users.colLastSync":          "Last Sync",
+    "users.noActivity":           "No activity",
+    "users.neverSynced":          "Never synced",
+    // Summary cards
+    "users.cardTotal":            "Total Members",
+    "users.cardActive":           "Active",
+    "users.cardInactive":         "Inactive",
+    "users.cardOnlineToday":      "Online Today",
+    "users.onlineToday":          "Online Today",
     // Visits module
     "visits.pageTitle":             "Visits",
     "visits.pageSubtitle":          "Track field execution",
