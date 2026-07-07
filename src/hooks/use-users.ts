@@ -14,6 +14,7 @@ import {
   type InviteStatus,
 } from "@/services/invitations";
 import { uploadUserAvatar } from "@/services/storage";
+import { logActivity } from "@/services/activity-logs";
 import { useTranslation } from "@/hooks/use-translation";
 import { COMPANY_USERS_QUERY_KEY } from "@/hooks/use-company-users";
 import { CURRENT_MEMBER_KEY } from "@/hooks/use-current-member";
@@ -51,13 +52,22 @@ export function useInviteUser() {
   return useMutation({
     mutationFn: (payload: InvitePayload) => inviteCompanyUser(payload),
 
-    onSuccess: (result) => {
+    onSuccess: (result, payload) => {
       const statusToast: Record<InviteStatus, () => void> = {
         invited:        () => toast.success(t("users.inviteSent")),
         added:          () => toast.success(t("users.inviteAdded")),
         already_member: () => toast.info(t("users.alreadyMember")),
       };
       statusToast[result.status]?.();
+
+      if (result.status !== "already_member") {
+        // Fire-and-forget: triggers can't see invitations
+        void logActivity({
+          action:      "user.invited",
+          entityType:  "user",
+          entityLabel: payload.email,
+        });
+      }
     },
 
     onError: (err: Error) => {
@@ -100,8 +110,20 @@ export function useUpdateUser() {
       toast.error(t("users.errorUpdate"));
     },
 
-    onSuccess: () => {
+    onSuccess: (_data, { id, payload }) => {
       toast.success(t("users.updatedOk"));
+
+      // Status/role changes are logged by DB triggers; only log other edits
+      const detailFields = (["display_name", "emp_id", "region", "color"] as const)
+        .filter((k) => payload[k] !== undefined);
+      if (detailFields.length > 0) {
+        void logActivity({
+          action:     "user.updated",
+          entityType: "user",
+          entityId:   id,
+          details:    { fields: detailFields },
+        });
+      }
     },
 
     onSettled: () => {

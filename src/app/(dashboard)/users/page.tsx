@@ -17,6 +17,7 @@ import {
   Smartphone,
   UserMinus,
   UserPlus2,
+  History,
 } from "lucide-react";
 import { cn }                  from "@/lib/utils/cn";
 import { useTranslation, type TranslationFn } from "@/hooks/use-translation";
@@ -33,6 +34,7 @@ import type { UserRole }       from "@/types";
 import { UserModal }           from "./_components/UserModal";
 import { StatusModal }         from "./_components/StatusModal";
 import { InvitationLinkModal } from "./_components/InvitationLinkModal";
+import { UserActivityModal }   from "./_components/UserActivityModal";
 
 // ─── Today boundary ───────────────────────────────────────────────────────────
 function isToday(dateStr: string | null | undefined): boolean {
@@ -176,15 +178,16 @@ function TableHead({ t }: { t: TranslationFn }) {
 
 // ─── Table row ────────────────────────────────────────────────────────────────
 interface UserRowProps {
-  member:   CompanyUserWithProfile;
-  t:        TranslationFn;
-  locale:   string;
-  onEdit:   () => void;
-  onToggle: () => void;
-  onInvite: () => void;
+  member:     CompanyUserWithProfile;
+  t:          TranslationFn;
+  locale:     string;
+  onEdit:     () => void;
+  onToggle:   () => void;
+  onInvite:   () => void;
+  onActivity: () => void;
 }
 
-function UserRow({ member, t, locale, onEdit, onToggle, onInvite }: UserRowProps) {
+function UserRow({ member, t, locale, onEdit, onToggle, onInvite, onActivity }: UserRowProps) {
   const displayName = memberDisplayName(member, t("users.unknown"));
   const email       = memberEmail(member);
   const initials    = memberInitials(member);
@@ -308,6 +311,15 @@ function UserRow({ member, t, locale, onEdit, onToggle, onInvite }: UserRowProps
             <Pencil className="w-3.5 h-3.5" />
           </button>
 
+          {/* View activity timeline */}
+          <button
+            onClick={onActivity}
+            title={t("users.viewActivity")}
+            className="w-8 h-8 rounded-lg flex items-center justify-center text-ink-400 hover:text-brand-500 hover:bg-brand-50 transition-all"
+          >
+            <History className="w-3.5 h-3.5" />
+          </button>
+
           {canInvite && (
             <button
               onClick={onInvite}
@@ -345,6 +357,7 @@ export default function UsersPage() {
   const [editTarget,       setEditTarget]       = useState<CompanyUserWithProfile | null>(null);
   const [statusTarget,     setStatusTarget]     = useState<CompanyUserWithProfile | null>(null);
   const [invitationTarget, setInvitationTarget] = useState<CompanyUserWithProfile | null>(null);
+  const [activityTarget,   setActivityTarget]   = useState<CompanyUserWithProfile | null>(null);
 
   const [search,       setSearch]       = useState("");
   const [roleFilter,   setRoleFilter]   = useState<UserRole | "all">("all");
@@ -483,9 +496,10 @@ export default function UsersPage() {
                       member={member}
                       t={t}
                       locale={locale}
-                      onEdit={()   => setEditTarget(member)}
-                      onToggle={()  => setStatusTarget(member)}
-                      onInvite={() => setInvitationTarget(member)}
+                      onEdit={()     => setEditTarget(member)}
+                      onToggle={()   => setStatusTarget(member)}
+                      onInvite={()   => setInvitationTarget(member)}
+                      onActivity={() => setActivityTarget(member)}
                     />
                   ))
                 )}
@@ -503,6 +517,12 @@ export default function UsersPage() {
         <InvitationLinkModal
           user={invitationTarget}
           onClose={() => setInvitationTarget(null)}
+        />
+      )}
+      {activityTarget && (
+        <UserActivityModal
+          user={activityTarget}
+          onClose={() => setActivityTarget(null)}
         />
       )}
     </>

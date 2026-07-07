@@ -272,6 +272,35 @@ export interface ExpiringProduct {
   product?:     Product;
 }
 
+// ─── Activity log (migration 012) ─────────────────────────────────────────────
+
+/** Actions recorded by DB triggers + client-side logging. */
+export type ActivityAction =
+  | "visit.created"
+  | "visit.started"
+  | "visit.completed"
+  | "visit.missed"
+  | "user.activated"
+  | "user.deactivated"
+  | "user.role_changed"
+  | "user.invited"
+  | "user.updated";
+
+export type ActivityEntityType = "visit" | "user" | "place" | "product";
+
+export interface ActivityLog {
+  id:           string;
+  company_id:   string;
+  actor_id:     string | null;
+  actor_name:   string | null;
+  action:       ActivityAction | string;   // string fallback for future actions
+  entity_type:  ActivityEntityType | string;
+  entity_id:    string | null;
+  entity_label: string | null;
+  details:      Record<string, unknown> | null;
+  created_at:   string;
+}
+
 // ─── UI helpers ───────────────────────────────────────────────────────────────
 export interface SelectOption {
   value: string;

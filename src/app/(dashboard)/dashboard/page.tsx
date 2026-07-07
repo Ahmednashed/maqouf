@@ -19,6 +19,8 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import type { VisitStatus } from "@/types";
 import { VisitsTrendChart } from "../_components/VisitsTrendChart";
+import { useActivityLogs, ACTIVITY_LOGS_KEY } from "@/hooks/use-activity-logs";
+import { ActivityFeedItem } from "@/components/activity/ActivityFeedItem";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -139,12 +141,39 @@ function TrendSection({ locale, t }: { locale: string; t: TranslationFn }) {
 }
 
 function ActivitySection({ locale, t }: { locale: string; t: TranslationFn }) {
+  // Rich audit feed (migration 012). Returns [] when the table doesn't exist
+  // yet, in which case we fall back to the legacy completed-visits feed below.
+  const auditFeed = useActivityLogs();
+  const auditLogs = auditFeed.data?.pages.flat() ?? [];
+
   const { data = [], isLoading } = useActivityFeed();
 
+  // ── Preferred: audit-log feed ────────────────────────────────────────────
+  if (!auditFeed.isLoading && auditLogs.length > 0) {
+    return (
+      <div>
+        <SectionHeader title={t("dashboard.section.activity")} icon={Activity} />
+        <div className="bg-white rounded-2xl border border-ink-100 shadow-sm overflow-hidden">
+          {auditLogs.slice(0, 15).map((log, i) => (
+            <ActivityFeedItem
+              key={log.id}
+              log={log}
+              locale={locale}
+              t={t}
+              showActor={true}
+              divider={i > 0}
+            />
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  // ── Fallback: legacy completed-visits feed (pre-migration) ───────────────
   return (
     <div>
       <SectionHeader title={t("dashboard.section.activity")} icon={Activity} />
-      {isLoading ? (
+      {isLoading || auditFeed.isLoading ? (
         <div className="space-y-2">
           {[...Array(4)].map((_, i) => <Skeleton key={i} className="h-14" />)}
         </div>
@@ -219,6 +248,7 @@ export default function DashboardPage() {
     qc.invalidateQueries({ queryKey: DASHBOARD_KEY(date) });
     qc.invalidateQueries({ queryKey: TREND_KEY(30) });
     qc.invalidateQueries({ queryKey: ACTIVITY_KEY });
+    qc.invalidateQueries({ queryKey: ACTIVITY_LOGS_KEY() });
   }
 
   function tStatus(s: VisitStatus) {

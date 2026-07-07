@@ -9,7 +9,7 @@ import {
   MapPin, User, Clock, CalendarDays, Package,
   AlertTriangle, CheckCircle2, XCircle, Play,
   Save, CheckSquare, AlertCircle, Minus, Plus, FileText,
-  WifiOff, RotateCcw, CloudUpload, ShieldCheck,
+  WifiOff, RotateCcw, CloudUpload, ShieldCheck, History,
 } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
 import { useTranslation, type TranslationFn } from "@/hooks/use-translation";
@@ -41,6 +41,8 @@ import {
   type SyncStatus,
 } from "@/hooks/use-offline-visit-draft";
 import type { DraftProducts } from "@/lib/offline-drafts";
+import { useEntityActivity } from "@/hooks/use-activity-logs";
+import { ActivityTimeline } from "@/components/activity/ActivityTimeline";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -530,6 +532,26 @@ function CheckinPanel({ visit, isStarting, onStart, locale, t }: CheckinPanelPro
   );
 }
 
+// ─── Visit history (audit trail) ──────────────────────────────────────────────
+
+function VisitHistorySection({ visitId, t }: { visitId: string; t: TranslationFn }) {
+  const { data: logs = [], isLoading } = useEntityActivity("visit", visitId);
+
+  // Hide the whole section until the visit has at least one recorded event
+  // (also covers the pre-migration case where the table doesn't exist yet).
+  if (!isLoading && logs.length === 0) return null;
+
+  return (
+    <div className="mt-8">
+      <h2 className="text-[13px] font-bold text-ink-700 flex items-center gap-2 mb-4">
+        <History className="w-4 h-4 text-brand-500" />
+        {t("activity.visitHistory")}
+      </h2>
+      <ActivityTimeline logs={logs} isLoading={isLoading} showActor={true} />
+    </div>
+  );
+}
+
 // ─── Main page ────────────────────────────────────────────────────────────────
 
 export default function VisitDetailPage() {
@@ -1007,6 +1029,9 @@ export default function VisitDetailPage() {
               </div>
             )}
           </div>
+
+          {/* ── Visit history (audit trail) ────────────────────────────────── */}
+          <VisitHistorySection visitId={id} t={t} />
         </div>
       )}
 
