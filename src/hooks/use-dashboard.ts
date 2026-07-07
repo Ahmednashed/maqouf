@@ -9,12 +9,17 @@ import {
   type TrendPoint,
   type ActivityVisit,
 } from "@/services/dashboard";
+import {
+  fetchExecutiveExtras,
+  type ExecutiveExtras,
+} from "@/services/dashboard-extras";
 
 // ─── Key factories ─────────────────────────────────────────────────────────────
 
 export const DASHBOARD_KEY  = (date: string)  => ["dashboard",  date]    as const;
 export const TREND_KEY      = (days: number)   => ["trend",      days]    as const;
 export const ACTIVITY_KEY   =                     ["activity_feed"]        as const;
+export const EXTRAS_KEY     = (date: string)  => ["dashboard-extras", date] as const;
 
 // ─── Hooks ────────────────────────────────────────────────────────────────────
 
@@ -49,5 +54,19 @@ export function useActivityFeed() {
     queryKey: ACTIVITY_KEY,
     queryFn:  () => fetchActivityFeed(),
     staleTime: 2 * 60_000,
+  });
+}
+
+/**
+ * Executive Dashboard 2.0 extras: yesterday comparison, team status,
+ * overdue/sync counters, region stats. Independent of useDashboard so a
+ * slow extras query never blocks the KPI row (and vice versa).
+ */
+export function useExecutiveExtras(date: string) {
+  return useQuery<ExecutiveExtras>({
+    queryKey:  EXTRAS_KEY(date),
+    queryFn:   () => fetchExecutiveExtras(date),
+    staleTime: 60_000,
+    enabled:   Boolean(date),
   });
 }
