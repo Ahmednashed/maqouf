@@ -1,6 +1,7 @@
 "use client";
 
 import { memo } from "react";
+import Link from "next/link";
 import { Sparkles, TrendingDown, RefreshCw, UserRound, ArrowRight } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
 import type { TranslationFn } from "@/hooks/use-translation";
@@ -80,10 +81,10 @@ export const AiInsightsCard = memo(function AiInsightsCard({
           ))}
         </div>
 
-        {/* CTA — design only, logic later */}
-        <button
-          type="button"
-          aria-label={t("dashboard.ai.cta")}
+        {/* CTA → AI Operations Chat */}
+        <Link
+          href="/ai"
+          aria-label={t("dashboard.ai.openAnalysis")}
           className={cn(
             "w-full h-11 rounded-xl bg-white text-violet-700 text-[13.5px] font-bold",
             "flex items-center justify-center gap-2 shadow-md",
@@ -93,7 +94,7 @@ export const AiInsightsCard = memo(function AiInsightsCard({
         >
           {t("dashboard.ai.openAnalysis")}
           <ArrowRight className="w-4 h-4 rtl:rotate-180" />
-        </button>
+        </Link>
 
         <p className="text-[10px] text-violet-300 text-center mt-2.5">
           {t("dashboard.ai.disclaimer")}

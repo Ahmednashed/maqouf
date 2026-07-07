@@ -8,7 +8,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
 import type { TranslationFn } from "@/hooks/use-translation";
-import type { CommandCenterInsights } from "./insights";
+import type { CommandCenterInsights } from "@/lib/insights";
 import { SectionHeader, Skeleton } from "./shared";
 
 // ─── Component ────────────────────────────────────────────────────────────────

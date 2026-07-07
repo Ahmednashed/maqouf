@@ -9,7 +9,7 @@ import {
 import { cn } from "@/lib/utils/cn";
 import type { TranslationFn } from "@/hooks/use-translation";
 import type { TranslationKey } from "@/lib/i18n/translations";
-import type { PriorityItem, Severity } from "./insights";
+import type { PriorityItem, Severity } from "@/lib/insights";
 import { SectionHeader, Skeleton } from "./shared";
 
 // ─── Severity presentation ────────────────────────────────────────────────────

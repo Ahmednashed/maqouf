@@ -36,7 +36,7 @@ import { TeamHealthScore }    from "./_components/TeamHealthScore";
 import { SmartAlerts }        from "./_components/SmartAlerts";
 import { PerformersPanel }    from "./_components/PerformersPanel";
 import { CommandPalette, useCommandPalette } from "./_components/CommandPalette";
-import { deriveInsights }     from "./_components/insights";
+import { deriveInsights }     from "@/lib/insights";
 
 // Recharts is the heaviest client dependency on this page — defer it so the
 // KPI row and feed paint first.

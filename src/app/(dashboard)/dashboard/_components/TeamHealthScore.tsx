@@ -5,7 +5,7 @@ import { HeartPulse } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
 import type { TranslationFn } from "@/hooks/use-translation";
 import type { TranslationKey } from "@/lib/i18n/translations";
-import { healthLabelKey, healthColor } from "./insights";
+import { healthLabelKey, healthColor } from "@/lib/insights";
 import { SectionHeader, Skeleton, AnimatedNumber } from "./shared";
 
 // ─── SVG ring (no recharts — keeps the main bundle lean) ─────────────────────

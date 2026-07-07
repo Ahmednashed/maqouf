@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation";
 import {
   LayoutDashboard, MapPinned, CalendarDays, Building2,
   Store, Users, Package, Layers, ClipboardList, BarChart3,
-  ChevronLeft, ChevronRight, LogOut,
+  ChevronLeft, ChevronRight, LogOut, Sparkles,
 } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
 import { useAppStore } from "@/store/app-store";
@@ -24,6 +24,7 @@ interface NavItem {
 
 const NAV_ITEMS: NavItem[] = [
   { key: "nav.dashboard",  href: "/dashboard",      icon: LayoutDashboard },
+  { key: "nav.ai",         href: "/ai",              icon: Sparkles },
   { key: "nav.visits",     href: "/visits",          icon: MapPinned,     badge: true },
   { key: "nav.schedule",   href: "/schedule",        icon: CalendarDays },
   { key: "nav.chains",     href: "/chains",          icon: Building2 },
