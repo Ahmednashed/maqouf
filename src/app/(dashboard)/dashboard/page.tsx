@@ -5,7 +5,7 @@ import dynamic from "next/dynamic";
 import Link from "next/link";
 import {
   CalendarDays, RefreshCw, AlertTriangle, CloudSun,
-  FileDown, SlidersHorizontal,
+  FileDown, SlidersHorizontal, Search,
 } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "@/lib/utils/cn";
@@ -30,6 +30,13 @@ import { LiveTeamMapCard }  from "./_components/LiveTeamMapCard";
 import { FieldTeamTable }   from "./_components/FieldTeamTable";
 import { TodayTimeline }    from "./_components/TodayTimeline";
 import { QuickActions }     from "./_components/QuickActions";
+import { PriorityPanel }      from "./_components/PriorityPanel";
+import { RecommendedActions } from "./_components/RecommendedActions";
+import { TeamHealthScore }    from "./_components/TeamHealthScore";
+import { SmartAlerts }        from "./_components/SmartAlerts";
+import { PerformersPanel }    from "./_components/PerformersPanel";
+import { CommandPalette, useCommandPalette } from "./_components/CommandPalette";
+import { deriveInsights }     from "./_components/insights";
 
 // Recharts is the heaviest client dependency on this page — defer it so the
 // KPI row and feed paint first.
@@ -102,6 +109,16 @@ export default function DashboardPage() {
     [extras.data?.team]
   );
 
+  // Command-center derivations (presentation-level, no new queries)
+  const insights = useMemo(
+    () => deriveInsights(dashboard.data, extras.data),
+    [dashboard.data, extras.data]
+  );
+  const ccLoading = dashboard.isLoading || extras.isLoading;
+
+  // §9 Ctrl/Cmd+K palette
+  const { open: paletteOpen, openPalette, closePalette } = useCommandPalette();
+
   const refresh = useCallback(() => {
     qc.invalidateQueries({ queryKey: DASHBOARD_KEY(date) });
     qc.invalidateQueries({ queryKey: EXTRAS_KEY(date) });
@@ -159,6 +176,18 @@ export default function DashboardPage() {
 
             {/* Actions */}
             <div className="flex items-center gap-2 shrink-0">
+              {/* §8 Global search trigger */}
+              <button
+                onClick={openPalette}
+                aria-label={t("cmdk.hint")}
+                className="inline-flex items-center gap-2 h-9 px-3 rounded-xl border border-ink-200 bg-white text-[12.5px] text-ink-400 hover:text-ink-600 hover:border-brand-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-400 transition-all"
+              >
+                <Search className="w-4 h-4" />
+                <span className="hidden md:inline">{t("cmdk.hint")}</span>
+                <kbd className="hidden md:inline px-1.5 py-0.5 rounded border border-ink-200 bg-ink-50 text-[9.5px] font-bold text-ink-400">
+                  Ctrl K
+                </kbd>
+              </button>
               <div className="relative">
                 <CalendarDays className="absolute start-3 top-1/2 -translate-y-1/2 w-4 h-4 text-ink-400 pointer-events-none" />
                 <input
@@ -209,13 +238,44 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* ── §1 Executive KPI cards ──────────────────────────────────────── */}
+      {/* ── §1 Today's Priorities (command center) ──────────────────────── */}
+      <PriorityPanel
+        priorities={insights.priorities}
+        loading={ccLoading}
+        t={t}
+      />
+
+      {/* ── Executive KPI cards ─────────────────────────────────────────── */}
       <ExecutiveKpiRow
         data={dashboard.data}
         extras={extras.data}
         loading={dashboard.isLoading}
         t={t}
       />
+
+      {/* ── §2–4 Health · Alerts · Recommendations ──────────────────────── */}
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 items-start">
+        <TeamHealthScore
+          score={insights.healthScore}
+          parts={insights.healthParts}
+          loading={ccLoading}
+          t={t}
+        />
+        <SmartAlerts
+          offline={insights.offlineCount}
+          gps={insights.gpsProblems}
+          delayed={extras.data?.overdueCount ?? 0}
+          sync={extras.data?.syncIssuesCount ?? 0}
+          loading={ccLoading}
+          t={t}
+        />
+        <RecommendedActions
+          insights={insights}
+          oosCount={dashboard.data?.alerts.length ?? 0}
+          loading={ccLoading}
+          t={t}
+        />
+      </div>
 
       {/* ── Main grid: content (2/3) + live rail (1/3) ──────────────────── */}
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-6 items-start">
@@ -238,7 +298,16 @@ export default function DashboardPage() {
             locale={locale}
           />
 
-          {/* §6 Charts (lazy) */}
+          {/* §5–6 Top performers · Needs support */}
+          <PerformersPanel
+            merchStats={dashboard.data?.merchStats}
+            team={extras.data?.team}
+            loading={ccLoading}
+            t={t}
+            locale={locale}
+          />
+
+          {/* Charts (lazy) */}
           <ChartsGrid
             data={dashboard.data}
             extras={extras.data}
@@ -250,19 +319,27 @@ export default function DashboardPage() {
 
         {/* Right rail */}
         <div className="space-y-6 min-w-0">
-          {/* §2 Live activity feed */}
+          {/* §7 AI assistant (conversational shell, design only) */}
+          <AiInsightsCard
+            t={t}
+            greeting={t(greetingKey)}
+            firstName={firstName}
+            issueCount={insights.issueCount}
+          />
+
+          {/* Live activity feed */}
           <LiveActivityFeed />
 
-          {/* §7 AI insights (design placeholder) */}
-          <AiInsightsCard t={t} />
-
-          {/* §5 Live team map (placeholder) */}
+          {/* Live team map (placeholder) */}
           <LiveTeamMapCard t={t} />
         </div>
       </div>
 
-      {/* ── §8 Quick actions FAB ─────────────────────────────────────────── */}
+      {/* ── Quick actions FAB ────────────────────────────────────────────── */}
       <QuickActions t={t} />
+
+      {/* ── §8–9 Command palette (Ctrl/Cmd+K) ───────────────────────────── */}
+      <CommandPalette open={paletteOpen} onClose={closePalette} />
     </div>
   );
 }

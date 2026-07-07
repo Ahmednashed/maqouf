@@ -5,9 +5,23 @@ import { Sparkles, TrendingDown, RefreshCw, UserRound, ArrowRight } from "lucide
 import { cn } from "@/lib/utils/cn";
 import type { TranslationFn } from "@/hooks/use-translation";
 
-// ─── Design placeholder — static examples, logic wired later ─────────────────
+// ─── Design placeholder — conversational shell, logic wired later ────────────
 
-export const AiInsightsCard = memo(function AiInsightsCard({ t }: { t: TranslationFn }) {
+interface AiInsightsCardProps {
+  t:            TranslationFn;
+  /** e.g. t("dashboard.hero.morning") — reuses the hero greeting. */
+  greeting:     string;
+  firstName:    string;
+  /** Derived issue count from the priority engine (0 = all clear). */
+  issueCount:   number;
+}
+
+export const AiInsightsCard = memo(function AiInsightsCard({
+  t,
+  greeting,
+  firstName,
+  issueCount,
+}: AiInsightsCardProps) {
   const insights = [
     { icon: TrendingDown, text: t("dashboard.ai.insight1") },
     { icon: UserRound,    text: t("dashboard.ai.insightUserLow") },
@@ -34,10 +48,10 @@ export const AiInsightsCard = memo(function AiInsightsCard({ t }: { t: Translati
             </div>
             <div>
               <h3 className="text-[15px] font-bold text-white leading-tight">
-                {t("dashboard.ai.assistant")}
+                🤖 {greeting}{firstName ? ` ${firstName}` : ""}
               </h3>
               <p className="text-[11.5px] text-violet-200 leading-tight mt-0.5">
-                {t("dashboard.ai.found")}
+                {t("dashboard.ai.analyzed")}
               </p>
             </div>
           </div>
@@ -45,6 +59,13 @@ export const AiInsightsCard = memo(function AiInsightsCard({ t }: { t: Translati
             {t("dashboard.ai.badge")}
           </span>
         </div>
+
+        {/* Conversational finding line */}
+        <p className="text-[13px] font-semibold text-white/95 mb-3">
+          {issueCount > 0
+            ? t("dashboard.ai.foundIssues", { n: issueCount })
+            : t("dashboard.ai.noIssues")}
+        </p>
 
         {/* Insights */}
         <div className="space-y-2 mb-4">
@@ -70,7 +91,7 @@ export const AiInsightsCard = memo(function AiInsightsCard({ t }: { t: Translati
             "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
           )}
         >
-          {t("dashboard.ai.cta")}
+          {t("dashboard.ai.openAnalysis")}
           <ArrowRight className="w-4 h-4 rtl:rotate-180" />
         </button>
 
