@@ -5,7 +5,8 @@ import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
   RadialBarChart, RadialBar, PolarAngleAxis, CartesianGrid,
 } from "recharts";
-import { BarChart3, PackageSearch } from "lucide-react";
+import Link from "next/link";
+import { BarChart3, PackageSearch, LineChart, ArrowRight } from "lucide-react";
 import type { TranslationFn } from "@/hooks/use-translation";
 import type { DashboardData, TrendPoint } from "@/services/dashboard";
 import type { ExecutiveExtras } from "@/services/dashboard-extras";
@@ -35,8 +36,26 @@ function ChartPanel({
 
 function NoData({ t }: { t: TranslationFn }) {
   return (
-    <div className="h-[160px] flex items-center justify-center">
-      <p className="text-[12px] text-ink-300">{t("dashboard.chart.noData")}</p>
+    <div className="h-[160px] flex flex-col items-center justify-center gap-2">
+      {/* Mini illustration: ghosted bars */}
+      <div className="flex items-end gap-1.5 h-10" aria-hidden="true">
+        {[16, 26, 12, 32, 20].map((h, i) => (
+          <span
+            key={i}
+            className="w-2.5 rounded-t bg-ink-100"
+            style={{ height: `${h}px` }}
+          />
+        ))}
+        <LineChart className="w-4 h-4 text-ink-200 mb-1 ms-1" />
+      </div>
+      <p className="text-[12px] font-semibold text-ink-400">{t("dashboard.chart.noData")}</p>
+      <Link
+        href="/visits"
+        className="inline-flex items-center gap-1 text-[11.5px] font-semibold text-brand-500 hover:text-brand-600 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-400 rounded"
+      >
+        {t("dashboard.chart.emptyCta")}
+        <ArrowRight className="w-3 h-3 rtl:rotate-180" />
+      </Link>
     </div>
   );
 }

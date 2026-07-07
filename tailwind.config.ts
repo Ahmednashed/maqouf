@@ -71,6 +71,9 @@ const config: Config = {
           "0%, 100%": { opacity: "1", transform: "scale(1)" },
           "50%":      { opacity: "0.5", transform: "scale(1.4)" },
         },
+        shimmer: {
+          "100%": { transform: "translateX(100%)" },
+        },
       },
     },
   },

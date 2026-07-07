@@ -2,7 +2,7 @@
 
 import { memo } from "react";
 import Link from "next/link";
-import { Activity, Radio, ExternalLink, Loader2 } from "lucide-react";
+import { Activity, ExternalLink, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
 import { useTranslation } from "@/hooks/use-translation";
 import { useActivityLogs } from "@/hooks/use-activity-logs";
@@ -32,8 +32,11 @@ export const LiveActivityFeed = memo(function LiveActivityFeed() {
         title={t("dashboard.section.liveFeed")}
         icon={Activity}
         action={
-          <span className="inline-flex items-center gap-1 text-[10.5px] font-semibold text-emerald-600">
-            <Radio className="w-3 h-3 animate-pulse" />
+          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-emerald-50 border border-emerald-100 text-[10px] font-bold text-emerald-600 tracking-wide">
+            <span className="relative flex w-2 h-2">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-60" />
+              <span className="relative inline-flex rounded-full w-2 h-2 bg-emerald-500" />
+            </span>
             LIVE
           </span>
         }

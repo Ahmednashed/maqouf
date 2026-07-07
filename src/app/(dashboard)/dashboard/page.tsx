@@ -1,10 +1,17 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo } from "react";
 import dynamic from "next/dynamic";
-import { CalendarDays, RefreshCw, AlertTriangle } from "lucide-react";
+import Link from "next/link";
+import {
+  CalendarDays, RefreshCw, AlertTriangle, CloudSun,
+  FileDown, SlidersHorizontal,
+} from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
+import { cn } from "@/lib/utils/cn";
 import { useTranslation } from "@/hooks/use-translation";
+import { useCurrentMember, currentMemberLabel } from "@/hooks/use-current-member";
+import { presenceOf } from "@/services/dashboard-extras";
 import {
   useDashboard,
   useTrendData,
@@ -40,6 +47,23 @@ function todayIso(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
+function SummaryChip({
+  value,
+  label,
+  className,
+}: {
+  value:     number;
+  label:     string;
+  className: string;
+}) {
+  return (
+    <span className={cn("inline-flex items-center gap-1 px-2 py-0.5 rounded-full font-semibold", className)}>
+      <span className="font-bold">{value}</span>
+      {label}
+    </span>
+  );
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function DashboardPage() {
@@ -50,8 +74,33 @@ export default function DashboardPage() {
   const dashboard = useDashboard(date);
   const extras    = useExecutiveExtras(date);
   const trend     = useTrendData(30);
+  const { data: me } = useCurrentMember();
 
   const dir = locale === "ar" ? "rtl" : "ltr";
+
+  // Hero derivations
+  const greetingKey = useMemo(() => {
+    const h = new Date().getHours();
+    if (h < 12) return "dashboard.hero.morning" as const;
+    if (h < 17) return "dashboard.hero.afternoon" as const;
+    return "dashboard.hero.evening" as const;
+  }, []);
+
+  const firstName = currentMemberLabel(me).split(" ")[0] || "";
+
+  const prettyDate = useMemo(
+    () =>
+      new Date(date + "T00:00:00").toLocaleDateString(
+        locale === "ar" ? "ar-SA-u-ca-gregory" : "en-GB",
+        { weekday: "long", day: "numeric", month: "long", year: "numeric" }
+      ),
+    [date, locale]
+  );
+
+  const onlineNow = useMemo(
+    () => (extras.data?.team ?? []).filter((m) => presenceOf(m.last_activity_at) === "online").length,
+    [extras.data?.team]
+  );
 
   const refresh = useCallback(() => {
     qc.invalidateQueries({ queryKey: DASHBOARD_KEY(date) });
@@ -80,29 +129,83 @@ export default function DashboardPage() {
   return (
     <div className="space-y-6 pb-10" dir={dir}>
 
-      {/* ── Header + date + refresh ─────────────────────────────────────── */}
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h1 className="text-[22px] font-bold text-ink-900">{t("dashboard.title")}</h1>
-          <p className="text-ink-500 text-[13px] mt-0.5">{t("dashboard.subtitle")}</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <div className="relative">
-            <CalendarDays className="absolute start-3 top-1/2 -translate-y-1/2 w-4 h-4 text-ink-400 pointer-events-none" />
-            <input
-              type="date"
-              value={date}
-              onChange={(e) => setDate(e.target.value)}
-              className="h-9 ps-9 pe-3 rounded-xl border border-ink-200 bg-white text-[13px] text-ink-800 outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-50 transition-all"
-            />
+      {/* ── §1 Hero header ──────────────────────────────────────────────── */}
+      <div className="relative bg-white rounded-2xl border border-ink-100 shadow-sm overflow-hidden">
+        {/* Subtle brand wash */}
+        <div className="absolute inset-0 bg-gradient-to-r from-brand-50/70 via-transparent to-transparent pointer-events-none" />
+
+        <div className="relative px-5 py-5 sm:px-6">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            {/* Greeting */}
+            <div className="min-w-0">
+              <h1 className="text-[22px] sm:text-[24px] font-bold text-ink-900 leading-tight">
+                {t(greetingKey)}{firstName ? ` ${firstName}` : ""} 👋
+              </h1>
+              <p className="text-ink-500 text-[13px] mt-1">{t("dashboard.hero.tagline")}</p>
+
+              {/* Date + weather chip */}
+              <div className="flex flex-wrap items-center gap-2 mt-2.5">
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-ink-50 border border-ink-100 text-[11.5px] font-semibold text-ink-600">
+                  <CalendarDays className="w-3.5 h-3.5 text-ink-400" />
+                  {prettyDate}
+                </span>
+                {/* Weather placeholder */}
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-50 border border-amber-100 text-[11.5px] font-semibold text-amber-700">
+                  <CloudSun className="w-3.5 h-3.5" />
+                  —°
+                </span>
+              </div>
+            </div>
+
+            {/* Actions */}
+            <div className="flex items-center gap-2 shrink-0">
+              <div className="relative">
+                <CalendarDays className="absolute start-3 top-1/2 -translate-y-1/2 w-4 h-4 text-ink-400 pointer-events-none" />
+                <input
+                  type="date"
+                  value={date}
+                  aria-label={t("dashboard.dateLabel")}
+                  onChange={(e) => setDate(e.target.value)}
+                  className="h-9 ps-9 pe-3 rounded-xl border border-ink-200 bg-white text-[13px] text-ink-800 outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-50 transition-all"
+                />
+              </div>
+              <button
+                onClick={refresh}
+                aria-label="Refresh"
+                title="Refresh"
+                className="w-9 h-9 rounded-xl border border-ink-200 bg-white flex items-center justify-center text-ink-500 hover:text-brand-600 hover:border-brand-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-400 transition-all"
+              >
+                <RefreshCw className="w-4 h-4" />
+              </button>
+              <Link
+                href="/reports"
+                className="hidden sm:inline-flex items-center gap-1.5 h-9 px-3.5 rounded-xl border border-ink-200 bg-white text-[12.5px] font-semibold text-ink-600 hover:text-brand-600 hover:border-brand-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-400 transition-all"
+              >
+                <FileDown className="w-4 h-4" />
+                {t("dashboard.hero.export")}
+              </Link>
+              <button
+                type="button"
+                disabled
+                title={t("dashboard.hero.filters")}
+                className="hidden sm:inline-flex items-center gap-1.5 h-9 px-3.5 rounded-xl border border-ink-200 bg-white text-[12.5px] font-semibold text-ink-300 cursor-not-allowed"
+              >
+                <SlidersHorizontal className="w-4 h-4" />
+                {t("dashboard.hero.filters")}
+              </button>
+            </div>
           </div>
-          <button
-            onClick={refresh}
-            title="Refresh"
-            className="w-9 h-9 rounded-xl border border-ink-200 bg-white flex items-center justify-center text-ink-500 hover:text-brand-600 hover:border-brand-300 transition-all"
-          >
-            <RefreshCw className="w-4 h-4" />
-          </button>
+
+          {/* Summary line */}
+          {dashboard.data && (
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 mt-4 pt-4 border-t border-ink-100/70 text-[12.5px]">
+              <span className="text-ink-500 font-medium">{t("dashboard.hero.summaryPrefix")}</span>
+              <SummaryChip value={dashboard.data.todayTotal}     label={t("dashboard.hero.chipPlanned")}   className="bg-blue-50 text-blue-700" />
+              <SummaryChip value={dashboard.data.todayCompleted} label={t("dashboard.hero.chipCompleted")} className="bg-emerald-50 text-emerald-700" />
+              <SummaryChip value={extras.data?.overdueCount ?? 0} label={t("dashboard.hero.chipDelayed")}  className="bg-amber-50 text-amber-700" />
+              <SummaryChip value={onlineNow}                     label={t("dashboard.hero.chipOnline")}    className="bg-teal-50 text-teal-700" />
+            </div>
+          )}
         </div>
       </div>
 

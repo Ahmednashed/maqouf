@@ -669,6 +669,28 @@ export const translations = {
     "dashboard.qa.inviteUser":        "دعوة مستخدم",
     "dashboard.qa.newBranch":         "فرع جديد",
     "dashboard.qa.exportReport":      "تصدير تقرير",
+    // Hero header
+    "dashboard.hero.morning":         "صباح الخير",
+    "dashboard.hero.afternoon":       "مساء الخير",
+    "dashboard.hero.evening":         "مساء الخير",
+    "dashboard.hero.tagline":         "إليك ما يحدث اليوم",
+    "dashboard.hero.summaryPrefix":   "فريقك اليوم لديه",
+    "dashboard.hero.chipPlanned":     "زيارة مخططة",
+    "dashboard.hero.chipCompleted":   "مكتملة",
+    "dashboard.hero.chipDelayed":     "متأخرة",
+    "dashboard.hero.chipOnline":      "متصلون",
+    "dashboard.hero.export":          "تصدير",
+    "dashboard.hero.filters":         "تصفية",
+    // AI assistant redesign
+    "dashboard.ai.assistant":         "المساعد الذكي",
+    "dashboard.ai.found":             "وجدت اليوم 3 رؤى مهمة",
+    "dashboard.ai.insightUserLow":    "أحمد لديه زيارة واحدة فقط اليوم",
+    "dashboard.ai.cta":               "عرض التحليل الذكي",
+    // Map empty state
+    "dashboard.map.noLocations":      "لا توجد مواقع مباشرة بعد",
+    "dashboard.map.connectApp":       "اربط تطبيق الجوال لعرض مواقع الفريق لحظياً",
+    // Chart empty CTA
+    "dashboard.chart.emptyCta":       "ابدأ بإنشاء الزيارات",
     // Reports
     "reports.title":                "التقارير",
     "reports.subtitle":             "تحليل الأداء خلال فترة زمنية",
@@ -1398,6 +1420,28 @@ export const translations = {
     "dashboard.qa.inviteUser":        "Invite User",
     "dashboard.qa.newBranch":         "New Branch",
     "dashboard.qa.exportReport":      "Export Report",
+    // Hero header
+    "dashboard.hero.morning":         "Good morning",
+    "dashboard.hero.afternoon":       "Good afternoon",
+    "dashboard.hero.evening":         "Good evening",
+    "dashboard.hero.tagline":         "Here's what is happening today",
+    "dashboard.hero.summaryPrefix":   "Today your team has",
+    "dashboard.hero.chipPlanned":     "planned visits",
+    "dashboard.hero.chipCompleted":   "completed",
+    "dashboard.hero.chipDelayed":     "delayed",
+    "dashboard.hero.chipOnline":      "online",
+    "dashboard.hero.export":          "Export",
+    "dashboard.hero.filters":         "Filters",
+    // AI assistant redesign
+    "dashboard.ai.assistant":         "AI Assistant",
+    "dashboard.ai.found":             "Today I found 3 important insights",
+    "dashboard.ai.insightUserLow":    "Ahmed has only one visit today",
+    "dashboard.ai.cta":               "View AI Analysis",
+    // Map empty state
+    "dashboard.map.noLocations":      "No live locations yet",
+    "dashboard.map.connectApp":       "Connect the mobile app to see live team positions",
+    // Chart empty CTA
+    "dashboard.chart.emptyCta":       "Start creating visits",
     // Reports
     "reports.title":                "Reports",
     "reports.subtitle":             "Analyse performance over a date range",

@@ -61,7 +61,14 @@ const TeamRow = memo(function TeamRow({
   return (
     <tr
       onClick={onOpen}
-      className="border-b border-ink-50 hover:bg-ink-50/60 transition-colors cursor-pointer"
+      tabIndex={0}
+      role="button"
+      aria-label={member.name}
+      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onOpen(); } }}
+      className={cn(
+        "border-b border-ink-50 hover:bg-ink-50/60 transition-colors cursor-pointer",
+        "focus-visible:outline-none focus-visible:bg-brand-50/50 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-300"
+      )}
     >
       {/* Avatar + name */}
       <td className="px-4 py-3">

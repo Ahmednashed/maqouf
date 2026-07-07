@@ -44,26 +44,35 @@ export const QuickActions = memo(function QuickActions({ t }: { t: TranslationFn
 
   return (
     <div ref={ref} className="fixed bottom-6 end-6 z-40 flex flex-col items-end gap-2">
-      {/* Expanded actions */}
+      {/* Expanded actions — staggered entrance */}
       {open && (
-        <div className="flex flex-col items-end gap-2 animate-slide-up">
-          {ACTIONS.map(({ key, label, icon: Icon, href, color }) => (
+        <div className="flex flex-col items-end gap-2.5" role="menu" aria-label="quick actions">
+          {ACTIONS.map(({ key, label, icon: Icon, href, color }, i) => (
             <button
               key={key}
+              role="menuitem"
               onClick={() => { setOpen(false); router.push(href); }}
-              className="group flex items-center gap-2.5"
+              className={cn(
+                "group flex items-center gap-2.5 animate-slide-up",
+                "focus-visible:outline-none"
+              )}
+              style={{ animationDelay: `${(ACTIONS.length - 1 - i) * 40}ms`, animationFillMode: "backwards" }}
             >
-              <span className="px-2.5 py-1 rounded-lg bg-ink-900 text-white text-[11.5px] font-semibold shadow-pop opacity-90">
+              <span className={cn(
+                "px-3 py-1.5 rounded-lg bg-ink-900/90 backdrop-blur text-white text-[11.5px] font-semibold shadow-pop",
+                "transition-all opacity-90 group-hover:opacity-100 group-focus-visible:ring-2 group-focus-visible:ring-white"
+              )}>
                 {label}
               </span>
               <span
                 className={cn(
                   "w-10 h-10 rounded-full flex items-center justify-center text-white shadow-pop",
-                  "transition-transform group-hover:scale-110",
+                  "transition-all group-hover:scale-110 group-hover:shadow-modal",
+                  "group-focus-visible:ring-2 group-focus-visible:ring-offset-2 group-focus-visible:ring-brand-400",
                   color
                 )}
               >
-                <Icon className="w-4.5 h-4.5 w-[18px] h-[18px]" />
+                <Icon className="w-[18px] h-[18px]" />
               </span>
             </button>
           ))}
@@ -74,9 +83,11 @@ export const QuickActions = memo(function QuickActions({ t }: { t: TranslationFn
       <button
         onClick={() => setOpen((v) => !v)}
         aria-label="quick actions"
+        aria-expanded={open}
         className={cn(
-          "w-13 h-13 w-[52px] h-[52px] rounded-full flex items-center justify-center text-white shadow-modal",
-          "transition-all hover:scale-105",
+          "w-[52px] h-[52px] rounded-full flex items-center justify-center text-white shadow-modal",
+          "transition-all duration-200 hover:scale-105 active:scale-95",
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand-400",
           open ? "bg-ink-700 rotate-90" : "bg-brand-500 hover:bg-brand-600"
         )}
       >
