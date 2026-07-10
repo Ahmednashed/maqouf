@@ -25,6 +25,11 @@ export function useAiContext(date: string) {
 
 // ─── Chat state ───────────────────────────────────────────────────────────────
 
+import type { AiSource, SuggestedAction } from "@/ai/types";
+import { useQueryClient } from "@tanstack/react-query";
+import { AI_CONVERSATIONS_KEY } from "@/hooks/use-ai-conversations";
+import type { StoredAiMessage } from "@/services/ai-conversations";
+
 export interface ToolCallInfo {
   name:     string;
   summary?: string;
@@ -37,6 +42,10 @@ export interface ChatMessage {
   createdAt:  number;
   /** Which operational tools produced this answer (real AI only). */
   toolCalls?: ToolCallInfo[];
+  /** Structured evidence links. */
+  sources?:   AiSource[];
+  /** Navigation-only suggestions (never executed). */
+  suggestedActions?: SuggestedAction[];
   /** True when this answer came from the local rule engine, not real AI. */
   isMock?:    boolean;
 }
@@ -44,10 +53,13 @@ export interface ChatMessage {
 export type ChatError = "rate_limited" | "unauthorized" | "unavailable" | null;
 
 interface ChatApiResponse {
-  answer?:          string;
-  toolCalls?:       ToolCallInfo[];
-  error?:           string;
-  fallbackAllowed?: boolean;
+  answer?:           string;
+  toolCalls?:        ToolCallInfo[];
+  sources?:          AiSource[];
+  suggestedActions?: SuggestedAction[];
+  conversationId?:   string | null;
+  error?:            string;
+  fallbackAllowed?:  boolean;
 }
 
 function todayIso(): string {
@@ -61,11 +73,13 @@ function todayIso(): string {
  */
 export function useAiChat(context: AiOperationalContext | undefined) {
   const { locale } = useTranslation();
-  const [messages, setMessages]     = useState<ChatMessage[]>([]);
-  const [isTyping, setIsTyping]     = useState(false);
-  const [error, setError]           = useState<ChatError>(null);
-  const lastQuestionRef             = useRef<string | null>(null);
-  const abortRef                    = useRef<AbortController | null>(null);
+  const qc = useQueryClient();
+  const [messages, setMessages]             = useState<ChatMessage[]>([]);
+  const [conversationId, setConversationId] = useState<string | null>(null);
+  const [isTyping, setIsTyping]             = useState(false);
+  const [error, setError]                   = useState<ChatError>(null);
+  const lastQuestionRef                     = useRef<string | null>(null);
+  const abortRef                            = useRef<AbortController | null>(null);
 
   useEffect(() => () => abortRef.current?.abort(), []);
 
@@ -97,14 +111,30 @@ export function useAiChat(context: AiOperationalContext | undefined) {
       const res = await fetch("/api/ai/chat", {
         method:  "POST",
         headers: { "Content-Type": "application/json" },
-        body:    JSON.stringify({ messages: history, locale, date: todayIso() }),
+        body:    JSON.stringify({
+          messages: history,
+          locale,
+          date: todayIso(),
+          conversationId: conversationId ?? undefined,
+        }),
         signal:  abortRef.current.signal,
       });
 
       const json = (await res.json().catch(() => ({}))) as ChatApiResponse;
 
       if (res.ok && json.answer) {
-        push({ role: "assistant", text: json.answer, toolCalls: json.toolCalls ?? [] });
+        push({
+          role: "assistant",
+          text: json.answer,
+          toolCalls:        json.toolCalls ?? [],
+          sources:          json.sources ?? [],
+          suggestedActions: json.suggestedActions ?? [],
+        });
+        if (json.conversationId && json.conversationId !== conversationId) {
+          setConversationId(json.conversationId);
+          // A new conversation appeared — refresh the sidebar list
+          qc.invalidateQueries({ queryKey: AI_CONVERSATIONS_KEY });
+        }
         return;
       }
 
@@ -124,7 +154,7 @@ export function useAiChat(context: AiOperationalContext | undefined) {
     } finally {
       setIsTyping(false);
     }
-  }, [messages, isTyping, locale, context]);
+  }, [messages, isTyping, locale, context, conversationId, qc]);
 
   const retry = useCallback(() => {
     const q = lastQuestionRef.current;
@@ -143,13 +173,37 @@ export function useAiChat(context: AiOperationalContext | undefined) {
   const askRef = useRef(ask);
   useEffect(() => { askRef.current = ask; }, [ask]);
 
+  /** Start a brand-new conversation. */
   const clear = useCallback(() => {
     abortRef.current?.abort();
     setIsTyping(false);
     setError(null);
     setMessages([]);
+    setConversationId(null);
     lastQuestionRef.current = null;
   }, []);
 
-  return { messages, isTyping, error, ask, retry, clear };
+  /** Hydrate the chat from a stored conversation. */
+  const loadConversation = useCallback(
+    (id: string, stored: StoredAiMessage[]) => {
+      abortRef.current?.abort();
+      setIsTyping(false);
+      setError(null);
+      setConversationId(id);
+      setMessages(
+        stored.map((m) => ({
+          id:        m.id,
+          role:      m.role,
+          text:      m.content,
+          createdAt: new Date(m.created_at).getTime(),
+          toolCalls: m.tool_calls ?? undefined,
+          sources:   m.sources ?? undefined,
+        }))
+      );
+      lastQuestionRef.current = null;
+    },
+    []
+  );
+
+  return { messages, conversationId, isTyping, error, ask, retry, clear, loadConversation };
 }

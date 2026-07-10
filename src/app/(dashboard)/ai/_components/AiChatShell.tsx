@@ -14,6 +14,8 @@ import { AiPromptSuggestions } from "./AiPromptSuggestions";
 
 interface AiChatShellProps {
   context?: AiOperationalContext;
+  /** Chat state owned by the page (so the conversation list can drive it). */
+  chat: ReturnType<typeof useAiChat>;
 }
 
 const ERROR_KEYS: Record<Exclude<ChatError, null>, "ai.errRateLimit" | "ai.errUnauthorized" | "ai.errUnavailable"> = {
@@ -22,9 +24,9 @@ const ERROR_KEYS: Record<Exclude<ChatError, null>, "ai.errRateLimit" | "ai.errUn
   unavailable:  "ai.errUnavailable",
 };
 
-export function AiChatShell({ context }: AiChatShellProps) {
+export function AiChatShell({ chat }: AiChatShellProps) {
   const { t } = useTranslation();
-  const { messages, isTyping, error, ask, retry, clear } = useAiChat(context);
+  const { messages, isTyping, error, ask, retry, clear } = chat;
   const [input, setInput] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef  = useRef<HTMLInputElement>(null);

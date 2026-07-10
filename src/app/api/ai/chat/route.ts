@@ -3,17 +3,16 @@ import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { getAiConfig, MAX_QUESTION_CHARS, MAX_HISTORY_MESSAGES } from "@/ai/config";
 import { runOperationsChat } from "@/ai/router";
+import { loadOrCreateConversation, persistExchange } from "@/ai/memory";
 import { ProviderError } from "@/ai/types";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // POST /api/ai/chat — the only door between the browser and the AI Core.
 //
-// Security:
-//  • Session verified via the cookie-based server client (401 otherwise).
-//  • company_id is NEVER accepted from the client — RLS on the
-//    authenticated client is the tenant boundary.
-//  • Daily limit enforced server-side via SECURITY DEFINER RPC (429).
-//  • OPENAI_API_KEY exists only in this server context.
+// v2 additions: conversation persistence (ai_conversations/ai_messages),
+// entity-context follow-ups, structured sources + suggested actions,
+// and request logging (ai_request_logs) — all fire-safe: memory or logging
+// failures never break the answer.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const runtime = "nodejs";
@@ -28,8 +27,9 @@ const bodySchema = z.object({
     )
     .min(1)
     .max(MAX_HISTORY_MESSAGES * 3),   // sanity bound; router trims further
-  locale: z.enum(["ar", "en"]),
-  date:   z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  locale:         z.enum(["ar", "en"]),
+  date:           z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  conversationId: z.string().uuid().optional(),
 });
 
 export async function POST(request: NextRequest) {
@@ -37,13 +37,47 @@ export async function POST(request: NextRequest) {
   const startedAt = Date.now();
   const cfg       = getAiConfig();
 
+  // Populated as the request progresses so the catch block can log context
+  let conversationId: string | null = null;
+  let userId: string | null = null;
+
+  const supabase = await createClient();
+
+  const writeLog = (params: {
+    toolNames:   string[];
+    toolRounds:  number;
+    inputTokens: number;
+    outputTokens: number;
+    success:     boolean;
+    errorCategory: string | null;
+  }) => {
+    supabase
+      .rpc("log_ai_request", {
+        p_conversation_id: conversationId,
+        p_request_id:      requestId,
+        p_model:           cfg.model,
+        p_tool_names:      params.toolNames,
+        p_tool_rounds:     params.toolRounds,
+        p_duration_ms:     Date.now() - startedAt,
+        p_input_tokens:    params.inputTokens,
+        p_output_tokens:   params.outputTokens,
+        p_success:         params.success,
+        p_error_category:  params.errorCategory,
+      })
+      .then(({ error }) => {
+        if (error && error.code !== "42883" && error.code !== "PGRST202") {
+          console.warn(`[ai:${requestId}] request log failed: ${error.code}`);
+        }
+      });
+  };
+
   try {
     // ── 1. Auth ──────────────────────────────────────────────────────────
-    const supabase = await createClient();
     const { data: { user }, error: authErr } = await supabase.auth.getUser();
     if (authErr || !user) {
       return NextResponse.json({ error: "unauthorized" }, { status: 401 });
     }
+    userId = user.id;
 
     // ── 2. Validate input ────────────────────────────────────────────────
     let raw: unknown;
@@ -57,8 +91,8 @@ export async function POST(request: NextRequest) {
     const { messages, locale } = parsed.data;
     const date = parsed.data.date ?? new Date().toISOString().slice(0, 10);
 
-    // The last message must be from the user (that's the question)
-    if (messages[messages.length - 1].role !== "user") {
+    const lastMessage = messages[messages.length - 1];
+    if (lastMessage.role !== "user") {
       return NextResponse.json({ error: "invalid_body" }, { status: 400 });
     }
 
@@ -68,20 +102,36 @@ export async function POST(request: NextRequest) {
       { p_limit: cfg.dailyRequestLimit }
     );
     if (rpcErr) {
-      // Pre-migration deployments: RPC missing → allow but log
       console.warn(`[ai:${requestId}] usage RPC unavailable: ${rpcErr.code}`);
     } else if (countResult === -1) {
-      console.info(`[ai:${requestId}] user=${user.id} rate-limited`);
-      return NextResponse.json(
-        { error: "rate_limited" },
-        { status: 429 }
-      );
+      console.info(`[ai:${requestId}] user=${userId} rate-limited`);
+      return NextResponse.json({ error: "rate_limited" }, { status: 429 });
     }
 
-    // ── 4. Run the AI Core ───────────────────────────────────────────────
-    const result = await runOperationsChat({ supabase, messages, locale, date });
+    // ── 4. Conversation memory (graceful pre-migration degradation) ──────
+    const conversation = await loadOrCreateConversation(
+      supabase,
+      parsed.data.conversationId,
+      lastMessage.content,
+      locale
+    );
+    conversationId = conversation?.id ?? null;
 
-    // ── 5. Record token usage (best-effort, never blocks the response) ───
+    // ── 5. Run the AI Core ───────────────────────────────────────────────
+    const result = await runOperationsChat({
+      supabase,
+      messages,
+      locale,
+      date,
+      entityContext: conversation?.entity_context ?? null,
+    });
+
+    // ── 6. Persist exchange + tokens + request log (all fire-safe) ───────
+    if (conversation) {
+      void persistExchange(
+        supabase, conversation, lastMessage.content, result, result.nextEntityContext
+      );
+    }
     if (result.usage?.inputTokens || result.usage?.outputTokens) {
       supabase
         .rpc("record_ai_tokens", {
@@ -92,21 +142,43 @@ export async function POST(request: NextRequest) {
           if (error) console.warn(`[ai:${requestId}] token recording failed`);
         });
     }
+    writeLog({
+      toolNames:    result.toolCalls.map((c) => c.name),
+      toolRounds:   result.toolRounds ?? 0,
+      inputTokens:  result.usage?.inputTokens  ?? 0,
+      outputTokens: result.usage?.outputTokens ?? 0,
+      success:      true,
+      errorCategory: null,
+    });
 
-    // ── 6. Safe observability (no prompts, no keys, no row data) ─────────
     console.info(
-      `[ai:${requestId}] user=${user.id} tools=[${result.toolCalls.map((c) => c.name).join(",")}] ` +
+      `[ai:${requestId}] user=${userId} conv=${conversationId ?? "-"} ` +
+      `tools=[${result.toolCalls.map((c) => c.name).join(",")}] rounds=${result.toolRounds} ` +
       `in=${result.usage?.inputTokens ?? 0} out=${result.usage?.outputTokens ?? 0} ` +
       `ms=${Date.now() - startedAt}`
     );
 
-    return NextResponse.json(result);
+    // nextEntityContext is server-internal — don't ship it to the browser
+    return NextResponse.json({
+      answer:           result.answer,
+      toolCalls:        result.toolCalls,
+      sources:          result.sources,
+      suggestedActions: result.suggestedActions,
+      conversationId,
+      usage:            result.usage,
+    });
 
   } catch (err: unknown) {
     const category = err instanceof ProviderError ? err.category : "unknown";
     console.error(`[ai:${requestId}] failed category=${category} ms=${Date.now() - startedAt}`);
 
-    // Friendly, non-leaking error; tell the client if mock fallback is allowed
+    if (userId) {
+      writeLog({
+        toolNames: [], toolRounds: 0, inputTokens: 0, outputTokens: 0,
+        success: false, errorCategory: category,
+      });
+    }
+
     return NextResponse.json(
       { error: "ai_unavailable", category, fallbackAllowed: cfg.mockFallback },
       { status: 503 }

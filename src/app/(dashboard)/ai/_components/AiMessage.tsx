@@ -1,7 +1,10 @@
 "use client";
 
 import { memo, useState } from "react";
-import { Sparkles, Copy, Check, Database, CircleSlash } from "lucide-react";
+import Link from "next/link";
+import {
+  Sparkles, Copy, Check, Database, CircleSlash, ExternalLink, Zap,
+} from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils/cn";
 import { useTranslation } from "@/hooks/use-translation";
@@ -72,8 +75,30 @@ export const AiMessage = memo(function AiMessage({ message }: { message: ChatMes
           </div>
         )}
 
-        {/* Which operational sources the answer used */}
-        {!isUser && !message.isMock && (message.toolCalls?.length ?? 0) > 0 && (
+        {/* Clickable evidence sources (entity links) */}
+        {!isUser && (message.sources?.length ?? 0) > 0 && (
+          <div className="flex flex-wrap items-center gap-1 mt-1.5">
+            <span className="inline-flex items-center gap-1 text-[9.5px] font-bold text-ink-300 uppercase tracking-wide me-0.5">
+              <Database className="w-2.5 h-2.5" />
+              {t("ai.sourcesUsed")}:
+            </span>
+            {message.sources!.map((s) => (
+              <Link
+                key={`${s.type}:${s.id}`}
+                href={s.href}
+                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-violet-50 border border-violet-100 text-[9.5px] font-semibold text-violet-600 hover:bg-violet-100 hover:border-violet-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400 transition-colors"
+              >
+                {s.label}
+                <ExternalLink className="w-2.5 h-2.5" />
+              </Link>
+            ))}
+          </div>
+        )}
+
+        {/* Tool chips (data consulted) — shown when no entity sources exist */}
+        {!isUser && !message.isMock &&
+          (message.sources?.length ?? 0) === 0 &&
+          (message.toolCalls?.length ?? 0) > 0 && (
           <div className="flex flex-wrap items-center gap-1 mt-1.5">
             <span className="inline-flex items-center gap-1 text-[9.5px] font-bold text-ink-300 uppercase tracking-wide me-0.5">
               <Database className="w-2.5 h-2.5" />
@@ -91,6 +116,30 @@ export const AiMessage = memo(function AiMessage({ message }: { message: ChatMes
                 </span>
               );
             })}
+          </div>
+        )}
+
+        {/* Suggested actions — navigation only, nothing executes */}
+        {!isUser && (message.suggestedActions?.length ?? 0) > 0 && (
+          <div className="mt-2">
+            <p className="inline-flex items-center gap-1 text-[9.5px] font-bold text-ink-300 uppercase tracking-wide mb-1">
+              <Zap className="w-2.5 h-2.5" />
+              {t("ai.actionsTitle")}
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              {message.suggestedActions!.map((a) => (
+                a.href ? (
+                  <Link
+                    key={a.type}
+                    href={a.href}
+                    title={t("ai.actionNote")}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white border border-ink-200 text-[11px] font-bold text-ink-600 hover:border-violet-300 hover:text-violet-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400 transition-all"
+                  >
+                    {a.label}
+                  </Link>
+                ) : null
+              ))}
+            </div>
           </div>
         )}
 

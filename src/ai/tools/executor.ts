@@ -1,6 +1,6 @@
 import { z } from "zod";
-import type { ToolContext, ToolExecution } from "../types";
-import { MAX_FIELD_CHARS } from "../config";
+import type { AiSource, ToolContext, ToolExecution } from "../types";
+import { MAX_FIELD_CHARS, MAX_TOOL_RESULT_CHARS } from "../config";
 import { ALLOWED_TOOL_NAMES } from "./definitions";
 import { getDashboardMetrics, dashboardMetricsArgs } from "./get-dashboard-metrics";
 import { getTodayVisits,      todayVisitsArgs }      from "./get-today-visits";
@@ -9,6 +9,18 @@ import { getSyncIssues,       syncIssuesArgs }       from "./get-sync-issues";
 import { getActivityLogs,     activityLogsArgs }     from "./get-activity-logs";
 import { getUsers,            usersArgs }            from "./get-users";
 import { getUnvisitedPlaces,  unvisitedPlacesArgs }  from "./get-unvisited-places";
+import { getUserDetails,      userDetailsArgs }      from "./get-user-details";
+import { getUserPerformance,  userPerformanceArgs }  from "./get-user-performance";
+import { getVisitDetails,     visitDetailsArgs }     from "./get-visit-details";
+import { getVisitTimeline,    visitTimelineArgs }    from "./get-visit-timeline";
+import { getVisitProducts,    visitProductsArgs }    from "./get-visit-products";
+import { getVisitPhotos,      visitPhotosArgs }      from "./get-visit-photos";
+import { getScheduleDetails,  scheduleDetailsArgs }  from "./get-schedule-details";
+import { getPlaceHistory,     placeHistoryArgs }     from "./get-place-history";
+import { getStockIssues,      stockIssuesArgs }      from "./get-stock-issues";
+import { getTemplateResponses, templateResponsesArgs } from "./get-template-responses";
+import { getMissingVisits,    missingVisitsArgs }    from "./get-missing-visits";
+import { comparePeriods,      comparePeriodsArgs }   from "./compare-periods";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool executor. Model-provided arguments are UNTRUSTED input:
@@ -33,6 +45,19 @@ const REGISTRY: Record<string, RegisteredTool> = {
   get_activity_logs:     { schema: activityLogsArgs,     run: (ctx, a)   => getActivityLogs(ctx, a as never) },
   get_users:             { schema: usersArgs,            run: (ctx, a)   => getUsers(ctx, a as never) },
   get_unvisited_places:  { schema: unvisitedPlacesArgs,  run: (ctx)      => getUnvisitedPlaces(ctx) },
+  // v2 deep tools
+  get_user_details:       { schema: userDetailsArgs,       run: (ctx, a) => getUserDetails(ctx, a as never) },
+  get_user_performance:   { schema: userPerformanceArgs,   run: (ctx, a) => getUserPerformance(ctx, a as never) },
+  get_visit_details:      { schema: visitDetailsArgs,      run: (ctx, a) => getVisitDetails(ctx, a as never) },
+  get_visit_timeline:     { schema: visitTimelineArgs,     run: (ctx, a) => getVisitTimeline(ctx, a as never) },
+  get_visit_products:     { schema: visitProductsArgs,     run: (ctx, a) => getVisitProducts(ctx, a as never) },
+  get_visit_photos:       { schema: visitPhotosArgs,       run: (ctx, a) => getVisitPhotos(ctx, a as never) },
+  get_schedule_details:   { schema: scheduleDetailsArgs,   run: (ctx, a) => getScheduleDetails(ctx, a as never) },
+  get_place_history:      { schema: placeHistoryArgs,      run: (ctx, a) => getPlaceHistory(ctx, a as never) },
+  get_stock_issues:       { schema: stockIssuesArgs,       run: (ctx, a) => getStockIssues(ctx, a as never) },
+  get_template_responses: { schema: templateResponsesArgs, run: (ctx, a) => getTemplateResponses(ctx, a as never) },
+  get_missing_visits:     { schema: missingVisitsArgs,     run: (ctx)    => getMissingVisits(ctx) },
+  compare_periods:        { schema: comparePeriodsArgs,    run: (ctx, a) => comparePeriods(ctx, a as never) },
 };
 
 // ─── Pure helpers (exported for testing) ──────────────────────────────────────
@@ -91,11 +116,34 @@ export async function executeTool(
 
   try {
     const result = await tool.run(ctx, validated.data as Record<string, unknown>);
-    return { name, ok: true, data: truncateDeep(result), summary: summarize(name, result) };
+
+    // Extract UI-only sources (__sources) so they never reach the model
+    const { sources, cleaned } = extractSources(result);
+    let data = truncateDeep(cleaned);
+
+    // Hard cap on serialized result size sent to the provider
+    if (JSON.stringify(data).length > MAX_TOOL_RESULT_CHARS) {
+      data = { error: "result_too_large", hint: "narrow the query (fewer rows / shorter period)" };
+    }
+
+    return { name, ok: true, data, summary: summarize(name, cleaned), sources };
   } catch {
     // Never leak raw DB errors to the model or the client
     return { name, ok: false, data: { error: "tool_failed" }, summary: "failed" };
   }
+}
+
+/** Pure: split a tool result into { sources, cleaned-without-__sources }. */
+export function extractSources(result: unknown): {
+  sources: AiSource[];
+  cleaned: unknown;
+} {
+  if (typeof result !== "object" || result === null || Array.isArray(result)) {
+    return { sources: [], cleaned: result };
+  }
+  const { __sources, ...rest } = result as Record<string, unknown>;
+  const sources = Array.isArray(__sources) ? (__sources as AiSource[]) : [];
+  return { sources, cleaned: rest };
 }
 
 /** Short human summary for the UI source chips. */

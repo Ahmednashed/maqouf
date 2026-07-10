@@ -18,14 +18,44 @@ export interface ToolCallRecord {
   summary?: string;
 }
 
+/** A structured, clickable evidence link attached to an answer. */
+export interface AiSource {
+  type:       "visit" | "user" | "place" | "schedule" | "activity" | "product";
+  id:         string;
+  label:      string;
+  href:       string;
+  timestamp?: string;
+}
+
+/** A navigation-only action the agent may suggest — NEVER executed by the agent. */
+export interface SuggestedAction {
+  type:      string;
+  label:     string;
+  href?:     string;
+  entityId?: string;
+  requiresConfirmation: true;
+}
+
 /** Structured route response. */
 export interface AiAnswer {
-  answer:    string;
-  toolCalls: ToolCallRecord[];
+  answer:           string;
+  toolCalls:        ToolCallRecord[];
+  sources:          AiSource[];
+  suggestedActions: SuggestedAction[];
+  conversationId?:  string;
   usage?: {
     inputTokens?:  number;
     outputTokens?: number;
   };
+  /** Number of provider turns consumed (observability). */
+  toolRounds?: number;
+}
+
+/** Rolling entity memory stored on the conversation (Phase 6 follow-ups). */
+export interface EntityContext {
+  users?:     string[];   // display names discussed
+  places?:    string[];   // branch names discussed
+  visit_ids?: string[];   // visit ids inspected
 }
 
 /**
@@ -47,6 +77,9 @@ export interface ToolExecution {
   /** Compact JSON payload (row-capped + truncated) or error marker. */
   data:    unknown;
   summary: string;
+  /** Structured evidence links collected by the tool (UI only — stripped
+      from the payload sent to the model). */
+  sources?: AiSource[];
 }
 
 /** Provider failure categories — mapped to friendly UI messages. */

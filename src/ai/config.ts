@@ -47,13 +47,32 @@ export function getAiConfig(): AiConfig {
   };
 }
 
-// ─── Request shaping limits (pure constants, used by route validation) ────────
+// ─── Request shaping limits ───────────────────────────────────────────────────
 
 /** Max characters per user message. */
 export const MAX_QUESTION_CHARS = 1000;
-/** How many trailing history messages are forwarded to the provider. */
-export const MAX_HISTORY_MESSAGES = 10;
 /** Max rows any tool may return. */
 export const MAX_TOOL_ROWS = 20;
 /** Max characters per string field inside tool results. */
 export const MAX_FIELD_CHARS = 120;
+
+// ─── v2 limits (env-tunable with documented defaults) ─────────────────────────
+
+/** How many trailing history messages are forwarded to the provider. */
+export const MAX_HISTORY_MESSAGES = parseIntEnv(
+  process.env.AI_MAX_HISTORY_MESSAGES, 12, 2, 40
+);
+/** Max structured sources returned per answer. */
+export const MAX_SOURCES = parseIntEnv(process.env.AI_MAX_SOURCES, 5, 1, 12);
+/** Max suggested actions returned per answer. */
+export const MAX_SUGGESTED_ACTIONS = parseIntEnv(
+  process.env.AI_MAX_SUGGESTED_ACTIONS, 4, 1, 8
+);
+/** Max characters of a message persisted to ai_messages. */
+export const MAX_STORED_MESSAGE_CHARS = parseIntEnv(
+  process.env.AI_MAX_STORED_MESSAGE_CHARS, 6000, 500, 20000
+);
+/** Max characters of a serialized tool result sent to the provider. */
+export const MAX_TOOL_RESULT_CHARS = parseIntEnv(
+  process.env.AI_MAX_TOOL_RESULT_CHARS, 8000, 1000, 40000
+);
