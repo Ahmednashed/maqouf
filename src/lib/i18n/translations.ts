@@ -829,6 +829,10 @@ export const translations = {
     // Suggested actions
     "ai.actionsTitle":           "إجراءات مقترحة",
     "ai.actionNote":             "الروابط تفتح الصفحة المناسبة — لا يُنفذ أي إجراء تلقائياً",
+    // Brain v3
+    "ai.lowConfidence":          "بيانات غير مكتملة",
+    "ai.activeEntity":           "الكيان النشط في هذه المحادثة",
+    "ai.tool.get_last_visit":    "آخر زيارة",
     // Reports
     "reports.title":                "التقارير",
     "reports.subtitle":             "تحليل الأداء خلال فترة زمنية",
@@ -1718,6 +1722,10 @@ export const translations = {
     // Suggested actions
     "ai.actionsTitle":           "Suggested actions",
     "ai.actionNote":             "Links open the relevant page — nothing is executed automatically",
+    // Brain v3
+    "ai.lowConfidence":          "Low confidence",
+    "ai.activeEntity":           "Active entity in this conversation",
+    "ai.tool.get_last_visit":    "Last visit",
     // Reports
     "reports.title":                "Reports",
     "reports.subtitle":             "Analyse performance over a date range",

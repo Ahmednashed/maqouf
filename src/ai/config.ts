@@ -9,12 +9,18 @@
 export interface AiConfig {
   apiKey:            string | undefined;
   model:             string;
+  /** Optional stronger model for executive analysis (falls back to `model`). */
+  reasoningModel:    string | null;
   maxOutputTokens:   number;
   maxToolRounds:     number;
   dailyRequestLimit: number;
   mockFallback:      boolean;
   /** Provider call timeout in ms. */
   timeoutMs:         number;
+  /** v3 planner controls. */
+  enablePlanner:          boolean;
+  plannerMaxOutputTokens: number;
+  minEntityConfidence:    number;
 }
 
 /** Pure + testable: parse an integer env var with clamping. */
@@ -35,16 +41,46 @@ export function parseBoolEnv(raw: string | undefined, fallback = false): boolean
   return raw === "true" || raw === "1";
 }
 
+/** Pure + testable: parse a 0..1 float env var. */
+export function parseFloat01Env(raw: string | undefined, fallback: number): number {
+  const n = Number.parseFloat(raw ?? "");
+  if (Number.isNaN(n)) return fallback;
+  return Math.min(1, Math.max(0, n));
+}
+
 export function getAiConfig(): AiConfig {
   return {
     apiKey:            process.env.OPENAI_API_KEY,
     model:             process.env.OPENAI_MODEL?.trim() || "gpt-4o-mini",
+    reasoningModel:    process.env.OPENAI_REASONING_MODEL?.trim() || null,
     maxOutputTokens:   parseIntEnv(process.env.AI_MAX_OUTPUT_TOKENS,          700, 100, 4000),
     maxToolRounds:     parseIntEnv(process.env.AI_MAX_TOOL_ROUNDS,              3,   1,    5),
     dailyRequestLimit: parseIntEnv(process.env.AI_DAILY_REQUEST_LIMIT_PER_USER, 50,   1, 1000),
     mockFallback:      parseBoolEnv(process.env.AI_MOCK_FALLBACK, false),
     timeoutMs:         30_000,
+    enablePlanner:          parseBoolEnv(process.env.AI_ENABLE_PLANNER, true),
+    plannerMaxOutputTokens: parseIntEnv(process.env.AI_PLANNER_MAX_OUTPUT_TOKENS, 300, 100, 1000),
+    minEntityConfidence:    parseFloat01Env(process.env.AI_MIN_CONFIDENCE_FOR_ENTITY_REUSE, 0.8),
   };
+}
+
+/** Pure + testable: trim chat history to the last N messages. */
+export function trimHistory<T>(messages: T[], max = MAX_HISTORY_MESSAGES): T[] {
+  return messages.slice(-max);
+}
+
+/**
+ * Pure: which model serves this answer mode. Model names live in config only.
+ * Executive analysis uses the reasoning model when configured.
+ */
+export function pickModel(
+  cfg: Pick<AiConfig, "model" | "reasoningModel">,
+  answerMode: "direct" | "executive_analysis" | "clarification"
+): string {
+  if (answerMode === "executive_analysis" && cfg.reasoningModel) {
+    return cfg.reasoningModel;
+  }
+  return cfg.model;
 }
 
 // ─── Request shaping limits ───────────────────────────────────────────────────

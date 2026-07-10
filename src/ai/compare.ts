@@ -60,14 +60,24 @@ export function resolveWindows(key: ComparePeriodKey, today: string): PeriodWind
 
 // ─── Metric comparison ────────────────────────────────────────────────────────
 
+export type ChangeDirection = "up" | "down" | "flat";
+export type DataQuality     = "ok" | "no_baseline" | "no_data" | "no_history";
+
 export interface MetricComparison {
   metric:     string;
   current:    number | null;
   previous:   number | null;
   change:     number | null;
   change_pct: number | null;
+  direction:  ChangeDirection | null;
   /** Whether the observed change is operationally good. */
   positive:   boolean | null;
+  /** Zero-denominator / missing-data handling. */
+  data_quality: DataQuality;
+  /** Machine-readable interpretation for the model to narrate. */
+  interpretation:
+    | "improved" | "worsened" | "unchanged"
+    | "new_activity" | "activity_stopped" | "no_activity" | "insufficient_data";
 }
 
 /** Metrics where an INCREASE is operationally bad. */
@@ -75,23 +85,101 @@ const INVERTED = new Set([
   "missed_visits", "overdue_visits", "sync_issues", "stock_issues",
 ]);
 
-/** Pure: compare one metric across two periods. */
+/** Pure: compare one metric across two periods with explicit zero handling. */
 export function compareMetric(
   metric:   string,
   current:  number | null,
   previous: number | null
 ): MetricComparison {
+  // Missing sides → insufficient data (never invent)
   if (current === null || previous === null) {
-    return { metric, current, previous, change: null, change_pct: null, positive: null };
+    return {
+      metric, current, previous,
+      change: null, change_pct: null, direction: null, positive: null,
+      data_quality: current === null ? "no_data" : "no_history",
+      interpretation: "insufficient_data",
+    };
   }
-  const change     = Math.round((current - previous) * 100) / 100;
-  const change_pct = previous !== 0
-    ? Math.round(((current - previous) / Math.abs(previous)) * 1000) / 10
-    : (current === 0 ? 0 : null);
+
+  // Both zero → genuinely no activity in either period
+  if (previous === 0 && current === 0) {
+    return {
+      metric, current, previous,
+      change: 0, change_pct: 0, direction: "flat", positive: null,
+      data_quality: "ok",
+      interpretation: "no_activity",
+    };
+  }
+
+  const change    = Math.round((current - previous) * 100) / 100;
+  const direction: ChangeDirection = change > 0 ? "up" : change < 0 ? "down" : "flat";
   const positive = change === 0
     ? null
     : INVERTED.has(metric) ? change < 0 : change > 0;
-  return { metric, current, previous, change, change_pct, positive };
+
+  // previous = 0, current > 0 → new activity; percentage undefined
+  if (previous === 0) {
+    return {
+      metric, current, previous,
+      change, change_pct: null, direction, positive,
+      data_quality: "no_baseline",
+      interpretation: "new_activity",
+    };
+  }
+
+  const change_pct =
+    Math.round(((current - previous) / Math.abs(previous)) * 1000) / 10;
+
+  return {
+    metric, current, previous, change, change_pct, direction, positive,
+    data_quality: "ok",
+    interpretation:
+      current === 0       ? "activity_stopped" :
+      change === 0        ? "unchanged" :
+      positive            ? "improved" : "worsened",
+  };
+}
+
+// ─── Executive comparison summary (pure) ──────────────────────────────────────
+
+export interface ComparisonSummary {
+  improved:          string[];
+  worsened:          string[];
+  unchanged:         string[];
+  insufficient_data: string[];
+  /** Top ≤3 most significant observations, largest |%| change first. */
+  top_observations: Array<{
+    metric:         string;
+    interpretation: MetricComparison["interpretation"];
+    change_pct:     number | null;
+  }>;
+}
+
+export function summarizeComparison(comparisons: MetricComparison[]): ComparisonSummary {
+  const byInterp = (interps: MetricComparison["interpretation"][]) =>
+    comparisons.filter((c) => interps.includes(c.interpretation)).map((c) => c.metric);
+
+  const significant = comparisons
+    .filter((c) =>
+      c.interpretation === "improved" ||
+      c.interpretation === "worsened" ||
+      c.interpretation === "new_activity" ||
+      c.interpretation === "activity_stopped"
+    )
+    .sort((a, b) => Math.abs(b.change_pct ?? 100) - Math.abs(a.change_pct ?? 100))
+    .slice(0, 3);
+
+  return {
+    improved:          byInterp(["improved", "new_activity"]),
+    worsened:          byInterp(["worsened", "activity_stopped"]),
+    unchanged:         byInterp(["unchanged", "no_activity"]),
+    insufficient_data: byInterp(["insufficient_data"]),
+    top_observations: significant.map((c) => ({
+      metric:         c.metric,
+      interpretation: c.interpretation,
+      change_pct:     c.change_pct,
+    })),
+  };
 }
 
 // ─── Window aggregation (pure over fetched rows) ──────────────────────────────

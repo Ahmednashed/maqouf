@@ -1,7 +1,8 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { AiAnswer, EntityContext, ToolExecution } from "./types";
-import { MAX_STORED_MESSAGE_CHARS } from "./config";
+import type { AiAnswer } from "./types";
+import type { EntityState } from "./entity-state";
+import { clampStoredMessage, titleFromQuestion } from "./text-limits";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Conversation memory — server-side persistence through the AUTHENTICATED
@@ -13,76 +14,15 @@ function isMissingTable(error: { code?: string } | null): boolean {
   return error?.code === "42P01" || error?.code === "PGRST205";
 }
 
-// ─── Pure helpers (exported for testing) ──────────────────────────────────────
-
-/** Truncate a message before persisting it. */
-export function clampStoredMessage(text: string, max = MAX_STORED_MESSAGE_CHARS): string {
-  return text.length > max ? text.slice(0, max) + "…" : text;
-}
-
-/** Conversation title from the first question. */
-export function titleFromQuestion(question: string): string {
-  const clean = question.trim().replace(/\s+/g, " ");
-  return clean.length > 60 ? clean.slice(0, 57) + "…" : clean;
-}
-
-const CTX_CAP = 6;
-
-/**
- * Merge entities observed in this turn's tool executions into the rolling
- * conversation context (most-recent-first, capped, deduped). Pure.
- */
-export function mergeEntityContext(
-  previous:   EntityContext | null | undefined,
-  executions: ToolExecution[]
-): EntityContext {
-  const users:  string[] = [];
-  const places: string[] = [];
-  const visits: string[] = [];
-
-  for (const ex of executions) {
-    if (!ex.ok) continue;
-    const d = ex.data as Record<string, unknown>;
-    // Member names surfaced by user tools
-    const memberName =
-      (d.member as Record<string, unknown> | undefined)?.name ??
-      (typeof d.member === "string" ? d.member : undefined);
-    if (typeof memberName === "string") users.push(memberName);
-    // Branch names surfaced by place tools
-    if (typeof d.branch === "string") places.push(d.branch);
-    // Visit ids from sources
-    for (const s of ex.sources ?? []) {
-      if (s.type === "visit")  visits.push(s.id);
-      if (s.type === "user")   users.push(s.label);
-      if (s.type === "place")  places.push(s.label);
-    }
-  }
-
-  const merge = (fresh: string[], old: string[] = []) =>
-    [...new Set([...fresh, ...old])].slice(0, CTX_CAP);
-
-  return {
-    users:     merge(users,  previous?.users),
-    places:    merge(places, previous?.places),
-    visit_ids: merge(visits, previous?.visit_ids),
-  };
-}
-
-/** Render the entity context as a compact system-prompt line. */
-export function renderEntityContext(ctx: EntityContext | null | undefined): string {
-  if (!ctx) return "";
-  const parts: string[] = [];
-  if (ctx.users?.length)     parts.push(`people: ${ctx.users.join(", ")}`);
-  if (ctx.places?.length)    parts.push(`branches: ${ctx.places.join(", ")}`);
-  if (ctx.visit_ids?.length) parts.push(`visit_ids: ${ctx.visit_ids.slice(0, 3).join(", ")}`);
-  return parts.length > 0 ? `Recently discussed in this conversation — ${parts.join(" | ")}` : "";
-}
+// Pure helpers (clampStoredMessage, titleFromQuestion) live in text-limits.ts
+// so validation scenarios can import them without the server-only guard.
 
 // ─── Persistence ──────────────────────────────────────────────────────────────
+// Entity merging/rendering moved to entity-state.ts (v3 normalized state).
 
 export interface ConversationRow {
   id:             string;
-  entity_context: EntityContext | null;
+  entity_context: EntityState | null;
 }
 
 /**
@@ -141,7 +81,8 @@ export async function persistExchange(
   conversation: ConversationRow,
   question:     string,
   answer:       AiAnswer,
-  entityContext: EntityContext
+  entityContext: EntityState,
+  findings?:    unknown
 ): Promise<void> {
   try {
     const { data: { user } } = await supabase.auth.getUser();
@@ -163,22 +104,30 @@ export async function persistExchange(
       user_id:         user.id,
     };
 
-    await supabase.from("ai_messages").insert([
-      {
-        ...base,
-        role:    "user",
-        content: clampStoredMessage(question),
-      },
-      {
-        ...base,
-        role:          "assistant",
-        content:       clampStoredMessage(answer.answer),
-        tool_calls:    answer.toolCalls,
-        sources:       answer.sources,
-        input_tokens:  answer.usage?.inputTokens  ?? 0,
-        output_tokens: answer.usage?.outputTokens ?? 0,
-      },
-    ]);
+    const userRow = {
+      ...base,
+      role:    "user",
+      content: clampStoredMessage(question),
+    };
+    const assistantRow = {
+      ...base,
+      role:          "assistant",
+      content:       clampStoredMessage(answer.answer),
+      tool_calls:    answer.toolCalls,
+      sources:       answer.sources,
+      input_tokens:  answer.usage?.inputTokens  ?? 0,
+      output_tokens: answer.usage?.outputTokens ?? 0,
+    };
+
+    // findings column arrives with migration 016 — retry without it if absent
+    const withFindings = findings !== undefined
+      ? [userRow, { ...assistantRow, findings }]
+      : [userRow, assistantRow];
+
+    const { error: insertErr } = await supabase.from("ai_messages").insert(withFindings);
+    if (insertErr && findings !== undefined) {
+      await supabase.from("ai_messages").insert([userRow, assistantRow]);
+    }
 
     await supabase
       .from("ai_conversations")

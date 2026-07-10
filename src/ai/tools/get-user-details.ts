@@ -28,6 +28,9 @@ export async function getUserDetails(ctx: ToolContext, args: Args) {
   const src = makeSource("user", match.id, match.name);
   return {
     found: true,
+    __entities: [{
+      kind: "user" as const, id: match.id, label: match.name, confidence: 1,
+    }],
     member: {
       name:   match.name,
       role:   match.role,

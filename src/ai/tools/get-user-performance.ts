@@ -42,6 +42,9 @@ export async function getUserPerformance(ctx: ToolContext, args: Args) {
 
   return {
     found: true,
+    __entities: [{
+      kind: "user" as const, id: match.id, label: match.name, confidence: 1,
+    }],
     member: match.name,
     period_days: days,
     planned:          metrics.planned,

@@ -75,23 +75,49 @@ export const AiMessage = memo(function AiMessage({ message }: { message: ChatMes
           </div>
         )}
 
-        {/* Clickable evidence sources (entity links) */}
+        {/* Low-confidence disclosure (v3) */}
+        {!isUser && !message.isMock && message.confidence && message.confidence !== "high" && (
+          <div className="mt-1.5">
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-50 border border-amber-200 text-[10px] font-bold text-amber-700">
+              <CircleSlash className="w-3 h-3" />
+              {t("ai.lowConfidence")}
+            </span>
+          </div>
+        )}
+
+        {/* Clickable evidence sources (grouped by type; active entity highlighted) */}
         {!isUser && (message.sources?.length ?? 0) > 0 && (
           <div className="flex flex-wrap items-center gap-1 mt-1.5">
             <span className="inline-flex items-center gap-1 text-[9.5px] font-bold text-ink-300 uppercase tracking-wide me-0.5">
               <Database className="w-2.5 h-2.5" />
               {t("ai.sourcesUsed")}:
             </span>
-            {message.sources!.map((s) => (
-              <Link
-                key={`${s.type}:${s.id}`}
-                href={s.href}
-                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-violet-50 border border-violet-100 text-[9.5px] font-semibold text-violet-600 hover:bg-violet-100 hover:border-violet-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400 transition-colors"
-              >
-                {s.label}
-                <ExternalLink className="w-2.5 h-2.5" />
-              </Link>
-            ))}
+            {[...message.sources!]
+              .sort((a, b) => {
+                // Active-entity sources first, then grouped by type
+                const act = (s: typeof a) => (message.activeSourceIds?.includes(s.id) ? 0 : 1);
+                return act(a) - act(b) || a.type.localeCompare(b.type);
+              })
+              .map((s) => {
+                const isActive = message.activeSourceIds?.includes(s.id);
+                return (
+                  <Link
+                    key={`${s.type}:${s.id}`}
+                    href={s.href}
+                    title={isActive ? t("ai.activeEntity") : undefined}
+                    className={cn(
+                      "inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md border text-[9.5px] font-semibold transition-colors",
+                      "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400",
+                      isActive
+                        ? "bg-violet-100 border-violet-300 text-violet-700 ring-1 ring-violet-200"
+                        : "bg-violet-50 border-violet-100 text-violet-600 hover:bg-violet-100 hover:border-violet-200"
+                    )}
+                  >
+                    {s.label}
+                    <ExternalLink className="w-2.5 h-2.5" />
+                  </Link>
+                );
+              })}
           </div>
         )}
 

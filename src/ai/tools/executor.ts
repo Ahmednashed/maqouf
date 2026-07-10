@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { AiSource, ToolContext, ToolExecution } from "../types";
+import type { ToolEntity } from "../entity-state";
 import { MAX_FIELD_CHARS, MAX_TOOL_RESULT_CHARS } from "../config";
 import { ALLOWED_TOOL_NAMES } from "./definitions";
 import { getDashboardMetrics, dashboardMetricsArgs } from "./get-dashboard-metrics";
@@ -21,6 +22,7 @@ import { getStockIssues,      stockIssuesArgs }      from "./get-stock-issues";
 import { getTemplateResponses, templateResponsesArgs } from "./get-template-responses";
 import { getMissingVisits,    missingVisitsArgs }    from "./get-missing-visits";
 import { comparePeriods,      comparePeriodsArgs }   from "./compare-periods";
+import { getLastVisit,        lastVisitArgs }        from "./get-last-visit";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool executor. Model-provided arguments are UNTRUSTED input:
@@ -58,6 +60,7 @@ const REGISTRY: Record<string, RegisteredTool> = {
   get_template_responses: { schema: templateResponsesArgs, run: (ctx, a) => getTemplateResponses(ctx, a as never) },
   get_missing_visits:     { schema: missingVisitsArgs,     run: (ctx)    => getMissingVisits(ctx) },
   compare_periods:        { schema: comparePeriodsArgs,    run: (ctx, a) => comparePeriods(ctx, a as never) },
+  get_last_visit:         { schema: lastVisitArgs,         run: (ctx, a) => getLastVisit(ctx, a as never) },
 };
 
 // ─── Pure helpers (exported for testing) ──────────────────────────────────────
@@ -117,8 +120,8 @@ export async function executeTool(
   try {
     const result = await tool.run(ctx, validated.data as Record<string, unknown>);
 
-    // Extract UI-only sources (__sources) so they never reach the model
-    const { sources, cleaned } = extractSources(result);
+    // Extract UI/state-only channels (__sources, __entities) — never sent to the model
+    const { sources, entities, cleaned } = extractSideChannels(result);
     let data = truncateDeep(cleaned);
 
     // Hard cap on serialized result size sent to the provider
@@ -126,24 +129,28 @@ export async function executeTool(
       data = { error: "result_too_large", hint: "narrow the query (fewer rows / shorter period)" };
     }
 
-    return { name, ok: true, data, summary: summarize(name, cleaned), sources };
+    return { name, ok: true, data, summary: summarize(name, cleaned), sources, entities };
   } catch {
     // Never leak raw DB errors to the model or the client
     return { name, ok: false, data: { error: "tool_failed" }, summary: "failed" };
   }
 }
 
-/** Pure: split a tool result into { sources, cleaned-without-__sources }. */
-export function extractSources(result: unknown): {
-  sources: AiSource[];
-  cleaned: unknown;
+/** Pure: split a tool result into { sources, entities, cleaned payload }. */
+export function extractSideChannels(result: unknown): {
+  sources:  AiSource[];
+  entities: ToolEntity[];
+  cleaned:  unknown;
 } {
   if (typeof result !== "object" || result === null || Array.isArray(result)) {
-    return { sources: [], cleaned: result };
+    return { sources: [], entities: [], cleaned: result };
   }
-  const { __sources, ...rest } = result as Record<string, unknown>;
-  const sources = Array.isArray(__sources) ? (__sources as AiSource[]) : [];
-  return { sources, cleaned: rest };
+  const { __sources, __entities, ...rest } = result as Record<string, unknown>;
+  return {
+    sources:  Array.isArray(__sources)  ? (__sources  as AiSource[])   : [],
+    entities: Array.isArray(__entities) ? (__entities as ToolEntity[]) : [],
+    cleaned:  rest,
+  };
 }
 
 /** Short human summary for the UI source chips. */

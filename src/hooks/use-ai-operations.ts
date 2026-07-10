@@ -46,6 +46,10 @@ export interface ChatMessage {
   sources?:   AiSource[];
   /** Navigation-only suggestions (never executed). */
   suggestedActions?: SuggestedAction[];
+  /** Evidence completeness for this answer (v3). */
+  confidence?: "high" | "medium" | "low";
+  /** Source ids matching the conversation's active entities (highlighted). */
+  activeSourceIds?: string[];
   /** True when this answer came from the local rule engine, not real AI. */
   isMock?:    boolean;
 }
@@ -57,6 +61,8 @@ interface ChatApiResponse {
   toolCalls?:        ToolCallInfo[];
   sources?:          AiSource[];
   suggestedActions?: SuggestedAction[];
+  confidence?:       "high" | "medium" | "low";
+  activeSourceIds?:  string[];
   conversationId?:   string | null;
   error?:            string;
   fallbackAllowed?:  boolean;
@@ -129,6 +135,8 @@ export function useAiChat(context: AiOperationalContext | undefined) {
           toolCalls:        json.toolCalls ?? [],
           sources:          json.sources ?? [],
           suggestedActions: json.suggestedActions ?? [],
+          confidence:       json.confidence,
+          activeSourceIds:  json.activeSourceIds ?? [],
         });
         if (json.conversationId && json.conversationId !== conversationId) {
           setConversationId(json.conversationId);

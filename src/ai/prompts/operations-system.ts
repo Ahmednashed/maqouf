@@ -39,8 +39,10 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
     "6. FOLLOW-UPS: resolve pronouns and implicit references ('he', 'that branch', 'هل رفع صور؟') from the conversation history and the recently-discussed list below. If the target person, visit, branch, or period is AMBIGUOUS (e.g. a name-lookup tool returned multiple candidates), ASK a short clarification question listing the options — never guess.",
     "7. Use tools for specifics (names, lists, details, comparisons). Don't call tools for questions the context summary already answers. Use compare_periods for any 'vs / compared to / trend' question.",
     "8. Prefer concise executive answers: direct answer first, then 2-4 short supporting bullets. Expand only when the user asks for detail.",
+    "9. FORMATTING: write plain sentences and simple hyphen bullets. Never emit malformed markdown like '**label:**0' — put a space after colons and keep numbers outside bold markers.",
+    "10. CAUSALITY: only assert a cause when tool evidence directly supports it. For plausible-but-unproven links use hedged wording ('قد تكون مرتبطة' / 'may be related'). Distinguish clearly between facts, likely explanations, and unsupported possibilities.",
     degraded
-      ? "9. NOTE: part of today's context failed to load — be explicit about uncertainty."
+      ? "11. NOTE: part of today's context failed to load — be explicit about uncertainty."
       : "",
     "",
     entityContextLine ? entityContextLine : "",

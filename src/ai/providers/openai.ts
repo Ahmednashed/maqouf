@@ -40,7 +40,7 @@ export interface ProviderTurn {
 }
 
 export type ProviderInputItem =
-  | { role: "user" | "assistant"; content: string }
+  | { role: "user" | "assistant" | "developer"; content: string }
   | { type: "function_call_output"; call_id: string; output: string };
 
 // ─── Calls ────────────────────────────────────────────────────────────────────
@@ -50,6 +50,8 @@ interface CreateTurnParams {
   input:               ProviderInputItem[];
   tools:               ToolDefinition[];
   previousResponseId?: string;
+  /** Model override (from config.pickModel — never hardcoded here). */
+  model?:              string;
 }
 
 /**
@@ -61,7 +63,7 @@ export async function createProviderTurn(params: CreateTurnParams): Promise<Prov
 
   try {
     const response = await getClient().responses.create({
-      model:              cfg.model,
+      model:              params.model ?? cfg.model,
       instructions:       params.instructions,
       input:              params.input,
       tools:              params.tools,
@@ -85,6 +87,66 @@ export async function createProviderTurn(params: CreateTurnParams): Promise<Prov
       responseId:   response.id,
       text:         response.output_text || null,
       toolCalls,
+      inputTokens:  response.usage?.input_tokens  ?? 0,
+      outputTokens: response.usage?.output_tokens ?? 0,
+    };
+  } catch (err: unknown) {
+    throw categorize(err);
+  }
+}
+
+// ─── Structured-output turn (planner / executive contracts) ──────────────────
+
+interface StructuredTurnParams {
+  instructions:       string;
+  input:              ProviderInputItem[];
+  /** Strict JSON schema the model must satisfy. */
+  schemaName:         string;
+  schema:             Record<string, unknown>;
+  maxOutputTokens:    number;
+  model?:             string;
+  previousResponseId?: string;
+}
+
+export interface StructuredTurnResult {
+  responseId:   string;
+  /** Raw JSON text — caller MUST Zod-validate before use. */
+  jsonText:     string | null;
+  inputTokens:  number;
+  outputTokens: number;
+}
+
+/**
+ * One structured-output turn (no tools). Used by the planner and the
+ * executive-answer contract. Output conforms to the strict schema, but the
+ * caller still validates with Zod — model output is untrusted.
+ */
+export async function createStructuredTurn(
+  params: StructuredTurnParams
+): Promise<StructuredTurnResult> {
+  const cfg = getAiConfig();
+
+  try {
+    const response = await getClient().responses.create({
+      model:             params.model ?? cfg.model,
+      instructions:      params.instructions,
+      input:             params.input,
+      max_output_tokens: params.maxOutputTokens,
+      previous_response_id: params.previousResponseId,
+      store:             true,
+      text: {
+        format: {
+          type:   "json_schema",
+          name:   params.schemaName,
+          schema: params.schema,
+          strict: true,
+        },
+      },
+    });
+
+    return {
+      responseId:   response.id,
+      jsonText:     response.output_text || null,
       inputTokens:  response.usage?.input_tokens  ?? 0,
       outputTokens: response.usage?.output_tokens ?? 0,
     };

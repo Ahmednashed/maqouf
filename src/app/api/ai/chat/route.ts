@@ -50,6 +50,11 @@ export async function POST(request: NextRequest) {
     outputTokens: number;
     success:     boolean;
     errorCategory: string | null;
+    intent?:                 string | null;
+    plannerUsed?:            boolean;
+    evidenceConfidence?:     string | null;
+    clarificationRequested?: boolean;
+    resolvedEntityTypes?:    string[];
   }) => {
     supabase
       .rpc("log_ai_request", {
@@ -63,6 +68,11 @@ export async function POST(request: NextRequest) {
         p_output_tokens:   params.outputTokens,
         p_success:         params.success,
         p_error_category:  params.errorCategory,
+        p_intent:                  params.intent ?? null,
+        p_planner_used:            params.plannerUsed ?? false,
+        p_evidence_confidence:     params.evidenceConfidence ?? null,
+        p_clarification_requested: params.clarificationRequested ?? false,
+        p_resolved_entity_types:   params.resolvedEntityTypes ?? [],
       })
       .then(({ error }) => {
         if (error && error.code !== "42883" && error.code !== "PGRST202") {
@@ -123,13 +133,14 @@ export async function POST(request: NextRequest) {
       messages,
       locale,
       date,
-      entityContext: conversation?.entity_context ?? null,
+      entityState: conversation?.entity_context ?? null,
     });
 
     // ── 6. Persist exchange + tokens + request log (all fire-safe) ───────
     if (conversation) {
       void persistExchange(
-        supabase, conversation, lastMessage.content, result, result.nextEntityContext
+        supabase, conversation, lastMessage.content, result,
+        result.nextEntityState, result.findings ?? undefined
       );
     }
     if (result.usage?.inputTokens || result.usage?.outputTokens) {
@@ -149,21 +160,30 @@ export async function POST(request: NextRequest) {
       outputTokens: result.usage?.outputTokens ?? 0,
       success:      true,
       errorCategory: null,
+      intent:                 result.intent,
+      plannerUsed:            result.plannerUsed,
+      evidenceConfidence:     result.confidence ?? null,
+      clarificationRequested: result.clarificationRequested,
+      resolvedEntityTypes:    result.resolvedEntityTypes,
     });
 
     console.info(
       `[ai:${requestId}] user=${userId} conv=${conversationId ?? "-"} ` +
+      `intent=${result.intent ?? "-"} planner=${result.plannerUsed} conf=${result.confidence} ` +
       `tools=[${result.toolCalls.map((c) => c.name).join(",")}] rounds=${result.toolRounds} ` +
       `in=${result.usage?.inputTokens ?? 0} out=${result.usage?.outputTokens ?? 0} ` +
       `ms=${Date.now() - startedAt}`
     );
 
-    // nextEntityContext is server-internal — don't ship it to the browser
+    // Entity state and findings are server-internal; the client gets the
+    // rendered answer + structured extras only
     return NextResponse.json({
       answer:           result.answer,
       toolCalls:        result.toolCalls,
       sources:          result.sources,
       suggestedActions: result.suggestedActions,
+      confidence:       result.confidence,
+      activeSourceIds:  result.activeSourceIds,
       conversationId,
       usage:            result.usage,
     });

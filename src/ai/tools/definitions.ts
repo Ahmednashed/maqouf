@@ -269,6 +269,24 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     type: "function",
+    name: "get_last_visit",
+    description:
+      "The MOST RECENT visit — company-wide, or for one member when user_name is given. Returns the visit id, branch, merchandiser, status, and times. Use this for 'who made the last visit?' / 'آخر زيارة' questions; it grounds follow-ups about that visit's photos, products, and timeline.",
+    parameters: {
+      type: "object",
+      properties: {
+        user_name: {
+          type: ["string", "null"],
+          description: "Optional member name to scope to one person.",
+        },
+      },
+      additionalProperties: false,
+      required: ["user_name"],
+    },
+    strict: true,
+  },
+  {
+    type: "function",
     name: "compare_periods",
     description:
       "Compare operational metrics between two periods (today vs yesterday, this week vs last week, last 7 vs previous 7 days, last 30 vs previous 30). Returns current/previous/change/percentage plus whether each change is operationally positive. sync_issues is current-only (previous=null).",

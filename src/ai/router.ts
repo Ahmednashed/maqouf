@@ -1,86 +1,122 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { getAiConfig, MAX_HISTORY_MESSAGES } from "./config";
+import { getAiConfig, pickModel, trimHistory } from "./config";
 import type {
-  AiAnswer, AiChatMessage, AiLocale, EntityContext, ToolContext, ToolExecution,
+  AiAnswer, AiChatMessage, AiLocale, EvidenceConfidence, ToolContext, ToolExecution,
 } from "./types";
+import {
+  mergeEntityState,
+  normalizeStoredState,
+  entityContextForPrompt,
+  resolvedEntityKinds,
+  type EntityState,
+} from "./entity-state";
 import { buildSystemPrompt } from "./prompts/operations-system";
 import { buildOperationsContext } from "./context/build-operations-context";
 import { TOOL_DEFINITIONS } from "./tools/definitions";
 import { executeTool } from "./tools/executor";
 import { dedupeSources } from "./sources";
 import { deriveSuggestedActions } from "./suggested-actions";
-import { mergeEntityContext, renderEntityContext } from "./memory";
+import { runPlanner, shouldSkipPlanner, planGuidance, type AiPlan } from "./planner";
+import { evaluateEvidenceCompleteness, evidenceGapInstruction } from "./evidence";
+import {
+  executiveAnswerSchema,
+  EXECUTIVE_JSON_SCHEMA,
+  renderExecutiveAnswer,
+  type ExecutiveAnswer,
+} from "./executive-answer";
 import {
   createProviderTurn,
+  createStructuredTurn,
   type ProviderInputItem,
 } from "./providers/openai";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// AI Core router v2 — context → prompt → provider turns → tools → answer,
-// now with entity memory, structured sources, and suggested actions.
+// AI Core router v3 — plan → gather (tool loop + evidence check) → answer
+// (plain or executive contract), with normalized entity grounding throughout.
+// No chain-of-thought is stored or returned; the plan itself stays internal.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface RunChatParams {
-  supabase:       SupabaseClient;    // authenticated server client (RLS active)
-  messages:       AiChatMessage[];   // pre-validated by the route
-  locale:         AiLocale;
-  date:           string;            // YYYY-MM-DD
-  /** Rolling entity context loaded from the conversation (may be null). */
-  entityContext?: EntityContext | null;
+  supabase:     SupabaseClient;
+  messages:     AiChatMessage[];
+  locale:       AiLocale;
+  date:         string;
+  /** Raw stored entity_context (any shape — normalized here). */
+  entityState?: unknown;
 }
 
 export interface RunChatResult extends AiAnswer {
-  /** Updated entity context to persist on the conversation. */
-  nextEntityContext: EntityContext;
-}
-
-/** Pure + testable: trim history to the last N messages. */
-export function trimHistory(
-  messages: AiChatMessage[],
-  max = MAX_HISTORY_MESSAGES
-): AiChatMessage[] {
-  return messages.slice(-max);
+  nextEntityState:        EntityState;
+  intent:                 string | null;
+  plannerUsed:            boolean;
+  clarificationRequested: boolean;
+  resolvedEntityTypes:    string[];
+  /** Structured findings for persistence (executive answers only). */
+  findings:               ExecutiveAnswer | null;
 }
 
 export async function runOperationsChat(params: RunChatParams): Promise<RunChatResult> {
-  const { supabase, messages, locale, date, entityContext } = params;
-  const cfg = getAiConfig();
+  const { supabase, messages, locale, date } = params;
+  const cfg   = getAiConfig();
+  const nowMs = Date.now();
+
+  const entityState = normalizeStoredState(params.entityState);
+  const question    = messages[messages.length - 1]?.content ?? "";
 
   // 1. Compact upfront context (counts only)
   const ctx = await buildOperationsContext(supabase, date);
 
-  const instructions = buildSystemPrompt({
-    locale,
-    date,
-    contextSummary:    ctx.summary,
-    degraded:          ctx.degraded,
-    entityContextLine: renderEntityContext(entityContext),
-  });
+  // 2. Planner (skipped for trivial/grounded questions)
+  let plan: AiPlan | null = null;
+  let plannerUsed = false;
+  let inputTokens  = 0;
+  let outputTokens = 0;
+
+  if (cfg.enablePlanner && !shouldSkipPlanner(question, entityState, nowMs)) {
+    const outcome = await runPlanner(question, entityState, locale, date);
+    plan         = outcome.plan;
+    plannerUsed  = outcome.plan !== null;
+    inputTokens  += outcome.inputTokens;
+    outputTokens += outcome.outputTokens;
+  }
+
+  const answerMode = plan?.answerMode ?? "direct";
+  const model      = pickModel(cfg, answerMode);
+
+  // 3. Instructions: system prompt + active entities + internal plan guidance
+  const instructions = [
+    buildSystemPrompt({
+      locale,
+      date,
+      contextSummary:    ctx.summary,
+      degraded:          ctx.degraded,
+      entityContextLine: entityContextForPrompt(entityState, nowMs),
+    }),
+    planGuidance(plan),
+  ].filter(Boolean).join("\n\n");
 
   const toolCtx: ToolContext = { supabase, date, locale };
 
-  // 2. First provider turn: trimmed history
   let input: ProviderInputItem[] = trimHistory(messages).map((m) => ({
     role:    m.role,
     content: m.content,
   }));
 
   const executions: ToolExecution[] = [];
-  let inputTokens  = 0;
-  let outputTokens = 0;
-  let rounds       = 0;
+  let rounds = 0;
   let previousResponseId: string | undefined;
   let answer: string | null = null;
+  let correctiveUsed = false;
 
-  // 3. Tool loop — hard cap on rounds
+  // 4. Tool loop — hard cap on rounds, with one evidence-driven corrective pass
   for (let round = 0; round <= cfg.maxToolRounds; round++) {
     const turn = await createProviderTurn({
       instructions,
       input,
-      // After the final allowed round, don't offer tools — force an answer
       tools: round < cfg.maxToolRounds ? TOOL_DEFINITIONS : [],
       previousResponseId,
+      model,
     });
 
     inputTokens  += turn.inputTokens;
@@ -89,6 +125,16 @@ export async function runOperationsChat(params: RunChatParams): Promise<RunChatR
     rounds = round + 1;
 
     if (turn.toolCalls.length === 0) {
+      // Model wants to answer — check evidence first (once, within round cap)
+      if (!correctiveUsed && round < cfg.maxToolRounds && plan) {
+        const assessment = evaluateEvidenceCompleteness(plan, executions);
+        const gap = evidenceGapInstruction(assessment);
+        if (gap) {
+          correctiveUsed = true;
+          input = [{ role: "developer", content: gap }];
+          continue;   // one more round to gather the missing evidence
+        }
+      }
       answer = turn.text;
       break;
     }
@@ -106,12 +152,59 @@ export async function runOperationsChat(params: RunChatParams): Promise<RunChatR
     input = outputs;
   }
 
-  // 4. Assemble structured extras from tool evidence
-  const sources = dedupeSources(
-    executions.flatMap((e) => e.sources ?? [])
+  // 5. Final evidence assessment → confidence
+  const assessment = evaluateEvidenceCompleteness(plan, executions);
+  const confidence: EvidenceConfidence = assessment.confidence;
+
+  // 6. Executive contract for analytical questions (one structured turn)
+  let findings: ExecutiveAnswer | null = null;
+  if (
+    answerMode === "executive_analysis" &&
+    answer &&
+    executions.some((e) => e.ok)
+  ) {
+    try {
+      const structured = await createStructuredTurn({
+        instructions:
+          "Convert your previous answer into the structured executive contract. " +
+          "Use ONLY facts already established by the tool results. " +
+          "Mark causes 'medium' or 'low' confidence unless the evidence directly proves them. " +
+          `Write all text fields in ${locale === "ar" ? "Arabic" : "English"}.`,
+        input:              [{ role: "developer", content: "Produce the executive analysis object now." }],
+        schemaName:         "executive_answer",
+        schema:             EXECUTIVE_JSON_SCHEMA,
+        maxOutputTokens:    cfg.maxOutputTokens,
+        model,
+        previousResponseId,
+      });
+      inputTokens  += structured.inputTokens;
+      outputTokens += structured.outputTokens;
+
+      if (structured.jsonText) {
+        const parsed = executiveAnswerSchema.safeParse(JSON.parse(structured.jsonText));
+        if (parsed.success) {
+          findings = parsed.data;
+          answer   = renderExecutiveAnswer(parsed.data, locale);
+        }
+      }
+    } catch {
+      // Structured pass is best-effort — keep the plain answer
+    }
+  }
+
+  // 7. Entity state + structured extras
+  const nowIso          = new Date(nowMs).toISOString();
+  const nextEntityState = mergeEntityState(entityState, executions, nowIso);
+  const sources         = dedupeSources(executions.flatMap((e) => e.sources ?? []));
+
+  const activeIds = new Set(
+    [
+      nextEntityState.activeVisit?.id,
+      nextEntityState.activeUser?.id,
+      nextEntityState.activePlace?.id,
+    ].filter(Boolean) as string[]
   );
-  const suggestedActions  = deriveSuggestedActions(executions, locale);
-  const nextEntityContext = mergeEntityContext(entityContext, executions);
+  const activeSourceIds = sources.filter((s) => activeIds.has(s.id)).map((s) => s.id);
 
   return {
     answer: answer?.trim() ||
@@ -120,9 +213,16 @@ export async function runOperationsChat(params: RunChatParams): Promise<RunChatR
         : "I couldn't complete the answer — try rephrasing the question."),
     toolCalls: executions.map((e) => ({ name: e.name, summary: e.summary })),
     sources,
-    suggestedActions,
+    suggestedActions: deriveSuggestedActions(executions, locale),
     usage: { inputTokens, outputTokens },
     toolRounds: rounds,
-    nextEntityContext,
+    confidence,
+    activeSourceIds,
+    nextEntityState,
+    intent:                 plan?.intent ?? null,
+    plannerUsed,
+    clarificationRequested: plan?.needsClarification ?? false,
+    resolvedEntityTypes:    resolvedEntityKinds(nextEntityState),
+    findings,
   };
 }

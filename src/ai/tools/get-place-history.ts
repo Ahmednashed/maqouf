@@ -49,8 +49,25 @@ export async function getPlaceHistory(ctx: ToolContext, args: Args) {
     ...(rows[0] ? [makeSource("visit", rows[0].id, label, rows[0].scheduled_date)] : []),
   ].filter(Boolean);
 
+  const latest = rows[0];
+  const entities = [
+    { kind: "place" as const, id: match.id, label, confidence: 1 },
+    ...(latest ? [{
+      kind: "visit" as const,
+      id: latest.id,
+      label,
+      confidence: 0.9,
+      placeId: match.id,
+      placeLabel: label,
+      userLabel: latest.merch?.display_name ?? latest.merch?.user?.full_name ?? undefined,
+      date: latest.scheduled_date,
+      status: latest.status,
+    }] : []),
+  ];
+
   return {
     found: true,
+    __entities: entities,
     branch: label,
     region: match.region ?? undefined,
     visit_count_shown: rows.length,

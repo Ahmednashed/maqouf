@@ -36,6 +36,8 @@ export interface SuggestedAction {
   requiresConfirmation: true;
 }
 
+export type EvidenceConfidence = "high" | "medium" | "low";
+
 /** Structured route response. */
 export interface AiAnswer {
   answer:           string;
@@ -49,14 +51,13 @@ export interface AiAnswer {
   };
   /** Number of provider turns consumed (observability). */
   toolRounds?: number;
+  /** Evidence completeness confidence (v3). */
+  confidence?: EvidenceConfidence;
+  /** Ids of sources matching the active entities (UI highlight). */
+  activeSourceIds?: string[];
 }
 
-/** Rolling entity memory stored on the conversation (Phase 6 follow-ups). */
-export interface EntityContext {
-  users?:     string[];   // display names discussed
-  places?:    string[];   // branch names discussed
-  visit_ids?: string[];   // visit ids inspected
-}
+// Entity memory moved to entity-state.ts (normalized EntityState, v3).
 
 /**
  * Everything a tool needs to run. The Supabase client is the AUTHENTICATED
@@ -70,6 +71,8 @@ export interface ToolContext {
   locale:   AiLocale;
 }
 
+import type { ToolEntity } from "./entity-state";
+
 /** Result of one tool execution, serialized compactly for the model. */
 export interface ToolExecution {
   name:    string;
@@ -80,6 +83,8 @@ export interface ToolExecution {
   /** Structured evidence links collected by the tool (UI only — stripped
       from the payload sent to the model). */
   sources?: AiSource[];
+  /** Resolved entities reported by the tool (entity-grounding v3). */
+  entities?: ToolEntity[];
 }
 
 /** Provider failure categories — mapped to friendly UI messages. */

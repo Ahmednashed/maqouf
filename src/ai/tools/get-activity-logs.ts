@@ -15,7 +15,7 @@ export async function getActivityLogs(ctx: ToolContext, args: Args) {
 
   const { data, error } = await supabase
     .from("activity_logs")
-    .select("action, actor_name, entity_type, entity_label, created_at")
+    .select("action, actor_name, entity_type, entity_id, entity_label, created_at")
     .order("created_at", { ascending: false })
     .limit(limit);
 
@@ -27,10 +27,26 @@ export async function getActivityLogs(ctx: ToolContext, args: Args) {
     throw error;
   }
 
+  const rows = data ?? [];
+
+  // Ground the most recent visit event so follow-ups can reuse its id
+  const latestVisit = rows.find((r) => r.entity_type === "visit" && r.entity_id);
+  const entities = latestVisit
+    ? [{
+        kind: "visit" as const,
+        id: latestVisit.entity_id as string,
+        label: latestVisit.entity_label ?? "visit",
+        confidence: 0.8,
+        userLabel: latestVisit.actor_name ?? undefined,
+        status: latestVisit.action?.split(".")[1],
+      }]
+    : [];
+
   return {
     available: true,
-    count: (data ?? []).length,
-    events: (data ?? []).map((r) => ({
+    count: rows.length,
+    __entities: entities,
+    events: rows.map((r) => ({
       action: r.action,
       actor: r.actor_name ?? "system",
       entity: r.entity_label ?? r.entity_type,

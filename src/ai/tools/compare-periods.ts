@@ -4,6 +4,7 @@ import {
   resolveWindows,
   aggregateWindow,
   compareMetric,
+  summarizeComparison,
   type ComparePeriodKey,
   type DateWindow,
   type WindowVisitRow,
@@ -98,6 +99,15 @@ export async function comparePeriods(ctx: ToolContext, args: Args) {
     current_window:  windows.current,
     previous_window: windows.previous,
     comparisons,
+    summary: summarizeComparison(comparisons),
     note: "sync_issues has no historical data; previous value is null by design.",
+    __entities: [{
+      kind: "period" as const,
+      id: args.period,
+      label: args.period,
+      confidence: 1,
+      dateFrom: windows.current.from,
+      dateTo:   windows.current.to,
+    }],
   };
 }

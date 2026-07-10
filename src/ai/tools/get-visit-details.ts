@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { ToolContext } from "../types";
+import type { ToolEntity } from "../entity-state";
 import { makeSource } from "../sources";
 
 export const visitDetailsArgs = z.object({
@@ -47,8 +48,22 @@ export async function getVisitDetails(ctx: ToolContext, args: Args) {
     v.place ? makeSource("place", v.place.id, branch ?? "") : null,
   ].filter(Boolean);
 
+  const entities: ToolEntity[] = [{
+    kind:       "visit",
+    id:         v.id,
+    label:      branch ?? v.id.slice(0, 8),
+    confidence: 1,
+    userId:     v.merch?.id,
+    userLabel:  merch ?? undefined,
+    placeId:    v.place?.id,
+    placeLabel: branch ?? undefined,
+    date:       v.scheduled_date,
+    status:     v.status,
+  }];
+
   return {
     found: true,
+    __entities: entities,
     visit: {
       branch,
       region: v.place?.region ?? undefined,
