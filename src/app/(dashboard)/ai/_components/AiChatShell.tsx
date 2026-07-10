@@ -1,10 +1,10 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { Sparkles, SendHorizonal, Trash2 } from "lucide-react";
+import { Sparkles, SendHorizonal, Trash2, AlertTriangle, RotateCcw } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
 import { useTranslation } from "@/hooks/use-translation";
-import { useAiChat } from "@/hooks/use-ai-operations";
+import { useAiChat, type ChatError } from "@/hooks/use-ai-operations";
 import type { AiOperationalContext } from "@/services/ai-operations";
 import { AiMessage }           from "./AiMessage";
 import { AiTypingIndicator }   from "./AiTypingIndicator";
@@ -16,9 +16,15 @@ interface AiChatShellProps {
   context?: AiOperationalContext;
 }
 
+const ERROR_KEYS: Record<Exclude<ChatError, null>, "ai.errRateLimit" | "ai.errUnauthorized" | "ai.errUnavailable"> = {
+  rate_limited: "ai.errRateLimit",
+  unauthorized: "ai.errUnauthorized",
+  unavailable:  "ai.errUnavailable",
+};
+
 export function AiChatShell({ context }: AiChatShellProps) {
   const { t } = useTranslation();
-  const { messages, isTyping, ask, clear } = useAiChat(context);
+  const { messages, isTyping, error, ask, retry, clear } = useAiChat(context);
   const [input, setInput] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef  = useRef<HTMLInputElement>(null);
@@ -83,6 +89,25 @@ export function AiChatShell({ context }: AiChatShellProps) {
           <>
             {messages.map((m) => <AiMessage key={m.id} message={m} />)}
             {isTyping && <AiTypingIndicator />}
+
+            {/* Error banner + retry */}
+            {error && !isTyping && (
+              <div className="flex items-center gap-3 rounded-xl border border-rose-200 bg-rose-50/70 px-4 py-3 animate-fade-in">
+                <AlertTriangle className="w-4 h-4 text-rose-500 shrink-0" />
+                <p className="flex-1 min-w-0 text-[12.5px] font-semibold text-rose-700">
+                  {t(ERROR_KEYS[error])}
+                </p>
+                {error !== "rate_limited" && (
+                  <button
+                    onClick={retry}
+                    className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg bg-white border border-rose-200 text-[11.5px] font-bold text-rose-600 hover:bg-rose-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-400 transition-all shrink-0"
+                  >
+                    <RotateCcw className="w-3 h-3" />
+                    {t("ai.retry")}
+                  </button>
+                )}
+              </div>
+            )}
           </>
         )}
       </div>

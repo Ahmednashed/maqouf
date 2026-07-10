@@ -1,10 +1,11 @@
 "use client";
 
 import { memo, useState } from "react";
-import { Sparkles, Copy, Check } from "lucide-react";
+import { Sparkles, Copy, Check, Database, CircleSlash } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils/cn";
 import { useTranslation } from "@/hooks/use-translation";
+import type { TranslationKey } from "@/lib/i18n/translations";
 import { useCurrentMember, currentMemberLabel } from "@/hooks/use-current-member";
 import type { ChatMessage } from "@/hooks/use-ai-operations";
 
@@ -60,6 +61,38 @@ export const AiMessage = memo(function AiMessage({ message }: { message: ChatMes
         >
           {message.text}
         </div>
+
+        {/* Mock-fallback disclosure — never presented as real AI */}
+        {!isUser && message.isMock && (
+          <div className="mt-1.5">
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-50 border border-amber-200 text-[10px] font-bold text-amber-700">
+              <CircleSlash className="w-3 h-3" />
+              {t("ai.mockBadge")}
+            </span>
+          </div>
+        )}
+
+        {/* Which operational sources the answer used */}
+        {!isUser && !message.isMock && (message.toolCalls?.length ?? 0) > 0 && (
+          <div className="flex flex-wrap items-center gap-1 mt-1.5">
+            <span className="inline-flex items-center gap-1 text-[9.5px] font-bold text-ink-300 uppercase tracking-wide me-0.5">
+              <Database className="w-2.5 h-2.5" />
+              {t("ai.sourcesUsed")}:
+            </span>
+            {[...new Set(message.toolCalls!.map((c) => c.name))].map((name) => {
+              const key   = `ai.tool.${name}` as TranslationKey;
+              const label = t(key);
+              return (
+                <span
+                  key={name}
+                  className="px-1.5 py-0.5 rounded-md bg-violet-50 border border-violet-100 text-[9.5px] font-semibold text-violet-600"
+                >
+                  {label === key ? name : label}
+                </span>
+              );
+            })}
+          </div>
+        )}
 
         {/* Meta row */}
         <div className={cn(
