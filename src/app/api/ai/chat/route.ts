@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
-import { createClient } from "@/lib/supabase/server";
+import { createClient, createBearerClient } from "@/lib/supabase/server";
 import { getAiConfig, MAX_QUESTION_CHARS, MAX_HISTORY_MESSAGES } from "@/ai/config";
 import { runOperationsChat } from "@/ai/router";
 import { loadOrCreateConversation, persistExchange } from "@/ai/memory";
@@ -41,7 +41,41 @@ export async function POST(request: NextRequest) {
   let conversationId: string | null = null;
   let userId: string | null = null;
 
-  const supabase = await createClient();
+  // Native clients (Malgoof Mobile) authenticate with a Supabase access
+  // token instead of cookies. The bearer client carries the token on every
+  // DB call, so RLS and the usage/logging RPCs behave identically for both
+  // transports. Cookie auth is untouched. Parsing: header lookup is
+  // case-insensitive (NextRequest normalizes), the Bearer prefix match is
+  // case-insensitive, and surrounding whitespace is trimmed. A present
+  // bearer token always wins — the cookie client is only built without one,
+  // so a stale browser cookie can never override a native token.
+  const authorizationHeader = request.headers.get("authorization");
+  const bearerToken =
+    authorizationHeader?.match(/^Bearer\s+(.+)$/i)?.[1]?.trim() || null;
+  const supabase = bearerToken
+    ? createBearerClient(bearerToken)
+    : await createClient();
+
+  // Boolean-only auth diagnostics (development builds only). Never token
+  // contents, never user identifiers — this exists because a provider-key
+  // failure and a caller-auth failure both once read "category=auth".
+  const logAuthDiagnostics = (diag: {
+    tokenValidationSucceeded: boolean;
+    authenticatedUserPresent: boolean;
+    activeMembershipFound: boolean | null; // null = not reached
+    failureStage: "token_validation" | "membership" | null;
+  }) => {
+    if (process.env.NODE_ENV !== "production") {
+      console.info(
+        `[ai:${requestId}] auth-diagnostics ` +
+          JSON.stringify({
+            authorizationHeaderPresent: authorizationHeader !== null,
+            bearerTokenPresent: bearerToken !== null,
+            ...diag,
+          })
+      );
+    }
+  };
 
   const writeLog = (params: {
     toolNames:   string[];
@@ -83,11 +117,50 @@ export async function POST(request: NextRequest) {
 
   try {
     // ── 1. Auth ──────────────────────────────────────────────────────────
-    const { data: { user }, error: authErr } = await supabase.auth.getUser();
+    // Bearer tokens are validated against Supabase Auth (never decoded and
+    // trusted locally); the cookie path is unchanged.
+    // Missing/invalid/expired token → 401.
+    const { data: { user }, error: authErr } = bearerToken
+      ? await supabase.auth.getUser(bearerToken)
+      : await supabase.auth.getUser();
     if (authErr || !user) {
+      logAuthDiagnostics({
+        tokenValidationSucceeded: false,
+        authenticatedUserPresent: false,
+        activeMembershipFound: null,
+        failureStage: "token_validation",
+      });
       return NextResponse.json({ error: "unauthorized" }, { status: 401 });
     }
     userId = user.id;
+
+    // ── 1b. Company membership ───────────────────────────────────────────
+    // Derived server-side under the caller's own RLS (never client-sent).
+    // No active membership → 403: authenticated but not an authorized
+    // Malgoof member — consistent for cookie and bearer transports alike.
+    const { data: membership } = await supabase
+      .from("company_users")
+      .select("id")
+      .eq("user_id", user.id)
+      .eq("status", "active")
+      .order("created_at")
+      .limit(1)
+      .maybeSingle();
+    if (!membership) {
+      logAuthDiagnostics({
+        tokenValidationSucceeded: true,
+        authenticatedUserPresent: true,
+        activeMembershipFound: false,
+        failureStage: "membership",
+      });
+      return NextResponse.json({ error: "forbidden" }, { status: 403 });
+    }
+    logAuthDiagnostics({
+      tokenValidationSucceeded: true,
+      authenticatedUserPresent: true,
+      activeMembershipFound: true,
+      failureStage: null,
+    });
 
     // ── 2. Validate input ────────────────────────────────────────────────
     let raw: unknown;
@@ -123,7 +196,8 @@ export async function POST(request: NextRequest) {
       supabase,
       parsed.data.conversationId,
       lastMessage.content,
-      locale
+      locale,
+      user
     );
     conversationId = conversation?.id ?? null;
 
@@ -140,7 +214,7 @@ export async function POST(request: NextRequest) {
     if (conversation) {
       void persistExchange(
         supabase, conversation, lastMessage.content, result,
-        result.nextEntityState, result.findings ?? undefined
+        result.nextEntityState, result.findings ?? undefined, user
       );
     }
     if (result.usage?.inputTokens || result.usage?.outputTokens) {
@@ -189,8 +263,13 @@ export async function POST(request: NextRequest) {
     });
 
   } catch (err: unknown) {
+    // Reaching here means CALLER auth already passed (401/403 return
+    // early above) — a "auth" category is the AI PROVIDER's credentials
+    // (e.g. OPENAI_API_KEY missing/rejected), hence stage=provider below.
     const category = err instanceof ProviderError ? err.category : "unknown";
-    console.error(`[ai:${requestId}] failed category=${category} ms=${Date.now() - startedAt}`);
+    console.error(
+      `[ai:${requestId}] stage=provider failed category=${category} ms=${Date.now() - startedAt}`
+    );
 
     if (userId) {
       writeLog({

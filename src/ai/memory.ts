@@ -34,7 +34,10 @@ export async function loadOrCreateConversation(
   supabase:        SupabaseClient,
   conversationId:  string | undefined,
   firstQuestion:   string,
-  locale:          string
+  locale:          string,
+  /** Pre-resolved auth user (bearer-token requests have no client session
+      to read; the route passes the user it already validated). */
+  knownUser?:      { id: string }
 ): Promise<ConversationRow | null> {
   if (conversationId) {
     const { data, error } = await supabase
@@ -47,7 +50,7 @@ export async function loadOrCreateConversation(
     // Unknown/foreign id → fall through and create a fresh conversation
   }
 
-  const { data: { user } } = await supabase.auth.getUser();
+  const user = knownUser ?? (await supabase.auth.getUser()).data.user;
   if (!user) return null;
 
   const { data: membership } = await supabase
@@ -82,10 +85,12 @@ export async function persistExchange(
   question:     string,
   answer:       AiAnswer,
   entityContext: EntityState,
-  findings?:    unknown
+  findings?:    unknown,
+  /** Pre-resolved auth user (see loadOrCreateConversation). */
+  knownUser?:   { id: string }
 ): Promise<void> {
   try {
-    const { data: { user } } = await supabase.auth.getUser();
+    const user = knownUser ?? (await supabase.auth.getUser()).data.user;
     if (!user) return;
 
     const { data: membership } = await supabase
