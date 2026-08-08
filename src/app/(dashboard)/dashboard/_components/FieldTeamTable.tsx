@@ -20,7 +20,7 @@ import {
   type PresenceState,
 } from "@/services/dashboard-extras";
 import type { Locale } from "@/types";
-import { SectionHeader, Skeleton } from "./shared";
+import { SectionHeader, Card, EmptyState, Skeleton } from "./shared";
 
 // ─── Presence pill ────────────────────────────────────────────────────────────
 
@@ -170,20 +170,29 @@ export const FieldTeamTable = memo(function FieldTeamTable({
 
   return (
     <div>
-      <SectionHeader title={t("dashboard.section.team")} icon={UsersRound} />
+      <SectionHeader
+        title={t("dashboard.section.team")}
+        icon={UsersRound}
+        action={
+          team.length > 0 ? (
+            <span className="text-[11px] font-semibold text-ink-400">{team.length}</span>
+          ) : undefined
+        }
+      />
 
       {loading ? (
-        <Skeleton className="h-[220px]" />
+        <Skeleton className="h-[200px]" />
       ) : team.length === 0 ? (
-        <div className="bg-white rounded-2xl border border-ink-100 p-8 text-center shadow-sm">
-          <UsersRound className="w-8 h-8 text-ink-300 mx-auto mb-2" />
-          <p className="text-[13px] text-ink-400">{t("dashboard.team.empty")}</p>
-        </div>
+        <Card>
+          <EmptyState icon={UsersRound} message={t("dashboard.team.empty")} />
+        </Card>
       ) : (
-        <div className="bg-white rounded-2xl border border-ink-100 shadow-sm overflow-x-auto">
+        // Vertical cap keeps a large roster from stretching the page; the
+        // header stays pinned while scrolling.
+        <div className="bg-white rounded-2xl border border-ink-100 shadow-sm overflow-auto max-h-[420px]">
           <table className="w-full text-[13px] min-w-[760px]">
-            <thead>
-              <tr className="border-b border-ink-100 bg-ink-50/60">
+            <thead className="sticky top-0 z-10">
+              <tr className="border-b border-ink-100 bg-ink-50 backdrop-blur">
                 {HEADERS.map((key) => (
                   <th
                     key={key}

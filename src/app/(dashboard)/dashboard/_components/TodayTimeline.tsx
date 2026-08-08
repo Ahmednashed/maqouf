@@ -6,7 +6,7 @@ import { CalendarClock, Sunrise, Sun, CalendarPlus } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
 import type { TranslationFn } from "@/hooks/use-translation";
 import type { DashboardVisit } from "@/services/dashboard";
-import { SectionHeader, Skeleton } from "./shared";
+import { DashboardSection, Card, EmptyState, Skeleton } from "./shared";
 
 // ─── Status → timeline dot/badge styling ──────────────────────────────────────
 
@@ -131,41 +131,53 @@ export const TodayTimeline = memo(function TodayTimeline({
     ].filter((g) => g.items.length > 0);
   }, [visits, t]);
 
-  return (
-    <div>
-      <SectionHeader title={t("dashboard.section.timeline")} icon={CalendarClock} />
+  const total = visits.length;
 
+  return (
+    <DashboardSection
+      title={t("dashboard.section.timeline")}
+      icon={CalendarClock}
+      fill
+      action={
+        total > 0 ? (
+          <span className="text-[11px] font-semibold text-ink-400">{total}</span>
+        ) : undefined
+      }
+    >
       {loading ? (
-        <Skeleton className="h-[220px]" />
+        <Skeleton className="h-[260px]" />
       ) : groups.length === 0 ? (
-        <div className="bg-white rounded-2xl border border-ink-100 p-8 text-center shadow-sm">
-          <CalendarClock className="w-8 h-8 text-ink-300 mx-auto mb-2" />
-          <p className="text-[13px] text-ink-400">{t("dashboard.timeline.empty")}</p>
-        </div>
+        <Card fill>
+          <EmptyState icon={CalendarClock} message={t("dashboard.timeline.empty")} />
+        </Card>
       ) : (
-        <div className="bg-white rounded-2xl border border-ink-100 shadow-sm p-4 space-y-4">
-          {groups.map(({ key, label, icon: Icon, items }) => (
-            <div key={key}>
-              <p className="flex items-center gap-1.5 text-[11px] font-bold text-ink-400 uppercase tracking-widest mb-2.5">
-                <Icon className="w-3.5 h-3.5" />
-                {label}
-                <span className="text-ink-300 font-semibold">({items.length})</span>
-              </p>
-              <div>
-                {items.map((v, i) => (
-                  <TimelineItem
-                    key={v.id}
-                    visit={v}
-                    locale={locale}
-                    t={t}
-                    isLast={i === items.length - 1}
-                  />
-                ))}
+        <Card fill padded={false}>
+          {/* Capped scroll: a busy day can hold 40+ visits — the card must not
+              stretch the whole row. */}
+          <div className="max-h-[340px] overflow-y-auto p-4 space-y-4">
+            {groups.map(({ key, label, icon: Icon, items }) => (
+              <div key={key}>
+                <p className="flex items-center gap-1.5 text-[11px] font-bold text-ink-400 uppercase tracking-widest mb-2.5">
+                  <Icon className="w-3.5 h-3.5" />
+                  {label}
+                  <span className="text-ink-300 font-semibold">({items.length})</span>
+                </p>
+                <div>
+                  {items.map((v, i) => (
+                    <TimelineItem
+                      key={v.id}
+                      visit={v}
+                      locale={locale}
+                      t={t}
+                      isLast={i === items.length - 1}
+                    />
+                  ))}
+                </div>
               </div>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        </Card>
       )}
-    </div>
+    </DashboardSection>
   );
 });

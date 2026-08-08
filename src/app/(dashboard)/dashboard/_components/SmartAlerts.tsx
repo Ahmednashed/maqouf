@@ -5,7 +5,7 @@ import Link from "next/link";
 import { BellRing, WifiOff, MapPinOff, Clock, RefreshCw, type LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
 import type { TranslationFn } from "@/hooks/use-translation";
-import { SectionHeader, Skeleton, AnimatedNumber } from "./shared";
+import { DashboardSection, Skeleton, AnimatedNumber } from "./shared";
 
 // ─── Alert card ───────────────────────────────────────────────────────────────
 
@@ -96,18 +96,16 @@ export const SmartAlerts = memo(function SmartAlerts({
   ];
 
   return (
-    <div>
-      <SectionHeader title={t("dashboard.alert.title")} icon={BellRing} />
-
+    <DashboardSection title={t("dashboard.alert.title")} icon={BellRing} fill>
       {loading ? (
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-2 gap-3 h-full">
           {[...Array(4)].map((_, i) => <Skeleton key={i} className="h-[72px]" />)}
         </div>
       ) : (
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-2 gap-3 h-full auto-rows-fr">
           {alerts.map((a) => <AlertCard key={a.key} def={a} />)}
         </div>
       )}
-    </div>
+    </DashboardSection>
   );
 });

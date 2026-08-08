@@ -2,7 +2,7 @@
 
 import { memo, useMemo } from "react";
 import {
-  Trophy, LifeBuoy, TrendingUp, TrendingDown, Minus, Timer,
+  Trophy, LifeBuoy, TrendingUp, TrendingDown, Minus, Timer, BarChart3,
 } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
 import type { TranslationFn } from "@/hooks/use-translation";
@@ -10,7 +10,7 @@ import type { MerchStat } from "@/services/dashboard";
 import { hasSyncIssue, type TeamMemberStatus } from "@/services/dashboard-extras";
 import { formatRelativeTime } from "@/lib/utils/format";
 import type { Locale } from "@/types";
-import { SectionHeader, Skeleton } from "./shared";
+import { SectionHeader, EmptyState, Skeleton } from "./shared";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -157,7 +157,7 @@ export const PerformersPanel = memo(function PerformersPanel({
 
   if (loading) {
     return (
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-stretch">
         <div><Skeleton className="h-[240px]" /></div>
         <div><Skeleton className="h-[240px]" /></div>
       </div>
@@ -165,13 +165,13 @@ export const PerformersPanel = memo(function PerformersPanel({
   }
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-stretch">
       {/* Top performers */}
-      <div>
+      <div className="flex flex-col min-w-0">
         <SectionHeader title={t("dashboard.perf.topTitle")} icon={Trophy} />
-        <div className="bg-white rounded-2xl border border-ink-100 shadow-sm p-2">
+        <div className="bg-white rounded-2xl border border-ink-100 shadow-sm p-2 h-full">
           {top.length === 0 ? (
-            <p className="text-[12px] text-ink-400 text-center py-8">{t("dashboard.perf.empty")}</p>
+            <EmptyState icon={BarChart3} message={t("dashboard.perf.empty")} />
           ) : (
             top.map((m, i) => <TopRow key={m.merch_id} m={m} rank={i + 1} t={t} />)
           )}
@@ -179,11 +179,11 @@ export const PerformersPanel = memo(function PerformersPanel({
       </div>
 
       {/* Needs support */}
-      <div>
+      <div className="flex flex-col min-w-0">
         <SectionHeader title={t("dashboard.perf.lowTitle")} icon={LifeBuoy} />
-        <div className="bg-white rounded-2xl border border-ink-100 shadow-sm p-2">
+        <div className="bg-white rounded-2xl border border-ink-100 shadow-sm p-2 h-full">
           {low.length === 0 ? (
-            <p className="text-[12px] text-ink-400 text-center py-8">{t("dashboard.perf.empty")}</p>
+            <EmptyState icon={BarChart3} message={t("dashboard.perf.empty")} />
           ) : (
             low.map((entry) => (
               <LowRow key={entry.m.merch_id} entry={entry} locale={locale} t={t} />

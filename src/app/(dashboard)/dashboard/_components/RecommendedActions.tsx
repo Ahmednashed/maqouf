@@ -9,7 +9,7 @@ import {
 import { cn } from "@/lib/utils/cn";
 import type { TranslationFn } from "@/hooks/use-translation";
 import type { CommandCenterInsights } from "@/lib/insights";
-import { SectionHeader, Skeleton } from "./shared";
+import { DashboardSection, Card, EmptyState, Skeleton } from "./shared";
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
@@ -73,18 +73,15 @@ export const RecommendedActions = memo(function RecommendedActions({
   }, [insights.priorities, oosCount, t]);
 
   return (
-    <div>
-      <SectionHeader title={t("dashboard.rec.title")} icon={Lightbulb} />
-
+    <DashboardSection title={t("dashboard.rec.title")} icon={Lightbulb} fill>
       {loading ? (
-        <Skeleton className="h-[220px]" />
+        <Skeleton className="h-[240px]" />
       ) : recs.length === 0 ? (
-        <div className="bg-white rounded-2xl border border-ink-100 p-6 text-center shadow-sm">
-          <CheckCircle2 className="w-7 h-7 text-emerald-400 mx-auto mb-2" />
-          <p className="text-[12.5px] text-ink-400">{t("dashboard.rec.empty")}</p>
-        </div>
+        <Card fill>
+          <EmptyState icon={CheckCircle2} message={t("dashboard.rec.empty")} />
+        </Card>
       ) : (
-        <div className="bg-white rounded-2xl border border-ink-100 shadow-sm p-2 space-y-1">
+        <div className="bg-white rounded-2xl border border-ink-100 shadow-sm p-2 space-y-1 h-full">
           {recs.map(({ key, label, icon: Icon, href, color }) => (
             <Link
               key={key}
@@ -113,6 +110,6 @@ export const RecommendedActions = memo(function RecommendedActions({
           ))}
         </div>
       )}
-    </div>
+    </DashboardSection>
   );
 });

@@ -1,0 +1,12 @@
+{
+  "expo": {
+    "extra": {
+      "eas": {
+        "projectId": "1c644e21-552f-4130-8b3b-c5530d6829f4"
+      }
+    },
+    "android": {
+      "package": "com.malgoof.mobile"
+    }
+  }
+}

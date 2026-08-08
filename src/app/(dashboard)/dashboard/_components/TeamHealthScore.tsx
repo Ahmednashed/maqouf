@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils/cn";
 import type { TranslationFn } from "@/hooks/use-translation";
 import type { TranslationKey } from "@/lib/i18n/translations";
 import { healthLabelKey, healthColor } from "@/lib/insights";
-import { SectionHeader, Skeleton, AnimatedNumber } from "./shared";
+import { DashboardSection, Card, Skeleton, AnimatedNumber } from "./shared";
 
 // ─── SVG ring (no recharts — keeps the main bundle lean) ─────────────────────
 
@@ -62,13 +62,11 @@ export const TeamHealthScore = memo(function TeamHealthScore({
   ];
 
   return (
-    <div>
-      <SectionHeader title={t("dashboard.health.title")} icon={HeartPulse} />
-
+    <DashboardSection title={t("dashboard.health.title")} icon={HeartPulse} fill>
       {loading ? (
-        <Skeleton className="h-[220px]" />
+        <Skeleton className="h-[260px]" />
       ) : (
-        <div className="bg-white rounded-2xl border border-ink-100 shadow-sm p-4 flex flex-col items-center">
+        <Card fill className="flex flex-col items-center justify-center">
           <ScoreRing score={score} color={color} />
 
           <span
@@ -92,8 +90,8 @@ export const TeamHealthScore = memo(function TeamHealthScore({
               </div>
             ))}
           </div>
-        </div>
+        </Card>
       )}
-    </div>
+    </DashboardSection>
   );
 });

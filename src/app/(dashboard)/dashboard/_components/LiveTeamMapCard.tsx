@@ -3,7 +3,7 @@
 import { memo } from "react";
 import { Map, MapPin, Smartphone } from "lucide-react";
 import type { TranslationFn } from "@/hooks/use-translation";
-import { SectionHeader } from "./shared";
+import { DashboardSection, Card } from "./shared";
 
 // ─── Future contract ──────────────────────────────────────────────────────────
 // When a map provider is integrated, positions plug straight into this prop —
@@ -27,10 +27,8 @@ interface LiveTeamMapCardProps {
 
 export const LiveTeamMapCard = memo(function LiveTeamMapCard({ t }: LiveTeamMapCardProps) {
   return (
-    <div>
-      <SectionHeader title={t("dashboard.section.map")} icon={Map} />
-
-      <div className="bg-white rounded-2xl border border-ink-100 shadow-sm p-4">
+    <DashboardSection title={t("dashboard.section.map")} icon={Map} fill>
+      <Card fill className="flex items-center">
         <div className="flex items-center gap-4">
           {/* Mini illustration: stylised map tile */}
           <div className="relative w-20 h-20 rounded-2xl bg-gradient-to-br from-brand-50 to-blue-50 border border-brand-100 shrink-0 overflow-hidden">
@@ -53,7 +51,7 @@ export const LiveTeamMapCard = memo(function LiveTeamMapCard({ t }: LiveTeamMapC
             </p>
           </div>
         </div>
-      </div>
-    </div>
+      </Card>
+    </DashboardSection>
   );
 });

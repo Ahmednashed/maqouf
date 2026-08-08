@@ -144,39 +144,37 @@ export default function DashboardPage() {
   }
 
   return (
-    <div className="space-y-6 pb-10" dir={dir}>
+    <div className="space-y-5 pb-10" dir={dir}>
 
-      {/* ── §1 Hero header ──────────────────────────────────────────────── */}
-      <div className="relative bg-white rounded-2xl border border-ink-100 shadow-sm overflow-hidden">
-        {/* Subtle brand wash */}
+      {/* ── ROW 1 · Command bar ──────────────────────────────────────────
+          Compact by design: greeting, date, controls and the daily summary
+          all live in one band so operational data starts above the fold. */}
+      <header className="relative bg-white rounded-2xl border border-ink-100 shadow-sm overflow-hidden">
         <div className="absolute inset-0 bg-gradient-to-r from-brand-50/70 via-transparent to-transparent pointer-events-none" />
 
-        <div className="relative px-5 py-5 sm:px-6">
-          <div className="flex flex-wrap items-start justify-between gap-4">
-            {/* Greeting */}
-            <div className="min-w-0">
-              <h1 className="text-[22px] sm:text-[24px] font-bold text-ink-900 leading-tight">
+        <div className="relative px-4 py-3 sm:px-5">
+          <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2.5">
+            {/* Greeting + date + weather, all on one line */}
+            <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1.5 min-w-0">
+              <h1 className="text-[17px] sm:text-[19px] font-bold text-ink-900 leading-tight">
                 {t(greetingKey)}{firstName ? ` ${firstName}` : ""} 👋
               </h1>
-              <p className="text-ink-500 text-[13px] mt-1">{t("dashboard.hero.tagline")}</p>
-
-              {/* Date + weather chip */}
-              <div className="flex flex-wrap items-center gap-2 mt-2.5">
-                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-ink-50 border border-ink-100 text-[11.5px] font-semibold text-ink-600">
-                  <CalendarDays className="w-3.5 h-3.5 text-ink-400" />
-                  {prettyDate}
-                </span>
-                {/* Weather placeholder */}
-                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-50 border border-amber-100 text-[11.5px] font-semibold text-amber-700">
-                  <CloudSun className="w-3.5 h-3.5" />
-                  —°
-                </span>
-              </div>
+              <span className="hidden lg:inline text-[12.5px] text-ink-400">
+                {t("dashboard.hero.tagline")}
+              </span>
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-ink-50 border border-ink-100 text-[11.5px] font-semibold text-ink-600">
+                <CalendarDays className="w-3.5 h-3.5 text-ink-400" />
+                {prettyDate}
+              </span>
+              {/* Weather placeholder */}
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-50 border border-amber-100 text-[11.5px] font-semibold text-amber-700">
+                <CloudSun className="w-3.5 h-3.5" />
+                —°
+              </span>
             </div>
 
-            {/* Actions */}
+            {/* Controls */}
             <div className="flex items-center gap-2 shrink-0">
-              {/* §8 Global search trigger */}
               <button
                 onClick={openPalette}
                 aria-label={t("cmdk.hint")}
@@ -217,7 +215,7 @@ export default function DashboardPage() {
                 type="button"
                 disabled
                 title={t("dashboard.hero.filters")}
-                className="hidden sm:inline-flex items-center gap-1.5 h-9 px-3.5 rounded-xl border border-ink-200 bg-white text-[12.5px] font-semibold text-ink-300 cursor-not-allowed"
+                className="hidden lg:inline-flex items-center gap-1.5 h-9 px-3.5 rounded-xl border border-ink-200 bg-white text-[12.5px] font-semibold text-ink-300 cursor-not-allowed"
               >
                 <SlidersHorizontal className="w-4 h-4" />
                 {t("dashboard.hero.filters")}
@@ -225,9 +223,9 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          {/* Summary line */}
+          {/* Daily summary chips — same band, no extra card */}
           {dashboard.data && (
-            <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 mt-4 pt-4 border-t border-ink-100/70 text-[12.5px]">
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 mt-2.5 pt-2.5 border-t border-ink-100/70 text-[12px]">
               <span className="text-ink-500 font-medium">{t("dashboard.hero.summaryPrefix")}</span>
               <SummaryChip value={dashboard.data.todayTotal}     label={t("dashboard.hero.chipPlanned")}   className="bg-blue-50 text-blue-700" />
               <SummaryChip value={dashboard.data.todayCompleted} label={t("dashboard.hero.chipCompleted")} className="bg-emerald-50 text-emerald-700" />
@@ -236,16 +234,17 @@ export default function DashboardPage() {
             </div>
           )}
         </div>
-      </div>
+      </header>
 
-      {/* ── §1 Today's Priorities (command center) ──────────────────────── */}
+      {/* ── ROW 2 · What needs attention ─────────────────────────────────
+          Collapses to a slim banner when nothing is actionable. */}
       <PriorityPanel
         priorities={insights.priorities}
         loading={ccLoading}
         t={t}
       />
 
-      {/* ── Executive KPI cards ─────────────────────────────────────────── */}
+      {/* ── ROW 3 · Core KPI strip ───────────────────────────────────────── */}
       <ExecutiveKpiRow
         data={dashboard.data}
         extras={extras.data}
@@ -253,84 +252,91 @@ export default function DashboardPage() {
         t={t}
       />
 
-      {/* ── §2–4 Health · Alerts · Recommendations ──────────────────────── */}
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 items-start">
-        <TeamHealthScore
-          score={insights.healthScore}
-          parts={insights.healthParts}
-          loading={ccLoading}
-          t={t}
-        />
-        <SmartAlerts
-          offline={insights.offlineCount}
-          gps={insights.gpsProblems}
-          delayed={extras.data?.overdueCount ?? 0}
-          sync={extras.data?.syncIssuesCount ?? 0}
-          loading={ccLoading}
-          t={t}
-        />
-        <RecommendedActions
-          insights={insights}
-          oosCount={dashboard.data?.alerts.length ?? 0}
-          loading={ccLoading}
-          t={t}
-        />
-      </div>
-
-      {/* ── Main grid: content (2/3) + live rail (1/3) ──────────────────── */}
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-6 items-start">
-
-        {/* Left / main column */}
-        <div className="xl:col-span-2 space-y-6 min-w-0">
-          {/* §4 Today's schedule */}
+      {/* ── ROW 4 · Operations overview ──────────────────────────────────
+          Schedule (5) · Health (3) · Alerts (4) — equal-height columns. */}
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-12 gap-4 items-stretch">
+        {/* order-* gives mobile the priority sequence (health → schedule →
+            alerts) while desktop keeps the reading order left-to-right. */}
+        <div className="order-2 xl:order-none xl:col-span-5 min-w-0">
           <TodayTimeline
             visits={dashboard.data?.todayVisits}
             loading={dashboard.isLoading}
             t={t}
             locale={locale}
           />
-
-          {/* §3 Field team status */}
-          <FieldTeamTable
-            team={extras.data?.team}
-            loading={extras.isLoading}
-            t={t}
-            locale={locale}
-          />
-
-          {/* §5–6 Top performers · Needs support */}
-          <PerformersPanel
-            merchStats={dashboard.data?.merchStats}
-            team={extras.data?.team}
+        </div>
+        <div className="order-1 xl:order-none xl:col-span-3 min-w-0">
+          <TeamHealthScore
+            score={insights.healthScore}
+            parts={insights.healthParts}
             loading={ccLoading}
             t={t}
-            locale={locale}
-          />
-
-          {/* Charts (lazy) */}
-          <ChartsGrid
-            data={dashboard.data}
-            extras={extras.data}
-            trend={trend.data ?? []}
-            t={t}
-            locale={locale}
           />
         </div>
+        <div className="order-3 xl:order-none md:col-span-2 xl:col-span-4 min-w-0">
+          <SmartAlerts
+            offline={insights.offlineCount}
+            gps={insights.gpsProblems}
+            delayed={extras.data?.overdueCount ?? 0}
+            sync={extras.data?.syncIssuesCount ?? 0}
+            loading={ccLoading}
+            t={t}
+          />
+        </div>
+      </div>
 
-        {/* Right rail */}
-        <div className="space-y-6 min-w-0">
-          {/* §7 AI assistant (conversational shell, design only) */}
+      {/* ── ROW 5 · Field team (wide operational table) ─────────────────── */}
+      <FieldTeamTable
+        team={extras.data?.team}
+        loading={extras.isLoading}
+        t={t}
+        locale={locale}
+      />
+
+      {/* ── ROW 5b · Performance leaders / needs support ─────────────────── */}
+      <PerformersPanel
+        merchStats={dashboard.data?.merchStats}
+        team={extras.data?.team}
+        loading={ccLoading}
+        t={t}
+        locale={locale}
+      />
+
+      {/* ── ROW 6 · AI brief + suggested actions ─────────────────────────── */}
+      <div className="grid grid-cols-1 xl:grid-cols-12 gap-4 items-stretch">
+        <div className="xl:col-span-7 min-w-0">
           <AiInsightsCard
             t={t}
             greeting={t(greetingKey)}
             firstName={firstName}
             issueCount={insights.issueCount}
           />
+        </div>
+        <div className="xl:col-span-5 min-w-0">
+          <RecommendedActions
+            insights={insights}
+            oosCount={dashboard.data?.alerts.length ?? 0}
+            loading={ccLoading}
+            t={t}
+          />
+        </div>
+      </div>
 
-          {/* Live activity feed */}
+      {/* ── ROW 7 · Analytics (lazy — recharts) ──────────────────────────── */}
+      <ChartsGrid
+        data={dashboard.data}
+        extras={extras.data}
+        trend={trend.data ?? []}
+        t={t}
+        locale={locale}
+      />
+
+      {/* ── ROW 8 · Live activity + team map ─────────────────────────────── */}
+      <div className="grid grid-cols-1 xl:grid-cols-12 gap-4 items-stretch">
+        <div className="xl:col-span-7 min-w-0">
           <LiveActivityFeed />
-
-          {/* Live team map (placeholder) */}
+        </div>
+        <div className="xl:col-span-5 min-w-0">
           <LiveTeamMapCard t={t} />
         </div>
       </div>
@@ -338,7 +344,7 @@ export default function DashboardPage() {
       {/* ── Quick actions FAB ────────────────────────────────────────────── */}
       <QuickActions t={t} />
 
-      {/* ── §8–9 Command palette (Ctrl/Cmd+K) ───────────────────────────── */}
+      {/* ── Command palette (Ctrl/Cmd+K) ─────────────────────────────────── */}
       <CommandPalette open={paletteOpen} onClose={closePalette} />
     </div>
   );

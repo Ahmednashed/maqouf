@@ -16,11 +16,99 @@ export function SectionHeader({
   action?: React.ReactNode;
 }) {
   return (
-    <div className="flex items-center gap-2 mb-3">
-      <div className="w-1 h-5 rounded-full bg-brand-500" />
+    <div className="flex items-center gap-2 mb-2.5">
+      <div className="w-1 h-4 rounded-full bg-brand-500" />
       {Icon && <Icon className="w-3.5 h-3.5 text-brand-400" />}
       <h2 className="text-[13px] font-bold text-ink-700">{title}</h2>
       {action && <div className="ms-auto">{action}</div>}
+    </div>
+  );
+}
+
+// ─── Section wrapper ──────────────────────────────────────────────────────────
+//
+// Header + content in one unit so a section can stretch inside a grid row
+// (`fill`) without every call-site repeating the flex plumbing.
+
+export function DashboardSection({
+  title,
+  icon,
+  action,
+  children,
+  fill = false,
+  className,
+}: {
+  title:     string;
+  icon?:     React.ElementType;
+  action?:   React.ReactNode;
+  children:  React.ReactNode;
+  fill?:     boolean;
+  className?: string;
+}) {
+  return (
+    <section className={cn(fill && "h-full flex flex-col min-w-0", className)}>
+      <SectionHeader title={title} icon={icon} action={action} />
+      <div className={cn(fill && "flex-1 min-h-0")}>{children}</div>
+    </section>
+  );
+}
+
+// ─── Card shell ───────────────────────────────────────────────────────────────
+//
+// One surface definition for every dashboard card. `fill` makes the card
+// stretch to the tallest sibling in its grid row (prevents ragged rows).
+
+export function Card({
+  children,
+  className,
+  fill = false,
+  padded = true,
+}: {
+  children:   React.ReactNode;
+  className?: string;
+  fill?:      boolean;
+  padded?:    boolean;
+}) {
+  return (
+    <div
+      className={cn(
+        "bg-white rounded-2xl border border-ink-100 shadow-sm",
+        padded && "p-4",
+        fill && "h-full",
+        className
+      )}
+    >
+      {children}
+    </div>
+  );
+}
+
+// ─── Compact empty state ──────────────────────────────────────────────────────
+//
+// Deliberately short: an empty card must never be taller than a populated one.
+// Replaces the old `p-8 text-center` blocks that wasted ~120px each.
+
+export function EmptyState({
+  icon: Icon,
+  message,
+  action,
+  className,
+}: {
+  icon:      React.ElementType;
+  message:   string;
+  action?:   React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <div
+      className={cn(
+        "flex items-center justify-center gap-2.5 px-4 py-5 text-center",
+        className
+      )}
+    >
+      <Icon className="w-4 h-4 text-ink-300 shrink-0" aria-hidden="true" />
+      <p className="text-[12.5px] text-ink-400">{message}</p>
+      {action}
     </div>
   );
 }

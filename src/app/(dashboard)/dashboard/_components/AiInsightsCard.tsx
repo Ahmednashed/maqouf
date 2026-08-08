@@ -32,7 +32,7 @@ export const AiInsightsCard = memo(function AiInsightsCard({
   return (
     <div
       className={cn(
-        "relative rounded-2xl overflow-hidden shadow-lg",
+        "relative rounded-2xl overflow-hidden shadow-lg h-full",
         "bg-gradient-to-br from-violet-600 via-violet-700 to-indigo-800"
       )}
     >
@@ -40,7 +40,7 @@ export const AiInsightsCard = memo(function AiInsightsCard({
       <div className="absolute -top-10 -end-10 w-40 h-40 rounded-full bg-fuchsia-400/20 blur-3xl pointer-events-none" />
       <div className="absolute -bottom-12 -start-8 w-36 h-36 rounded-full bg-indigo-400/20 blur-3xl pointer-events-none" />
 
-      <div className="relative p-5">
+      <div className="relative p-5 h-full flex flex-col">
         {/* Header */}
         <div className="flex items-start justify-between mb-4">
           <div className="flex items-center gap-3">
@@ -68,8 +68,8 @@ export const AiInsightsCard = memo(function AiInsightsCard({
             : t("dashboard.ai.noIssues")}
         </p>
 
-        {/* Insights */}
-        <div className="space-y-2 mb-4">
+        {/* Insights — grid so the card widens instead of growing tall */}
+        <div className="grid gap-2 mb-4 sm:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2">
           {insights.map(({ icon: Icon, text }, i) => (
             <div
               key={i}
@@ -86,7 +86,7 @@ export const AiInsightsCard = memo(function AiInsightsCard({
           href="/ai"
           aria-label={t("dashboard.ai.openAnalysis")}
           className={cn(
-            "w-full h-11 rounded-xl bg-white text-violet-700 text-[13.5px] font-bold",
+            "w-full h-11 rounded-xl bg-white text-violet-700 text-[13.5px] font-bold mt-auto",
             "flex items-center justify-center gap-2 shadow-md",
             "transition-all hover:bg-violet-50 hover:shadow-lg active:scale-[0.99]",
             "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70"

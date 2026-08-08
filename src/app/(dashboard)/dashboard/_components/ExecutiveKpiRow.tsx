@@ -48,7 +48,11 @@ interface KpiDef {
   href:   string;
   trend?: { today: number; yesterday: number; invert?: boolean };
   tooltip?: string;
-  alert?:  boolean;
+  /**
+   * "primary"   — the five headline metrics: full treatment (sparkline + trend).
+   * "exception" — problem counters: visually quiet at 0, loud above 0.
+   */
+  variant: "primary" | "exception";
 }
 
 const ExecKpiCard = memo(function ExecKpiCard({
@@ -58,7 +62,12 @@ const ExecKpiCard = memo(function ExecKpiCard({
   def:        KpiDef;
   trendLabel: string;
 }) {
-  const { label, value, unit, icon: Icon, accent, href, trend, tooltip, alert } = def;
+  const { label, value, unit, icon: Icon, accent, href, trend, tooltip, variant } = def;
+
+  const isException = variant === "exception";
+  // An exception card only earns attention when it actually has a problem.
+  const raised      = isException && value > 0;
+  const muted       = isException && value === 0;
 
   return (
     <Link
@@ -66,46 +75,67 @@ const ExecKpiCard = memo(function ExecKpiCard({
       title={tooltip}
       aria-label={`${label}: ${value}${unit ?? ""}`}
       className={cn(
-        "group relative bg-white rounded-2xl border p-4 shadow-sm overflow-hidden",
-        "transition-all duration-200 hover:shadow-lg hover:-translate-y-1",
+        "group relative rounded-2xl border shadow-sm overflow-hidden p-3.5 h-full flex flex-col",
+        "transition-all duration-200 hover:shadow-md hover:-translate-y-0.5",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-400 focus-visible:ring-offset-2",
-        alert ? "border-rose-200 bg-rose-50/40" : cn("border-ink-100", accent.tint)
+        raised  && "border-rose-200 bg-rose-50/50",
+        muted   && "border-ink-100 bg-ink-50/40",
+        !isException && cn("bg-white border-ink-100", accent.tint)
       )}
     >
-      {/* Header: icon + sparkline */}
-      <div className="flex items-start justify-between mb-2">
+      {/* Header: icon (+ sparkline on primary only) */}
+      <div className="flex items-start justify-between gap-1">
         <div className={cn(
-          "w-9 h-9 rounded-xl flex items-center justify-center shrink-0",
+          "w-8 h-8 rounded-xl flex items-center justify-center shrink-0",
           "transition-transform duration-200 group-hover:scale-110",
-          accent.bubble
+          muted ? "bg-ink-100/70 text-ink-300" : accent.bubble
         )}>
-          <Icon className="w-[18px] h-[18px]" />
+          <Icon className="w-4 h-4" />
         </div>
-        <Sparkline className={cn("mt-1", accent.spark)} />
+
+        {!isException && <Sparkline className={cn("mt-0.5", accent.spark)} />}
+
+        {raised && (
+          <span className="relative flex w-2 h-2 mt-1.5 shrink-0" aria-hidden="true">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-60" />
+            <span className="relative inline-flex rounded-full w-2 h-2 bg-rose-500" />
+          </span>
+        )}
       </div>
 
       {/* Value */}
-      <p className="text-[26px] font-bold text-ink-900 leading-none tracking-tight">
+      <p className={cn(
+        "font-bold leading-none tracking-tight mt-2.5",
+        isException ? "text-[21px]" : "text-[24px]",
+        muted ? "text-ink-300" : "text-ink-900"
+      )}>
         <AnimatedNumber value={value} />
-        {unit && <span className="text-[13px] font-semibold text-ink-400 ms-0.5">{unit}</span>}
+        {unit && <span className="text-[12px] font-semibold text-ink-400 ms-0.5">{unit}</span>}
       </p>
 
       {/* Title */}
-      <p className="text-[11px] text-ink-500 font-medium mt-1 truncate">{label}</p>
+      <p className={cn(
+        "text-[11px] font-medium mt-1 truncate",
+        muted ? "text-ink-400" : "text-ink-500"
+      )}>
+        {label}
+      </p>
 
-      {/* Footer: trend */}
-      {trend ? (
-        <div className="mt-2 pt-2 border-t border-ink-50">
-          <TrendArrow
-            today={trend.today}
-            yesterday={trend.yesterday}
-            invert={trend.invert}
-            label={trendLabel}
-          />
-        </div>
-      ) : (
-        <div className="mt-2 pt-2 border-t border-ink-50">
-          <span className="text-[10.5px] text-ink-300 font-medium">{tooltip ?? "—"}</span>
+      {/* Footer: trend (primary only — keeps exception cards short and quiet) */}
+      {!isException && (
+        <div className="mt-auto pt-2">
+          {trend ? (
+            <TrendArrow
+              today={trend.today}
+              yesterday={trend.yesterday}
+              invert={trend.invert}
+              label={trendLabel}
+            />
+          ) : (
+            <span className="text-[10.5px] text-ink-300 font-medium line-clamp-1">
+              {tooltip ?? "—"}
+            </span>
+          )}
         </div>
       )}
     </Link>
@@ -136,59 +166,62 @@ export const ExecutiveKpiRow = memo(function ExecutiveKpiRow({
     const y           = extras?.yesterday;
 
     return [
+      // ── Primary: the five headline numbers ────────────────────────────────
       {
         key: "active", label: t("dashboard.exec.activeToday"), value: activeToday,
-        icon: Users, accent: ACCENTS.teal, href: "/users",
+        icon: Users, accent: ACCENTS.teal, href: "/users", variant: "primary",
         trend: y ? { today: activeToday, yesterday: y.activeUsers } : undefined,
       },
       {
         key: "online", label: t("dashboard.exec.onlineNow"), value: onlineNow,
-        icon: Wifi, accent: ACCENTS.teal, href: "/users",
+        icon: Wifi, accent: ACCENTS.teal, href: "/users", variant: "primary",
         tooltip: t("dashboard.exec.onlineTooltip"),
       },
       {
         key: "planned", label: t("dashboard.exec.plannedToday"), value: data.todayTotal,
-        icon: CalendarDays, accent: ACCENTS.blue, href: "/visits",
+        icon: CalendarDays, accent: ACCENTS.blue, href: "/visits", variant: "primary",
         trend: y ? { today: data.todayTotal, yesterday: y.total } : undefined,
       },
       {
         key: "completed", label: t("dashboard.exec.completedToday"), value: data.todayCompleted,
-        icon: CheckCircle2, accent: ACCENTS.green, href: "/visits",
+        icon: CheckCircle2, accent: ACCENTS.green, href: "/visits", variant: "primary",
         trend: y ? { today: data.todayCompleted, yesterday: y.completed } : undefined,
       },
       {
         key: "rate", label: t("dashboard.exec.completionRate"), value: data.completionRate, unit: "%",
-        icon: TrendingUp, accent: ACCENTS.violet, href: "/reports",
+        icon: TrendingUp, accent: ACCENTS.violet, href: "/reports", variant: "primary",
         trend: y ? { today: data.completionRate, yesterday: y.completionRate } : undefined,
       },
+      // ── Exceptions: quiet at 0, loud above 0 ──────────────────────────────
       {
         key: "overdue", label: t("dashboard.exec.overdue"), value: extras?.overdueCount ?? 0,
-        icon: Clock, accent: ACCENTS.amber, href: "/visits",
-        alert: (extras?.overdueCount ?? 0) > 0,
+        icon: Clock, accent: ACCENTS.amber, href: "/visits", variant: "exception",
       },
       {
         key: "sync", label: t("dashboard.exec.syncIssues"), value: extras?.syncIssuesCount ?? 0,
-        icon: RefreshCw, accent: ACCENTS.red, href: "/users",
-        alert: (extras?.syncIssuesCount ?? 0) > 0,
+        icon: RefreshCw, accent: ACCENTS.red, href: "/users", variant: "exception",
       },
       {
         key: "oos", label: t("dashboard.exec.oosReports"), value: data.alerts.length,
-        icon: PackageX, accent: ACCENTS.red, href: "/reports",
-        alert: data.alerts.length > 0,
+        icon: PackageX, accent: ACCENTS.red, href: "/reports", variant: "exception",
       },
     ];
   }, [data, extras, t]);
 
+  // One responsive strip: 2 → 4 → 8 columns. Primary cards lead the strip,
+  // exception cards close it, so the eye reads headline → problems.
+  const GRID = "grid grid-cols-2 md:grid-cols-4 2xl:grid-cols-8 gap-3 items-stretch";
+
   if (loading) {
     return (
-      <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-3">
-        {[...Array(8)].map((_, i) => <Skeleton key={i} className="h-[130px]" />)}
+      <div className={GRID}>
+        {[...Array(8)].map((_, i) => <Skeleton key={i} className="h-[112px]" />)}
       </div>
     );
   }
 
   return (
-    <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-3">
+    <div className={GRID}>
       {cards.map((c) => (
         <ExecKpiCard key={c.key} def={c} trendLabel={t("dashboard.exec.vsYesterday")} />
       ))}
