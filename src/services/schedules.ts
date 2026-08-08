@@ -39,6 +39,12 @@ export interface ScheduleInsert {
   is_active?:  boolean;
   /** Checklist applied to generated visits. NULL = no template (supported). */
   template_id?: string | null;
+  /**
+   * Recurrence origin (YYYY-MM-DD). Column added in migration 019; a trigger
+   * back-fills it when omitted, so passing it explicitly just pins the first
+   * occurrence to a date the user actually chose.
+   */
+  anchor_date?: string;
 }
 
 export interface ScheduleUpdate {

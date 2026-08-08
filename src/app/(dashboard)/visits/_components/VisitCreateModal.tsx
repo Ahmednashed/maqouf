@@ -1,15 +1,30 @@
 "use client";
 
+import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { X, CalendarDays, MapPin, User, FileText } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
+import { X, CalendarDays, MapPin, User, FileText, Repeat, Clock, AlertCircle } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
 import { useTranslation } from "@/hooks/use-translation";
 import { useCreateVisit } from "@/hooks/use-visits";
 import { usePlaces } from "@/hooks/use-places";
 import { useCompanyUsers } from "@/hooks/use-company-users";
 import { useTemplates } from "@/hooks/use-templates";
+import { createSchedule } from "@/services/schedules";
+import { SCHEDULES_QUERY_KEY } from "@/hooks/use-schedules";
+import { reconcileSchedule } from "@/services/schedule-reconcile";
+import {
+  planVisitCreation,
+  isDuplicateScheduleError,
+  isRecurring,
+  RECURRENCE_CHOICES,
+  type RecurrenceChoice,
+  type PlanError,
+} from "@/lib/visit-create-plan";
+import type { TranslationKey } from "@/lib/i18n/translations";
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
@@ -19,9 +34,31 @@ const schema = z.object({
   scheduled_date: z.string().min(1, "Date is required"),
   template_id:    z.string().optional(),
   notes:          z.string().optional(),
+  // "once" (default) creates a Visit; anything else creates a Schedule.
+  recurrence:     z.enum(["once", "weekly", "biweekly", "monthly"]),
+  // Required only for recurring — schedules.start_time is NOT NULL.
+  start_time:     z.string().optional(),
 });
 
 type FormData = z.infer<typeof schema>;
+
+/** Planner error code → translated message. */
+const PLAN_ERROR_KEY: Record<PlanError, TranslationKey> = {
+  place_required:              "visits.recur.placeRequired",
+  merch_required:              "visits.recur.merchRequired",
+  date_required:               "visits.recur.dateRequired",
+  date_invalid:                "visits.recur.dateRequired",
+  time_required_for_recurring: "visits.recur.timeRequired",
+  time_invalid:                "visits.recur.timeInvalid",
+};
+
+/** Recurrence choice → option label. */
+const RECURRENCE_LABEL: Record<RecurrenceChoice, TranslationKey> = {
+  once:     "visits.recur.once",
+  weekly:   "visits.recur.weekly",
+  biweekly: "visits.recur.biweekly",
+  monthly:  "visits.recur.monthly",
+};
 
 // ─── Props ────────────────────────────────────────────────────────────────────
 
@@ -33,7 +70,10 @@ interface VisitCreateModalProps {
 
 export function VisitCreateModal({ onClose }: VisitCreateModalProps) {
   const { t }    = useTranslation();
+  const qc       = useQueryClient();
   const create   = useCreateVisit();
+  const [submitting, setSubmitting] = useState(false);
+  const [formError, setFormError]   = useState<string | null>(null);
   const { data: places    = [] } = usePlaces();
   const { data: members   = [] } = useCompanyUsers();
   const { data: templates = [] } = useTemplates();
@@ -45,23 +85,89 @@ export function VisitCreateModal({ onClose }: VisitCreateModalProps) {
   const {
     register,
     handleSubmit,
+    watch,
     formState: { errors },
   } = useForm<FormData>({
     resolver: zodResolver(schema),
     defaultValues: {
       scheduled_date: new Date().toISOString().slice(0, 10),
+      recurrence:     "once",
+      start_time:     "",
     },
   });
 
+  const recurrence = watch("recurrence");
+  const recurring  = isRecurring(recurrence);
+
   async function onSubmit(data: FormData) {
-    await create.mutateAsync({
+    setFormError(null);
+
+    // The planner returns EITHER a visit plan OR a schedule plan — the
+    // "create both" case is unrepresentable, which is what prevents a manual
+    // visit and a generated visit landing on the same date.
+    const result = planVisitCreation({
       place_id:       data.place_id,
       merch_id:       data.merch_id,
       scheduled_date: data.scheduled_date,
-      template_id:    data.template_id || undefined,
-      notes:          data.notes || undefined,
+      template_id:    data.template_id,
+      notes:          data.notes,
+      recurrence:     data.recurrence,
+      start_time:     data.start_time,
     });
-    onClose();
+
+    if (!result.ok) {
+      setFormError(t(PLAN_ERROR_KEY[result.error]));
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      // ── ONE-TIME: a Visit, and nothing else ──────────────────────────────
+      if (result.plan.kind === "visit") {
+        try {
+          await create.mutateAsync(result.plan.payload);
+        } catch {
+          // Keep the modal open with the entered data rather than closing
+          // over a failed write. useCreateVisit already toasts the cause.
+          setFormError(t("visits.errorCreate"));
+          return;
+        }
+        onClose();
+        return;
+      }
+
+      // ── RECURRING: a Schedule, and nothing else ─────────────────────────
+      let scheduleId: string;
+      try {
+        const schedule = await createSchedule(result.plan.payload);
+        scheduleId = schedule.id;
+      } catch (err) {
+        // UNIQUE (company, merch, place, day_of_week) — friendly, not raw SQL.
+        setFormError(
+          isDuplicateScheduleError(err)
+            ? t("visits.recur.duplicate")
+            : t("schedule.errorCreate")
+        );
+        return;
+      }
+
+      qc.invalidateQueries({ queryKey: SCHEDULES_QUERY_KEY });
+      toast.success(t("visits.recur.createdOk"));
+
+      // Materialise the anchor occurrence + rolling window through the SAME
+      // generator the daily job uses. Idempotent and retryable.
+      const outcome = await reconcileSchedule(scheduleId);
+
+      if (!outcome.ok) {
+        // The schedule is kept — never rolled back across requests.
+        toast.warning(t("visits.recur.reconcileWarning"));
+      } else {
+        qc.invalidateQueries({ queryKey: ["visits"] });
+      }
+      onClose();
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   const selectCls = (hasError?: boolean) =>
@@ -138,10 +244,12 @@ export function VisitCreateModal({ onClose }: VisitCreateModalProps) {
             )}
           </div>
 
-          {/* Date */}
+          {/* Date — for a recurring plan this is the FIRST occurrence, which
+              becomes the schedule's anchor_date and defines its weekday. */}
           <div>
             <label className="block text-[12.5px] font-semibold text-ink-700 mb-1.5">
-              {t("visits.assignDate")} <span className="text-brand-500">*</span>
+              {recurring ? t("visits.recur.firstDate") : t("visits.assignDate")}{" "}
+              <span className="text-brand-500">*</span>
             </label>
             <div className="relative">
               <CalendarDays className="absolute start-3 top-1/2 -translate-y-1/2 w-4 h-4 text-ink-400 pointer-events-none" />
@@ -152,6 +260,41 @@ export function VisitCreateModal({ onClose }: VisitCreateModalProps) {
               />
             </div>
           </div>
+
+          {/* ── Recurrence ───────────────────────────────────────────────────
+              Choosing anything other than "once" switches the whole submission
+              from creating a Visit to creating a Schedule. Never both. */}
+          <div>
+            <label className="block text-[12.5px] font-semibold text-ink-700 mb-1.5">
+              {t("visits.recur.label")}
+            </label>
+            <div className="relative">
+              <Repeat className="absolute start-3 top-1/2 -translate-y-1/2 w-4 h-4 text-ink-400 pointer-events-none" />
+              <select {...register("recurrence")} className={selectCls()}>
+                {RECURRENCE_CHOICES.map((c) => (
+                  <option key={c} value={c}>{t(RECURRENCE_LABEL[c])}</option>
+                ))}
+              </select>
+            </div>
+            <p className="mt-1.5 text-[11px] text-ink-400 leading-relaxed">
+              {recurring ? t("visits.recur.hintRecurring") : t("visits.recur.hintOnce")}
+            </p>
+          </div>
+
+          {/* Time — recurring only. `visits` has no planned-time column, so for
+              a one-time visit this field is not shown and never submitted
+              rather than silently discarded. */}
+          {recurring && (
+            <div>
+              <label className="block text-[12.5px] font-semibold text-ink-700 mb-1.5">
+                {t("visits.recur.startTime")} <span className="text-brand-500">*</span>
+              </label>
+              <div className="relative">
+                <Clock className="absolute start-3 top-1/2 -translate-y-1/2 w-4 h-4 text-ink-400 pointer-events-none" />
+                <input {...register("start_time")} type="time" className={selectCls()} dir="ltr" />
+              </div>
+            </div>
+          )}
 
           {/* Template (optional) */}
           <div>
@@ -192,6 +335,16 @@ export function VisitCreateModal({ onClose }: VisitCreateModalProps) {
             />
           </div>
 
+          {formError && (
+            <div
+              role="alert"
+              className="flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50/70 px-3 py-2.5"
+            >
+              <AlertCircle className="w-4 h-4 text-rose-500 shrink-0 mt-px" aria-hidden="true" />
+              <p className="text-[12px] text-rose-700 leading-relaxed">{formError}</p>
+            </div>
+          )}
+
           {/* Actions */}
           <div className="flex gap-3 pt-1">
             <button
@@ -203,10 +356,10 @@ export function VisitCreateModal({ onClose }: VisitCreateModalProps) {
             </button>
             <button
               type="submit"
-              disabled={create.isPending}
+              disabled={create.isPending || submitting}
               className="flex-1 h-11 rounded-xl bg-brand-500 hover:bg-brand-600 disabled:opacity-60 text-white text-[13.5px] font-semibold shadow-pop transition-all"
             >
-              {create.isPending ? t("common.loading") : t("common.save")}
+              {create.isPending || submitting ? t("common.loading") : t("common.save")}
             </button>
           </div>
         </form>
