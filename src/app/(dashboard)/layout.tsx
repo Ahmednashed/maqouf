@@ -19,7 +19,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   return (
     <Providers>
       {/*
-        Shell: horizontal flex row.
+        App shell: horizontal flex row pinned to the viewport.
+        – `h-dvh` (a DEFINITE height, not min-height) is what lets the flex
+          chain below resolve: without it `<main className="flex-1
+          overflow-y-auto">` has no height to scroll within, so it grows and
+          the document body ends up owning the scroll — taking the sidebar
+          with it.
         – Sidebar occupies its own column via `hidden lg:flex` on the <aside>
           inside Sidebar.tsx.  On mobile the sidebar is a fixed overlay and
           takes NO space in this row.
@@ -27,7 +32,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         – `overflow-hidden` on the shell prevents a stray horizontal scrollbar
           from appearing when the mobile drawer is animating.
       */}
-      <div className="flex flex-row min-h-screen bg-ink-50 overflow-hidden">
+      <div className="flex flex-row h-dvh bg-ink-50 overflow-hidden">
         <Sidebar />
 
         {/* Content column: topbar + page body */}

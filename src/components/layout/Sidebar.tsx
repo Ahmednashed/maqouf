@@ -172,12 +172,15 @@ export function Sidebar() {
       {/* ── Desktop sidebar ─────────────────────────────────────────────────
           Always in the flex row on lg+. Never rendered on mobile.
           `hidden lg:flex` is unambiguous — no competing display classes.
-          `sticky top-0 h-screen` keeps it on screen while the page scrolls.
+          `h-full` fills the viewport-height shell, so the rail never moves:
+          only <main> scrolls. (Sticky positioning is not usable here — the
+          shell is `overflow-hidden`, which would be the sticky containing
+          block and never scrolls.)
       ─────────────────────────────────────────────────────────────────── */}
       <aside
         className={cn(
           "hidden lg:flex flex-col",          // only enter flex flow on lg+
-          "sticky top-0 h-screen shrink-0",   // fixed to viewport while scrolling
+          "h-full shrink-0",                  // fills the shell; does not scroll
           "bg-white border-e border-ink-200",
           "transition-[width] duration-200 ease-in-out",
           "z-30 overflow-hidden",
