@@ -37,6 +37,8 @@ export interface ScheduleInsert {
   end_time?:   string;
   frequency:   ScheduleFrequency;
   is_active?:  boolean;
+  /** Checklist applied to generated visits. NULL = no template (supported). */
+  template_id?: string | null;
 }
 
 export interface ScheduleUpdate {
@@ -47,6 +49,7 @@ export interface ScheduleUpdate {
   end_time?:    string;
   frequency?:   ScheduleFrequency;
   is_active?:   boolean;
+  template_id?: string | null;
 }
 
 // ─── Read ─────────────────────────────────────────────────────────────────────

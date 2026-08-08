@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
-  LayoutDashboard, MapPinned, CalendarDays, Building2,
+  LayoutDashboard, MapPinned, Building2,
   Store, Users, Package, Layers, ClipboardList, BarChart3,
   ChevronLeft, ChevronRight, LogOut, Sparkles,
 } from "lucide-react";
@@ -25,8 +25,10 @@ interface NavItem {
 const NAV_ITEMS: NavItem[] = [
   { key: "nav.dashboard",  href: "/dashboard",      icon: LayoutDashboard },
   { key: "nav.ai",         href: "/ai",              icon: Sparkles },
+  // Schedule is no longer a top-level destination — recurring schedules are a
+  // tab inside the Visits workspace (/visits?tab=recurring). The /schedule
+  // route still exists and redirects there, so old links keep working.
   { key: "nav.visits",     href: "/visits",          icon: MapPinned,     badge: true },
-  { key: "nav.schedule",   href: "/schedule",        icon: CalendarDays },
   { key: "nav.chains",     href: "/chains",          icon: Building2 },
   { key: "nav.places",     href: "/places",          icon: Store },
   { key: "nav.users",      href: "/users",           icon: Users },

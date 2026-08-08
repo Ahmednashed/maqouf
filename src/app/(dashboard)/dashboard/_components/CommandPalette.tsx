@@ -28,7 +28,7 @@ const COMMANDS: Command[] = [
   { key: "visits",    labelKey: "cmdk.visits",    icon: MapPinned,       href: "/visits",    group: "navigate", keywords: "field زيارة" },
   { key: "places",    labelKey: "cmdk.places",    icon: Store,           href: "/places",    group: "navigate", keywords: "branch stores فرع" },
   { key: "products",  labelKey: "cmdk.products",  icon: Package,         href: "/products",  group: "navigate", keywords: "sku منتج" },
-  { key: "schedules", labelKey: "cmdk.schedules", icon: CalendarDays,    href: "/schedule",  group: "navigate", keywords: "plan جدول" },
+  { key: "schedules", labelKey: "cmdk.schedules", icon: CalendarDays,    href: "/visits?tab=recurring",  group: "navigate", keywords: "plan جدول" },
   { key: "templates", labelKey: "cmdk.templates", icon: ClipboardList,   href: "/templates", group: "navigate", keywords: "forms نموذج" },
   { key: "reports",   labelKey: "cmdk.reports",   icon: BarChart3,       href: "/reports",   group: "navigate", keywords: "analytics export تقرير" },
   { key: "qa-visit",  labelKey: "dashboard.qa.createVisit",  icon: MapPinned, href: "/visits",   group: "actions", keywords: "new create إنشاء" },

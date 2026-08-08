@@ -43,7 +43,7 @@ export const RecommendedActions = memo(function RecommendedActions({
     if (hasOverdue) {
       list.push({
         key: "reschedule", label: t("dashboard.rec.reschedule"),
-        icon: CalendarClock, href: "/schedule", color: "bg-amber-50 text-amber-600",
+        icon: CalendarClock, href: "/visits?tab=recurring", color: "bg-amber-50 text-amber-600",
       });
     }
     if (hasSync) {

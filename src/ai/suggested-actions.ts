@@ -21,7 +21,7 @@ const TEMPLATES: Record<string, ActionTemplate> = {
   open_overdue:   { type: "open_overdue",   ar: "فتح الزيارات المتأخرة", en: "Open overdue visits",  href: "/visits" },
   review_sync:    { type: "review_sync",    ar: "مراجعة مشاكل المزامنة", en: "Review sync issues",   href: "/users" },
   open_users:     { type: "open_users",     ar: "فتح ملف المستخدم",      en: "Open user profile",    href: "/users" },
-  open_schedule:  { type: "open_schedule",  ar: "فتح الجدول",            en: "Open schedule",        href: "/schedule" },
+  open_schedule:  { type: "open_schedule",  ar: "فتح الجدول",            en: "Open schedule",        href: "/visits?tab=recurring" },
   review_stock:   { type: "review_stock",   ar: "مراجعة بلاغات المخزون", en: "Review stock issues",  href: "/reports" },
   create_visit:   { type: "create_visit",   ar: "إنشاء زيارة",           en: "Create visit",         href: "/visits" },
   export_report:  { type: "export_report",  ar: "تصدير تقرير",           en: "Export report",        href: "/reports" },

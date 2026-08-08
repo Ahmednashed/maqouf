@@ -155,6 +155,9 @@ export interface Visit {
   checkin_accuracy?:        number | null;  // device-reported accuracy in metres
   checkin_distance_meters?: number | null;  // Haversine distance to branch
   checkin_verified?:        boolean | null; // true → distance ≤ 200 m
+  // ── Recurring-schedule origin (migration 019) ─────────────────────────────
+  /** Source schedule. NULL/undefined = manually created visit. */
+  schedule_id?:             string | null;
   // joined
   place?:           Place;
   merch?:           CompanyUser;
@@ -186,6 +189,12 @@ export interface Schedule {
   frequency:    ScheduleFrequency;
   is_active:    boolean;
   created_at:   string;
+  // ── Recurrence anchor (migration 019) ─────────────────────────────────────
+  /** First occurrence; origin of biweekly parity and monthly weekday-ordinal. */
+  anchor_date?: string | null;
+  // ── Checklist for generated visits (migration 020) ────────────────────────
+  /** NULL = generated visits carry no template (supported, but warned about). */
+  template_id?: string | null;
   // joined
   merch?:       CompanyUser;
   place?:       Place;

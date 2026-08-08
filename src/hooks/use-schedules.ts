@@ -12,9 +12,13 @@ import {
   type ScheduleWithDetails,
 } from "@/services/schedules";
 import { useTranslation } from "@/hooks/use-translation";
+import { reconcileSchedule } from "@/services/schedule-reconcile";
 
 // ─── Query key ────────────────────────────────────────────────────────────────
 export const SCHEDULES_QUERY_KEY = ["schedules"] as const;
+
+/** Root of the visits key space — reconciliation can change any visit list. */
+const VISITS_QUERY_KEY_ROOT = ["visits"] as const;
 
 // ─── Read ─────────────────────────────────────────────────────────────────────
 
@@ -98,7 +102,29 @@ export function useUpdateSchedule() {
       toast.error(t("schedule.errorUpdate"));
     },
 
-    onSuccess: () => toast.success(t("schedule.updatedOk")),
+    onSuccess: async (_data, { id }) => {
+      toast.success(t("schedule.updatedOk"));
+
+      // Reconcile this schedule's future generated visits immediately, so the
+      // manager sees the corrected plan now instead of after the daily run.
+      //
+      // Deliberately NOT part of the update mutation: the schedule edit has
+      // already committed and must not be rolled back if reconciliation fails
+      // (there is no cross-request transaction to roll back into). The call is
+      // idempotent, so a failure is safely retryable — by editing again, by
+      // the daily generator, or by an admin re-running it.
+      const outcome = await reconcileSchedule(id);
+
+      if (!outcome.ok) {
+        toast.warning(t("schedule.reconcileWarning"));
+        return;
+      }
+      // Only surface the toast when something actually changed.
+      if (outcome.changed) {
+        toast.success(t("schedule.reconciledOk"));
+        qc.invalidateQueries({ queryKey: VISITS_QUERY_KEY_ROOT });
+      }
+    },
 
     onSettled: () => {
       qc.invalidateQueries({ queryKey: SCHEDULES_QUERY_KEY });

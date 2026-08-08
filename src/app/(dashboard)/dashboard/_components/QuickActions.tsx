@@ -36,7 +36,7 @@ export const QuickActions = memo(function QuickActions({ t }: { t: TranslationFn
 
   const ACTIONS: QuickAction[] = [
     { key: "visit",    label: t("dashboard.qa.createVisit"),    icon: MapPinned,    href: "/visits",   color: "bg-blue-500" },
-    { key: "schedule", label: t("dashboard.qa.createSchedule"), icon: CalendarDays, href: "/schedule", color: "bg-violet-500" },
+    { key: "schedule", label: t("dashboard.qa.createSchedule"), icon: CalendarDays, href: "/visits?tab=recurring", color: "bg-violet-500" },
     { key: "invite",   label: t("dashboard.qa.inviteUser"),     icon: UserPlus,     href: "/users",    color: "bg-emerald-500" },
     { key: "branch",   label: t("dashboard.qa.newBranch"),      icon: Store,        href: "/places",   color: "bg-amber-500" },
     { key: "export",   label: t("dashboard.qa.exportReport"),   icon: FileDown,     href: "/reports",  color: "bg-ink-700" },

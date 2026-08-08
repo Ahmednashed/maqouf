@@ -6,13 +6,14 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import {
   X, CalendarDays, User, MapPin, Clock,
-  RefreshCw, ChevronDown,
+  RefreshCw, ChevronDown, ClipboardList,
 } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
 import { useTranslation } from "@/hooks/use-translation";
 import { useCreateSchedule, useUpdateSchedule } from "@/hooks/use-schedules";
 import { useMerchandisers } from "@/hooks/use-company-users";
 import { usePlaces } from "@/hooks/use-places";
+import { useTemplates } from "@/hooks/use-templates";
 import type { ScheduleWithDetails } from "@/services/schedules";
 import type { DayOfWeek, ScheduleFrequency } from "@/types";
 
@@ -46,6 +47,9 @@ const scheduleSchema = z.object({
     errorMap: () => ({ message: "يجب اختيار التكرار" }),
   }),
   is_active: z.boolean().default(true),
+  // Optional by design: the product supports template-less visits
+  // (VisitCreateModal also marks template_id optional). "" = none.
+  template_id: z.string().optional(),
 });
 
 type ScheduleFormData = z.infer<typeof scheduleSchema>;
@@ -96,10 +100,16 @@ export function ScheduleModal({ schedule, onClose }: ScheduleModalProps) {
       end_time:    schedule?.end_time    ?? "",
       frequency:   schedule?.frequency   ?? "weekly",
       is_active:   schedule?.is_active   ?? true,
+      template_id: schedule?.template_id ?? "",
     },
   });
 
+  const { data: templates = [], isLoading: templatesLoading } = useTemplates();
+  // Only publishable checklists may be attached to a recurring rule.
+  const activeTemplates = templates.filter((tpl) => tpl.status === "active");
+
   const isActive   = watch("is_active");
+  const selectedTemplate = watch("template_id");
   const selectedDay = watch("day_of_week");
 
   useEffect(() => {
@@ -111,6 +121,7 @@ export function ScheduleModal({ schedule, onClose }: ScheduleModalProps) {
       end_time:    schedule?.end_time    ?? "",
       frequency:   schedule?.frequency   ?? "weekly",
       is_active:   schedule?.is_active   ?? true,
+      template_id: schedule?.template_id ?? "",
     });
   }, [schedule, reset]);
 
@@ -120,6 +131,7 @@ export function ScheduleModal({ schedule, onClose }: ScheduleModalProps) {
       ...data,
       day_of_week: data.day_of_week as DayOfWeek,
       end_time: data.end_time?.trim() || undefined,
+      template_id: data.template_id?.trim() ? data.template_id : null,
     };
 
     if (isEdit && schedule) {
@@ -349,6 +361,41 @@ export function ScheduleModal({ schedule, onClose }: ScheduleModalProps) {
                 <p className="mt-0.5 text-[11px] text-rose-500">{errors.frequency.message}</p>
               )}
             </div>
+          </div>
+
+          {/* ── Checklist template ───────────────────────────────────────────
+              Optional, exactly like the manual Add-Visit form. Generated
+              visits inherit whatever is chosen here; leaving it empty is
+              valid but produces visits with no checklist, so the empty case
+              is called out inline rather than left silent. */}
+          <div className="mt-4">
+            <label className="block text-[12px] font-semibold text-ink-700 mb-1">
+              {t("schedule.template")}
+            </label>
+            <div className="relative">
+              <ClipboardList className="absolute start-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-ink-400 pointer-events-none z-10" />
+              <ChevronDown className="absolute end-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-ink-400 pointer-events-none z-10" />
+              <select
+                {...register("template_id")}
+                disabled={templatesLoading}
+                className={selectCls(false)}
+              >
+                <option value="">{t("schedule.templateNone")}</option>
+                {activeTemplates.map((tpl) => (
+                  <option key={tpl.id} value={tpl.id}>
+                    {locale === "ar" ? tpl.name_ar : tpl.name_en}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <p className={cn(
+              "mt-1 text-[11px]",
+              selectedTemplate ? "text-ink-400" : "text-amber-600"
+            )}>
+              {selectedTemplate
+                ? t("schedule.templateHint")
+                : t("schedule.templateNoneWarning")}
+            </p>
           </div>
 
           {/* ── Status toggle ────────────────────────────────────────────── */}

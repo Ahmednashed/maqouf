@@ -11,7 +11,7 @@ const HREF_BY_TYPE: Record<AiSource["type"], (id: string) => string | null> = {
   visit:    (id) => `/visits/${id}`,
   user:     ()   => "/users",
   place:    ()   => "/places",
-  schedule: ()   => "/schedule",
+  schedule: ()   => "/visits?tab=recurring",
   product:  ()   => "/products",
   activity: ()   => null,   // activity rows link via their target entity instead
 };
