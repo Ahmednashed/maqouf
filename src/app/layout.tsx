@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
+import { StoreHydration } from "@/components/StoreHydration";
 
 // ─── Metadata ─────────────────────────────────────────────────────────────────
 
@@ -63,6 +64,8 @@ export default function RootLayout({
   return (
     <html lang="ar" dir="rtl" suppressHydrationWarning>
       <body className="min-h-screen bg-ink-50 antialiased">
+        {/* Applies the persisted locale after hydration — see StoreHydration. */}
+        <StoreHydration />
         {children}
       </body>
     </html>
