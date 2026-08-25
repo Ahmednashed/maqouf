@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "@/lib/utils/cn";
+import { riyadhToday } from "@/lib/utils/date";
 import { useTranslation } from "@/hooks/use-translation";
 import { useCurrentMember, currentMemberLabel } from "@/hooks/use-current-member";
 import { presenceOf } from "@/services/dashboard-extras";
@@ -50,8 +51,9 @@ const ChartsGrid = dynamic(
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
+/** Today's business day. Never use toISOString() here — see lib/utils/date.ts. */
 function todayIso(): string {
-  return new Date().toISOString().slice(0, 10);
+  return riyadhToday();
 }
 
 function SummaryChip({

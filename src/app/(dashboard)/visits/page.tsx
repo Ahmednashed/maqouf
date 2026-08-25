@@ -290,7 +290,12 @@ function VisitsWorkspace() {
         />
       )}
 
-      {showCreate && <VisitCreateModal onClose={() => setShowCreate(false)} />}
+      {showCreate && (
+        <VisitCreateModal
+          initialDate={anchor}
+          onClose={() => setShowCreate(false)}
+        />
+      )}
     </>
   );
 }

@@ -5,6 +5,7 @@ import { getAiConfig, MAX_QUESTION_CHARS, MAX_HISTORY_MESSAGES } from "@/ai/conf
 import { runOperationsChat } from "@/ai/router";
 import { loadOrCreateConversation, persistExchange } from "@/ai/memory";
 import { ProviderError } from "@/ai/types";
+import { riyadhToday } from "@/lib/utils/date";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // POST /api/ai/chat — the only door between the browser and the AI Core.
@@ -172,7 +173,10 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "invalid_body" }, { status: 400 });
     }
     const { messages, locale } = parsed.data;
-    const date = parsed.data.date ?? new Date().toISOString().slice(0, 10);
+    // Fallback only — the client normally sends its own date. Vercel runs the
+    // function clock in UTC, so "today" must be resolved in the business
+    // timezone or the AI would answer about yesterday until 03:00 Riyadh.
+    const date = parsed.data.date ?? riyadhToday();
 
     const lastMessage = messages[messages.length - 1];
     if (lastMessage.role !== "user") {

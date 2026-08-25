@@ -8,9 +8,10 @@ import { useConversationMessages } from "@/hooks/use-ai-conversations";
 import { AiChatShell }        from "./_components/AiChatShell";
 import { AiContextPanel }     from "./_components/AiContextPanel";
 import { AiConversationList } from "./_components/AiConversationList";
+import { riyadhToday } from "@/lib/utils/date";
 
 function todayIso(): string {
-  return new Date().toISOString().slice(0, 10);
+  return riyadhToday();
 }
 
 export default function AiAssistantPage() {

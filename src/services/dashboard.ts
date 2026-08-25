@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/client";
+import { riyadhToday, shiftIsoDate } from "@/lib/utils/date";
 
 // ─── Raw Supabase join row shapes (private to this module) ────────────────────
 // Each interface mirrors exactly what PostgREST returns for its query's
@@ -420,12 +421,12 @@ export async function fetchDashboard(date: string): Promise<DashboardData> {
 export async function fetchTrendData(days: number = 30): Promise<TrendPoint[]> {
   const supabase = createClient();
 
-  const now  = new Date();
-  const from = new Date(now);
-  from.setDate(from.getDate() - days + 1);
-
-  const fromDate = from.toISOString().slice(0, 10);
-  const toDate   = now.toISOString().slice(0, 10);
+  // Pure date-string arithmetic on the Riyadh business day. The previous
+  // version advanced Date objects with setDate() (local) but formatted them
+  // with toISOString() (UTC), so every map key could drift a day away from
+  // `visits.scheduled_date` and the trend silently lost a bucket.
+  const toDate   = riyadhToday();
+  const fromDate = shiftIsoDate(toDate, -(days - 1));
 
   const { data, error } = await supabase
     .from("visits")
@@ -437,11 +438,9 @@ export async function fetchTrendData(days: number = 30): Promise<TrendPoint[]> {
 
   // Initialise every date in the window (zero-filled)
   const map = new Map<string, TrendPoint>();
-  const cur = new Date(from);
-  while (cur <= now) {
-    const d = cur.toISOString().slice(0, 10);
+  for (let i = 0; i < days; i++) {
+    const d = shiftIsoDate(fromDate, i);
     map.set(d, { date: d, total: 0, completed: 0, missed: 0, inprogress: 0, pending: 0 });
-    cur.setDate(cur.getDate() + 1);
   }
 
   for (const row of (data ?? [])) {

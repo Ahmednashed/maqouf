@@ -8,6 +8,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { X, CalendarDays, MapPin, User, FileText, Repeat, Clock, AlertCircle } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
+import { riyadhToday } from "@/lib/utils/date";
 import { useTranslation } from "@/hooks/use-translation";
 import { useCreateVisit } from "@/hooks/use-visits";
 import { usePlaces } from "@/hooks/use-places";
@@ -64,11 +65,16 @@ const RECURRENCE_LABEL: Record<RecurrenceChoice, TranslationKey> = {
 
 interface VisitCreateModalProps {
   onClose: () => void;
+  /**
+   * Date the calendar is currently showing ("YYYY-MM-DD"). The new visit
+   * defaults to the day the user is looking at; falls back to today.
+   */
+  initialDate?: string;
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export function VisitCreateModal({ onClose }: VisitCreateModalProps) {
+export function VisitCreateModal({ onClose, initialDate }: VisitCreateModalProps) {
   const { t }    = useTranslation();
   const qc       = useQueryClient();
   const create   = useCreateVisit();
@@ -81,6 +87,10 @@ export function VisitCreateModal({ onClose }: VisitCreateModalProps) {
   const activePlaces     = places.filter((p) => p.is_active);
   const activeMembers    = members.filter((m) => m.status === "active");
   const activeTemplates  = templates.filter((t) => t.status === "active");
+  // Drafts are NOT assignable (a visit must reference a published checklist),
+  // but hiding them entirely made new templates look like they vanished.
+  // They are listed as disabled options carrying the reason instead.
+  const draftTemplates   = templates.filter((t) => t.status === "draft");
 
   const {
     register,
@@ -90,7 +100,7 @@ export function VisitCreateModal({ onClose }: VisitCreateModalProps) {
   } = useForm<FormData>({
     resolver: zodResolver(schema),
     defaultValues: {
-      scheduled_date: new Date().toISOString().slice(0, 10),
+      scheduled_date: initialDate ?? riyadhToday(),
       recurrence:     "once",
       start_time:     "",
     },
@@ -313,11 +323,21 @@ export function VisitCreateModal({ onClose }: VisitCreateModalProps) {
                     {tmpl.name_ar} / {tmpl.name_en}
                   </option>
                 ))}
+                {draftTemplates.map((tmpl) => (
+                  <option key={tmpl.id} value={tmpl.id} disabled>
+                    {tmpl.name_ar} / {tmpl.name_en} — {t("visits.templateDraftOption")}
+                  </option>
+                ))}
               </select>
             </div>
             {activeTemplates.length === 0 && (
               <p className="mt-1 text-[11px] text-ink-400">
                 {t("visits.noActiveTemplates")}
+              </p>
+            )}
+            {draftTemplates.length > 0 && (
+              <p className="mt-1 text-[11px] text-amber-600">
+                {t("visits.draftTemplatesHint")}
               </p>
             )}
           </div>

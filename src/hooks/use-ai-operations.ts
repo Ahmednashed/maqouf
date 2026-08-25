@@ -8,6 +8,7 @@ import {
   type AiOperationalContext,
 } from "@/services/ai-operations";
 import { useTranslation } from "@/hooks/use-translation";
+import { riyadhToday } from "@/lib/utils/date";
 import type { Locale } from "@/types";
 
 // ─── Context query (context panel + mock fallback) ────────────────────────────
@@ -69,7 +70,7 @@ interface ChatApiResponse {
 }
 
 function todayIso(): string {
-  return new Date().toISOString().slice(0, 10);
+  return riyadhToday();
 }
 
 /**

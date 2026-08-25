@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/client";
+import { shiftIsoDate } from "@/lib/utils/date";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Executive Dashboard 2.0 — supplemental data
@@ -120,11 +121,11 @@ interface RegionVisitRow {
 export async function fetchExecutiveExtras(date: string): Promise<ExecutiveExtras> {
   const supabase = createClient();
 
-  const yesterdayDate = (() => {
-    const d = new Date(date + "T00:00:00");
-    d.setDate(d.getDate() - 1);
-    return d.toISOString().slice(0, 10);
-  })();
+  // Pure date-string arithmetic. The previous implementation parsed
+  // "YYYY-MM-DD" as LOCAL midnight and then formatted with toISOString(),
+  // which in UTC+3 shifted the result back an extra day — so "yesterday"
+  // was actually two days ago.
+  const yesterdayDate = shiftIsoDate(date, -1);
 
   const [yesterdayRes, overdueRes, teamRes, currentVisitsRes, regionRes, auditedRes] =
     await Promise.all([
