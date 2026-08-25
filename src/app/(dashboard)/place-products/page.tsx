@@ -117,7 +117,15 @@ function BranchSelector({ places, selectedId, onChange, locale, t }: BranchSelec
 }
 
 // ─── Empty state ──────────────────────────────────────────────────────────────
-function EmptyState({ onAdd, t }: { onAdd: () => void; t: TranslationFn }) {
+/**
+ * Empty state for a branch with no assigned products.
+ *
+ * Deliberately has NO button: the page header already shows the primary
+ * "assign product" CTA whenever a branch is selected, and rendering a second
+ * identical red button here made it look like there were two different
+ * actions. The text points at the existing one instead.
+ */
+function EmptyState({ t }: { t: TranslationFn }) {
   return (
     <div className="flex flex-col items-center justify-center py-20 text-center">
       <div className="w-16 h-16 rounded-2xl bg-ink-100 flex items-center justify-center mb-4">
@@ -126,16 +134,9 @@ function EmptyState({ onAdd, t }: { onAdd: () => void; t: TranslationFn }) {
       <h3 className="text-[15px] font-semibold text-ink-700 mb-1">
         {t("placeProducts.emptyTitle")}
       </h3>
-      <p className="text-[13px] text-ink-400 mb-6 max-w-xs">
+      <p className="text-[13px] text-ink-400 max-w-xs">
         {t("placeProducts.emptyDesc")}
       </p>
-      <button
-        onClick={onAdd}
-        className="inline-flex items-center gap-2 h-10 px-5 rounded-xl bg-brand-500 hover:bg-brand-600 text-white text-[13px] font-semibold shadow-pop transition-all"
-      >
-        <Plus className="w-4 h-4" />
-        {t("placeProducts.assign")}
-      </button>
     </div>
   );
 }
@@ -341,7 +342,7 @@ export default function PlaceProductsPage() {
 
             {/* Empty */}
             {!ppLoading && !ppError && totalCount === 0 && (
-              <EmptyState onAdd={() => setShowAssign(true)} t={t} />
+              <EmptyState t={t} />
             )}
 
             {/* Table */}

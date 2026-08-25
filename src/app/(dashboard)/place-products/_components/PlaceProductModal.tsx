@@ -90,6 +90,18 @@ function SettingsFields({ register, setValue, watch, errors, t }: SettingsFields
   const isActive    = watch("is_active")    as boolean;
   const isMandatory = watch("is_mandatory") as boolean;
 
+  /**
+   * The two toggles are custom <button>s, not inputs, so react-hook-form has
+   * nothing to attach to. Registering them manually puts them in the form
+   * state, which is what makes their value survive handleSubmit — previously
+   * `is_mandatory` could fall through to the zod `.default(false)` and every
+   * assignment was saved as "not required".
+   */
+  useEffect(() => {
+    register("is_mandatory");
+    register("is_active");
+  }, [register]);
+
   return (
     <>
       {/* is_mandatory + is_active toggles */}
@@ -106,7 +118,7 @@ function SettingsFields({ register, setValue, watch, errors, t }: SettingsFields
           </div>
           <button
             type="button"
-            onClick={() => setValue("is_mandatory", !isMandatory)}
+            onClick={() => setValue("is_mandatory", !isMandatory, { shouldDirty: true, shouldValidate: true })}
             className={cn(
               "relative inline-flex h-6 w-11 items-center rounded-full transition-colors shrink-0 ms-2",
               isMandatory ? "bg-amber-500" : "bg-ink-200"
@@ -133,7 +145,7 @@ function SettingsFields({ register, setValue, watch, errors, t }: SettingsFields
           </div>
           <button
             type="button"
-            onClick={() => setValue("is_active", !isActive)}
+            onClick={() => setValue("is_active", !isActive, { shouldDirty: true, shouldValidate: true })}
             className={cn(
               "relative inline-flex h-6 w-11 items-center rounded-full transition-colors shrink-0 ms-2",
               isActive ? "bg-brand-500" : "bg-ink-200"
@@ -259,15 +271,19 @@ function AssignMode({ placeId, assignedProducts, onClose }: Omit<AssignProps, "m
   });
 
   async function onSubmit(data: AssignFormData) {
-    await assign.mutateAsync({
-      place_id:         placeId,
-      product_id:       data.product_id,
-      is_mandatory:     data.is_mandatory,
-      min_stock:        parseInt(data.min_stock   ?? "0", 10),
-      display_priority: parseInt(data.display_priority ?? "0", 10),
-      is_active:        data.is_active,
-    });
-    onClose();
+    try {
+      await assign.mutateAsync({
+        place_id:         placeId,
+        product_id:       data.product_id,
+        is_mandatory:     data.is_mandatory,
+        min_stock:        parseInt(data.min_stock   ?? "0", 10),
+        display_priority: parseInt(data.display_priority ?? "0", 10),
+        is_active:        data.is_active,
+      });
+      onClose();
+    } catch {
+      // The mutation's onError already toasted. Keep the modal open.
+    }
   }
 
   function selectProduct(p: Product) {
@@ -460,17 +476,21 @@ function EditMode({ placeId, placeProduct, onClose }: Omit<EditProps, "mode">) {
   }, [placeProduct, reset]);
 
   async function onSubmit(data: EditFormData) {
-    await update.mutateAsync({
-      placeId,
-      productId: placeProduct.product_id,
-      payload: {
-        is_mandatory:     data.is_mandatory,
-        min_stock:        parseInt(data.min_stock        ?? "0", 10),
-        display_priority: parseInt(data.display_priority ?? "0", 10),
-        is_active:        data.is_active,
-      },
-    });
-    onClose();
+    try {
+      await update.mutateAsync({
+        placeId,
+        productId: placeProduct.product_id,
+        payload: {
+          is_mandatory:     data.is_mandatory,
+          min_stock:        parseInt(data.min_stock        ?? "0", 10),
+          display_priority: parseInt(data.display_priority ?? "0", 10),
+          is_active:        data.is_active,
+        },
+      });
+      onClose();
+    } catch {
+      // The mutation's onError already toasted. Keep the modal open.
+    }
   }
 
   return (
