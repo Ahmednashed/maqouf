@@ -1,3 +1,4 @@
+import { FunctionsHttpError } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/client";
 import type { UserRole } from "@/types";
 
@@ -97,15 +98,23 @@ export async function inviteCompanyUser(payload: InvitePayload): Promise<InviteR
   );
 
   if (error) {
-    // The Edge Function returns JSON error bodies for 4xx/5xx responses.
-    // FunctionsHttpError.message is the raw response text — try to parse it.
+    // For a non-2xx response supabase-js throws FunctionsHttpError, whose
+    // `message` is always the constant "Edge Function returned a non-2xx
+    // status code". The reason the caller actually needs — e.g. "Email
+    // address … is invalid" — lives in the JSON body on `error.context`,
+    // which is the untouched Response. Read it there or the admin is left
+    // with a message that says nothing about what went wrong.
     let message: string = error.message;
-    try {
-      const parsed = JSON.parse(message) as { message?: string };
-      if (parsed.message) message = parsed.message;
-    } catch {
-      // Not JSON — use the raw string as-is.
+
+    if (error instanceof FunctionsHttpError) {
+      try {
+        const body = (await error.context.json()) as { message?: string };
+        if (body.message) message = body.message;
+      } catch {
+        // Body was not JSON (gateway/timeout page) — keep the generic message.
+      }
     }
+
     throw new Error(message);
   }
 
