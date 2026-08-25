@@ -6,7 +6,7 @@ import {
   ArrowRight, ArrowLeft, Plus, Pencil, Trash2, Eye, List,
   ChevronUp, ChevronDown, ToggleLeft, ToggleRight, Loader2,
   FileText, Hash, Type, CircleDot, CheckSquare, Camera,
-  CalendarDays, ScanLine, AlignLeft, MapPin, AlertCircle,
+  CalendarDays, ScanLine, AlignLeft, MapPin, AlertCircle, AlertTriangle,
 } from "lucide-react";
 import { useTranslation }  from "@/hooks/use-translation";
 import {
@@ -284,8 +284,8 @@ export default function TemplateBuilderPage() {
   const tmplName  = locale === "ar" ? template.name_ar : template.name_en;
   const isActive  = template.status === "active";
 
-  // Cast to TemplateListItem shape for DeleteTemplateModal / TemplateModal
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  // Cast to TemplateListItem shape for DeleteTemplateModal / TemplateModal.
+  // `fields` is intentionally dropped via rest-destructuring.
   const { fields: _fields, ...tmplBase } = template;
   const tmplListItem: TemplateListItem = { ...tmplBase, field_count: fields.length };
 
@@ -345,6 +345,34 @@ export default function TemplateBuilderPage() {
           <Trash2 className="w-4 h-4" />
         </button>
       </header>
+
+      {/* ── Draft banner ─────────────────────────────────────────────────────
+          New templates are created as drafts and are deliberately not
+          assignable to visits. Without this the builder gave no hint why a
+          freshly-created template never showed up in the visit modal. */}
+      {!isActive && (
+        <div className="mx-4 mt-4 flex flex-wrap items-center gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
+          <AlertTriangle className="w-5 h-5 text-amber-500 shrink-0" />
+          <div className="flex-1 min-w-[180px]">
+            <p className="text-[13px] font-semibold text-amber-800">
+              {t("templates.draftBannerTitle")}
+            </p>
+            <p className="text-[12px] text-amber-600">
+              {t("templates.draftBannerBody")}
+            </p>
+          </div>
+          <button
+            onClick={toggleStatus}
+            disabled={updateTemplate.isPending}
+            className="inline-flex items-center gap-1.5 h-9 px-4 rounded-xl bg-emerald-500 hover:bg-emerald-600 disabled:opacity-60 text-white text-[13px] font-semibold shadow-pop transition-all shrink-0"
+          >
+            <ToggleRight className="w-4 h-4" />
+            {updateTemplate.isPending
+              ? t("templates.publishing")
+              : t("templates.publish")}
+          </button>
+        </div>
+      )}
 
       {/* ── Mobile tab toggle ────────────────────────────────────────────────── */}
       <div className="lg:hidden sticky top-[57px] z-20 bg-white border-b border-ink-100 px-4 py-2 flex gap-2">

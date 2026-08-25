@@ -57,25 +57,32 @@ export function TemplateModal({ template, onClose, onCreate }: TemplateModalProp
   }, [template, reset]);
 
   async function onSubmit(data: FormData) {
-    if (isEdit && template) {
-      await update.mutateAsync({
-        id:      template.id,
-        payload: {
+    // Both mutations surface their own error toast. Catching here keeps the
+    // modal open on failure (instead of an unhandled rejection) and stops the
+    // submit button from being left in a loading-looking state.
+    try {
+      if (isEdit && template) {
+        await update.mutateAsync({
+          id:      template.id,
+          payload: {
+            name_ar:     data.name_ar,
+            name_en:     data.name_en,
+            description: data.description || undefined,
+          },
+        });
+        onClose();
+      } else {
+        const newTemplate = await create.mutateAsync({
           name_ar:     data.name_ar,
           name_en:     data.name_en,
           description: data.description || undefined,
-        },
-      });
-      onClose();
-    } else {
-      const newTemplate = await create.mutateAsync({
-        name_ar:     data.name_ar,
-        name_en:     data.name_en,
-        description: data.description || undefined,
-        status:      "draft",
-      });
-      onClose();
-      onCreate?.(newTemplate.id);
+          status:      "draft",
+        });
+        onClose();
+        onCreate?.(newTemplate.id);
+      }
+    } catch {
+      // Error already reported by the mutation's onError handler.
     }
   }
 

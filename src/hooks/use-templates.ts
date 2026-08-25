@@ -53,7 +53,15 @@ export function useCreateTemplate() {
   return useMutation({
     mutationFn: (payload: TemplateInsert) => createTemplate(payload),
 
-    onSuccess: () => {
+    onSuccess: (created) => {
+      // Seed the list cache directly with the row the server returned.
+      // Relying on invalidation alone was unreliable: the modal navigates to
+      // /templates/[id] immediately, so the list query is already unmounted
+      // and invalidateQueries (refetchType "active" by default) had nothing
+      // to refetch — the new template only showed up after a manual reload.
+      qc.setQueryData<TemplateListItem[]>(TEMPLATES_QUERY_KEY, (old) =>
+        old ? [{ ...created, field_count: 0 }, ...old] : old
+      );
       toast.success(t("templates.createdOk"));
     },
     onError: (err: Error) => {
