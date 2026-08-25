@@ -21,7 +21,8 @@ import {
 } from "lucide-react";
 import { cn }                  from "@/lib/utils/cn";
 import { useTranslation, type TranslationFn } from "@/hooks/use-translation";
-import { useUsers }            from "@/hooks/use-users";
+import { useUsers, usePendingInvitations, useInviteUser } from "@/hooks/use-users";
+import type { PendingInvitation } from "@/services/invitations";
 import {
   memberDisplayName,
   memberEmail,
@@ -352,6 +353,18 @@ function UserRow({ member, t, locale, onEdit, onToggle, onInvite, onActivity }: 
 export default function UsersPage() {
   const { t, locale } = useTranslation();
   const { data: users = [], isLoading, isError, error } = useUsers();
+  const { data: pendingInvites = [] } = usePendingInvitations();
+  const invite = useInviteUser();
+
+  /** Re-sends the Supabase invite email using the original invite details. */
+  function resendInvite(inv: PendingInvitation) {
+    invite.mutate({
+      email:  inv.email,
+      role:   inv.role,
+      emp_id: inv.emp_id ?? undefined,
+      region: inv.region ?? undefined,
+    });
+  }
 
   const [showCreate,       setShowCreate]       = useState(false);
   const [editTarget,       setEditTarget]       = useState<CompanyUserWithProfile | null>(null);
@@ -412,6 +425,56 @@ export default function UsersPage() {
       {/* Summary cards */}
       {!isLoading && !isError && users.length > 0 && (
         <SummaryCards users={users} t={t} />
+      )}
+
+      {/* Pending invitations — people who were emailed an invite but have not
+          completed signup. They have NO company_users row yet, so they must
+          never be rendered in the members table as "Active". */}
+      {pendingInvites.length > 0 && (
+        <div className="mb-5 rounded-2xl border border-amber-200 bg-amber-50/60 overflow-hidden">
+          <div className="px-4 sm:px-5 py-3 border-b border-amber-200/70">
+            <h2 className="text-[14px] font-bold text-amber-800 flex items-center gap-2">
+              <Mail className="w-4 h-4" />
+              {t("users.pendingTitle")}
+              <span className="text-[11.5px] font-semibold bg-amber-200/70 text-amber-800 rounded-full px-2 py-0.5">
+                {pendingInvites.length}
+              </span>
+            </h2>
+            <p className="text-[12px] text-amber-700/80 mt-0.5">{t("users.pendingHint")}</p>
+          </div>
+
+          <ul className="divide-y divide-amber-200/60">
+            {pendingInvites.map((inv) => (
+              <li
+                key={inv.id}
+                className="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 sm:px-5 py-3"
+              >
+                <span className="text-[13px] font-semibold text-ink-800" dir="ltr">
+                  {inv.email}
+                </span>
+                <RoleBadge role={inv.role} t={t} />
+                <span className="text-[10.5px] font-semibold text-amber-700 bg-amber-100 border border-amber-300 rounded-full px-2 py-0.5">
+                  {t("users.pendingBadge")}
+                </span>
+                <span className="text-[12px] text-ink-400">
+                  {t("users.invitedOn")}{" "}
+                  {new Date(inv.created_at).toLocaleDateString(
+                    locale === "ar" ? "ar-SA-u-ca-gregory" : "en-GB",
+                    { day: "numeric", month: "short", year: "numeric" }
+                  )}
+                </span>
+                <button
+                  onClick={() => resendInvite(inv)}
+                  disabled={invite.isPending}
+                  className="ms-auto inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-amber-300 bg-white text-[12px] font-semibold text-amber-700 hover:bg-amber-100 disabled:opacity-60 transition-all"
+                >
+                  <Mail className="w-3.5 h-3.5" />
+                  {invite.isPending ? t("users.resending") : t("users.resendInvite")}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
 
       {/* Card */}

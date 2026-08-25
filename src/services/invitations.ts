@@ -27,6 +27,51 @@ export interface InviteResult {
   message: string;
 }
 
+// ─── Pending invitations (read) ───────────────────────────────────────────────
+
+/** A `company_user_invitations` row that has not been accepted yet. */
+export interface PendingInvitation {
+  id:         string;
+  email:      string;
+  role:       UserRole;
+  emp_id:     string | null;
+  region:     string | null;
+  created_at: string;
+}
+
+/**
+ * Invitations that were emailed but never accepted (`accepted_at IS NULL`).
+ *
+ * These people do NOT have a `company_users` row yet — the `handle_new_user`
+ * trigger creates it when they complete signup — so they must be surfaced
+ * separately from the members table rather than shown as Active.
+ *
+ * RLS (migration 007 `invitations_select`) already restricts this to
+ * owner/admin of the company, so no extra filtering is needed here.
+ *
+ * The Edge Function inserts a NEW row on every invite (including resends),
+ * so rows are deduplicated by email, keeping the most recent one.
+ */
+export async function fetchPendingInvitations(): Promise<PendingInvitation[]> {
+  const supabase = createClient();
+
+  const { data, error } = await supabase
+    .from("company_user_invitations")
+    .select("id, email, role, emp_id, region, created_at")
+    .is("accepted_at", null)
+    .order("created_at", { ascending: false });
+
+  if (error) throw error;
+
+  const seen = new Set<string>();
+  return ((data ?? []) as PendingInvitation[]).filter((row) => {
+    const key = row.email.toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 // ─── Edge Function caller ─────────────────────────────────────────────────────
 
 /**

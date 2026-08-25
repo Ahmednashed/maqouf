@@ -9,9 +9,11 @@ import {
   type CompanyUserUpdate,
 } from "@/services/company-users";
 import {
+  fetchPendingInvitations,
   inviteCompanyUser,
   type InvitePayload,
   type InviteStatus,
+  type PendingInvitation,
 } from "@/services/invitations";
 import { uploadUserAvatar } from "@/services/storage";
 import { logActivity } from "@/services/activity-logs";
@@ -19,8 +21,9 @@ import { useTranslation } from "@/hooks/use-translation";
 import { COMPANY_USERS_QUERY_KEY } from "@/hooks/use-company-users";
 import { CURRENT_MEMBER_KEY } from "@/hooks/use-current-member";
 
-// ─── Query key ────────────────────────────────────────────────────────────────
+// ─── Query keys ───────────────────────────────────────────────────────────────
 export const USERS_QUERY_KEY = ["users"] as const;
+export const PENDING_INVITATIONS_KEY = ["pending-invitations"] as const;
 
 // ─── Read ─────────────────────────────────────────────────────────────────────
 
@@ -29,6 +32,17 @@ export function useUsers() {
   return useQuery<CompanyUserWithProfile[]>({
     queryKey: USERS_QUERY_KEY,
     queryFn:  fetchAllCompanyUsers,
+  });
+}
+
+/**
+ * Invitations sent but not yet accepted. Owner/admin only (enforced by RLS);
+ * for anyone else the query simply returns an empty list.
+ */
+export function usePendingInvitations() {
+  return useQuery<PendingInvitation[]>({
+    queryKey: PENDING_INVITATIONS_KEY,
+    queryFn:  fetchPendingInvitations,
   });
 }
 
@@ -78,6 +92,8 @@ export function useInviteUser() {
       qc.invalidateQueries({ queryKey: USERS_QUERY_KEY });
       // Keep the merchandiser dropdown in the schedules module fresh.
       qc.invalidateQueries({ queryKey: COMPANY_USERS_QUERY_KEY() });
+      // A brand-new invite lands in company_user_invitations, not company_users.
+      qc.invalidateQueries({ queryKey: PENDING_INVITATIONS_KEY });
     },
   });
 }
