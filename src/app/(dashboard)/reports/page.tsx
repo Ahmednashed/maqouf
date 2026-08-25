@@ -3,7 +3,9 @@
 import { useState, useCallback } from "react";
 import { Download, ChevronDown, ChevronUp, ShieldCheck, ChevronLeft, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
-import { useTranslation } from "@/hooks/use-translation";
+import { riyadhToday, startOfMonthIso } from "@/lib/utils/date";
+import { useTranslation, type TranslationFn } from "@/hooks/use-translation";
+import type { TranslationKey } from "@/lib/i18n/translations";
 import {
   useVisitsReport,
   useMerchReport,
@@ -15,11 +17,16 @@ import {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
+/**
+ * Default report window: the 1st of the current month → today, on the Riyadh
+ * business day. Using toISOString() here previously produced a `from` in the
+ * PREVIOUS month (local midnight converts back a day in UTC+3) and a `to` of
+ * yesterday during the small hours, which excluded today's visits from every
+ * report.
+ */
 function thisMonthRange(): DateRange {
-  const now   = new Date();
-  const from  = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10);
-  const to    = now.toISOString().slice(0, 10);
-  return { from, to };
+  const today = riyadhToday();
+  return { from: startOfMonthIso(today), to: today };
 }
 
 type SortDir = "asc" | "desc";
@@ -134,7 +141,27 @@ function RateBadge({ rate }: { rate: number }) {
   );
 }
 
+/** Visit statuses are stored as English DB enums — always render them through
+ *  the shared `visits.status.*` labels, never as the raw value. */
+const STATUS_LABEL_KEY: Record<string, TranslationKey> = {
+  completed:  "visits.status.completed",
+  inprogress: "visits.status.inprogress",
+  pending:    "visits.status.pending",
+  missed:     "visits.status.missed",
+};
+
+function statusLabel(status: string, t: TranslationFn): string {
+  const key = STATUS_LABEL_KEY[status];
+  return key ? t(key) : status;
+}
+
+/** "45 د" / "45 min" — never the bare English "45m". */
+function durationLabel(minutes: number, t: TranslationFn): string {
+  return minutes > 0 ? `${minutes} ${t("common.minutesShort")}` : "—";
+}
+
 function StatusBadge({ status }: { status: string }) {
+  const { t } = useTranslation();
   const map: Record<string, string> = {
     completed:  "bg-emerald-100 text-emerald-700",
     inprogress: "bg-blue-100 text-blue-700",
@@ -143,7 +170,7 @@ function StatusBadge({ status }: { status: string }) {
   };
   return (
     <span className={cn("px-2.5 py-0.5 rounded-full text-[11px] font-semibold", map[status] ?? "bg-ink-100 text-ink-500")}>
-      {status}
+      {statusLabel(status, t)}
     </span>
   );
 }
@@ -197,7 +224,7 @@ function VisitsTab({ range, locale }: { range: DateRange; locale: string }) {
       [t("reports.col.branch")]:   isAr ? r.branch_ar : r.branch_en,
       [t("reports.col.chain")]:    isAr ? r.chain_ar  : r.chain_en,
       [t("reports.col.merch")]:    r.merch_name,
-      [t("reports.col.status")]:   r.status,
+      [t("reports.col.status")]:   statusLabel(r.status, t),
       [t("reports.col.duration")]: r.duration_minutes || "",
     }));
     await exportXlsx(rows, `visits-${range.from}-${range.to}`);
@@ -241,7 +268,7 @@ function VisitsTab({ range, locale }: { range: DateRange; locale: string }) {
                 <td className="px-3 py-2.5 text-ink-700">{r.merch_name}</td>
                 <td className="text-center px-3 py-2.5"><StatusBadge status={r.status} /></td>
                 <td className="text-end pe-4 py-2.5 text-ink-600">
-                  {r.duration_minutes > 0 ? `${r.duration_minutes}m` : "—"}
+                  {durationLabel(r.duration_minutes, t)}
                 </td>
               </tr>
             ))}
@@ -306,7 +333,7 @@ function MerchTab({ range, locale }: { range: DateRange; locale: string }) {
                 <td className="text-center px-3 py-2.5 text-rose-500 font-semibold">{r.missed}</td>
                 <td className="text-center px-3 py-2.5"><RateBadge rate={r.completion_rate} /></td>
                 <td className="text-end pe-4 py-2.5 text-ink-600">
-                  {r.avg_duration > 0 ? `${r.avg_duration}m` : "—"}
+                  {durationLabel(r.avg_duration, t)}
                 </td>
               </tr>
             ))}
@@ -378,7 +405,7 @@ function BranchTab({ range, locale }: { range: DateRange; locale: string }) {
                 <td className="text-center px-3 py-2.5 text-rose-500 font-semibold">{r.missed}</td>
                 <td className="text-center px-3 py-2.5"><RateBadge rate={r.completion_rate} /></td>
                 <td className="text-end pe-4 py-2.5 text-ink-600">
-                  {r.avg_duration > 0 ? `${r.avg_duration}m` : "—"}
+                  {durationLabel(r.avg_duration, t)}
                 </td>
               </tr>
             ))}

@@ -1,8 +1,8 @@
 "use client";
 
 import { useState }              from "react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { Toaster }               from "sonner";
+import { MutationCache, QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { Toaster, toast }        from "sonner";
 import { useAppStore }           from "@/store/app-store";
 import { ServiceWorkerRegistration } from "@/components/pwa/ServiceWorkerRegistration";
 import { GlobalOfflineBanner }   from "@/components/pwa/GlobalOfflineBanner";
@@ -14,6 +14,21 @@ export function Providers({ children }: { children: React.ReactNode }) {
   const [queryClient] = useState(
     () =>
       new QueryClient({
+        // Safety net: a mutation that fails without its own onError handler
+        // would otherwise fail silently and leave a modal looking stuck.
+        // Hooks that already toast are skipped so errors never double-report.
+        mutationCache: new MutationCache({
+          onError: (error, _vars, _ctx, mutation) => {
+            if (mutation.options.onError) return;
+            const isArabic = useAppStore.getState().locale === "ar";
+            const fallback = isArabic
+              ? "حدث خطأ غير متوقع. حاول مرة أخرى."
+              : "Something went wrong. Please try again.";
+            toast.error(
+              error instanceof Error && error.message ? error.message : fallback
+            );
+          },
+        }),
         defaultOptions: {
           queries: {
             // Data stays fresh for 60 s before a background refetch.

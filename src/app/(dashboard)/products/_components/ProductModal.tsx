@@ -151,12 +151,17 @@ export function ProductModal({ product, onClose }: ProductModalProps) {
       is_active: data.is_active,
     };
 
-    if (isEdit && product) {
-      await update.mutateAsync({ id: product.id, payload });
-    } else {
-      await create.mutateAsync(payload);
+    try {
+      if (isEdit && product) {
+        await update.mutateAsync({ id: product.id, payload });
+      } else {
+        await create.mutateAsync(payload);
+      }
+      onClose();
+    } catch {
+      // The mutation's onError already toasted. Keep the modal open with the
+      // user's input intact instead of leaking an unhandled rejection.
     }
-    onClose();
   }
 
   // ── Shared input classes ─────────────────────────────────────────────────────

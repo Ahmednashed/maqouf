@@ -81,12 +81,17 @@ export function ChainModal({ chain, onClose }: ChainModalProps) {
 
   // ── Submit ──────────────────────────────────────────────────────────────────
   async function onSubmit(data: ChainFormData) {
-    if (isEdit && chain) {
-      await update.mutateAsync({ id: chain.id, payload: data });
-    } else {
-      await create.mutateAsync(data);
+    try {
+      if (isEdit && chain) {
+        await update.mutateAsync({ id: chain.id, payload: data });
+      } else {
+        await create.mutateAsync(data);
+      }
+      onClose();
+    } catch {
+      // The mutation's onError already toasted. Keep the modal open with the
+      // user's input intact instead of leaking an unhandled rejection.
     }
-    onClose();
   }
 
   // ── Input class helper ──────────────────────────────────────────────────────

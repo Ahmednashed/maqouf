@@ -145,12 +145,17 @@ export function PlaceModal({ place, onClose }: PlaceModalProps) {
       region:     data.region?.trim()     || undefined,
     };
 
-    if (isEdit && place) {
-      await update.mutateAsync({ id: place.id, payload });
-    } else {
-      await create.mutateAsync(payload);
+    try {
+      if (isEdit && place) {
+        await update.mutateAsync({ id: place.id, payload });
+      } else {
+        await create.mutateAsync(payload);
+      }
+      onClose();
+    } catch {
+      // The mutation's onError already toasted. Keep the modal open with the
+      // user's input intact instead of leaking an unhandled rejection.
     }
-    onClose();
   }
 
   // ── Shared input class ──────────────────────────────────────────────────────
