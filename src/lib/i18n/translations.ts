@@ -492,6 +492,8 @@ export const translations = {
     "visits.noActiveTemplates":         "لا توجد قوالب نشطة بعد",
     "visits.templateDraftOption":       "مسودة — غير متاح",
     "visits.draftTemplatesHint":        "القوالب بحالة «مسودة» لا يمكن إسنادها. افتح القالب واضغط «نشر القالب» أولاً.",
+    "visits.templateEmptyOption":       "بدون حقول — غير متاح",
+    "visits.emptyTemplatesHint":        "القوالب التي لا تحتوي على حقول لا يمكن إسنادها. افتح القالب وأضف حقلاً أولاً.",
 
     // ── Add Visit: recurrence ──────────────────────────────────────────────
     "visits.recur.label":            "التكرار",
@@ -583,6 +585,8 @@ export const translations = {
     "templates.unpublish":            "إرجاع للمسودة",
     "templates.draftBannerTitle":     "هذا القالب مسودة",
     "templates.draftBannerBody":      "لن يظهر عند إنشاء الزيارات حتى تنشره.",
+    "templates.draftBannerEmptyBody": "أضف حقلاً واحداً على الأقل قبل النشر.",
+    "templates.cannotPublishEmpty":   "لا يمكن نشر قالب بدون حقول",
     "templates.publishing":           "جارٍ النشر…",
     "templates.sectionInfo":          "معلومات القالب",
     "templates.sectionFields":        "الحقول",
@@ -1455,6 +1459,8 @@ export const translations = {
     "visits.noActiveTemplates":         "No active templates yet",
     "visits.templateDraftOption":       "draft — unavailable",
     "visits.draftTemplatesHint":        "Draft templates can't be assigned. Open the template and press “Publish Template” first.",
+    "visits.templateEmptyOption":       "no fields — unavailable",
+    "visits.emptyTemplatesHint":        "Templates with no fields can't be assigned. Open the template and add a field first.",
 
     // ── Add Visit: recurrence ──────────────────────────────────────────────
     "visits.recur.label":            "Repeat",
@@ -1545,6 +1551,8 @@ export const translations = {
     "templates.publish":              "Publish Template",
     "templates.draftBannerTitle":     "This template is a draft",
     "templates.draftBannerBody":      "It won't appear when creating visits until you publish it.",
+    "templates.draftBannerEmptyBody": "Add at least one field before publishing.",
+    "templates.cannotPublishEmpty":   "A template with no fields can't be published",
     "templates.publishing":           "Publishing…",
     "templates.unpublish":            "Move to Draft",
     "templates.sectionInfo":          "Template Info",

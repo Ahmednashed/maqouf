@@ -87,10 +87,19 @@ export function VisitCreateModal({ onClose, initialDate }: VisitCreateModalProps
 
   const activePlaces     = places.filter((p) => p.is_active);
   const activeMembers    = members.filter((m) => m.status === "active");
-  const activeTemplates  = templates.filter((t) => t.status === "active");
+  // Only a published template that actually has fields gives the merchandiser
+  // something to fill in. Publishing an empty one is blocked at the source,
+  // but rows that predate that guard are still in the database.
+  const assignableTemplates = templates.filter(
+    (t) => t.status === "active" && t.field_count > 0
+  );
   // Drafts are NOT assignable (a visit must reference a published checklist),
   // but hiding them entirely made new templates look like they vanished.
-  // They are listed as disabled options carrying the reason instead.
+  // They are listed as disabled options carrying the reason instead — and so
+  // are published-but-empty ones, for the same reason.
+  const emptyTemplates   = templates.filter(
+    (t) => t.status === "active" && t.field_count === 0
+  );
   const draftTemplates   = templates.filter((t) => t.status === "draft");
 
   const {
@@ -304,9 +313,14 @@ export function VisitCreateModal({ onClose, initialDate }: VisitCreateModalProps
               <FileText className="absolute start-3 top-1/2 -translate-y-1/2 w-4 h-4 text-ink-400 pointer-events-none" />
               <select {...register("template_id")} className={selectCls()}>
                 <option value="">{t("visits.assignTemplatePlaceholder")}</option>
-                {activeTemplates.map((tmpl) => (
+                {assignableTemplates.map((tmpl) => (
                   <option key={tmpl.id} value={tmpl.id}>
                     {tmpl.name_ar} / {tmpl.name_en}
+                  </option>
+                ))}
+                {emptyTemplates.map((tmpl) => (
+                  <option key={tmpl.id} value={tmpl.id} disabled>
+                    {tmpl.name_ar} / {tmpl.name_en} — {t("visits.templateEmptyOption")}
                   </option>
                 ))}
                 {draftTemplates.map((tmpl) => (
@@ -316,9 +330,14 @@ export function VisitCreateModal({ onClose, initialDate }: VisitCreateModalProps
                 ))}
               </select>
             </div>
-            {activeTemplates.length === 0 && (
+            {assignableTemplates.length === 0 && (
               <p className="mt-1 text-[11px] text-ink-400">
                 {t("visits.noActiveTemplates")}
+              </p>
+            )}
+            {emptyTemplates.length > 0 && (
+              <p className="mt-1 text-[11px] text-amber-600">
+                {t("visits.emptyTemplatesHint")}
               </p>
             )}
             {draftTemplates.length > 0 && (

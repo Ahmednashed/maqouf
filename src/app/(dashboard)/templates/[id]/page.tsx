@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useParams, useRouter } from "next/navigation";
+import { toast } from "sonner";
 import {
   ArrowRight, ArrowLeft, Plus, Pencil, Trash2, Eye, List,
   ChevronUp, ChevronDown, ToggleLeft, ToggleRight, Loader2,
@@ -239,6 +240,15 @@ export default function TemplateBuilderPage() {
   function toggleStatus() {
     if (!template) return;
     const next = template.status === "active" ? "draft" : "active";
+
+    // A published template is offered to merchandisers as a checklist to fill
+    // in, so publishing one with no fields hands them an empty form. Drafts
+    // are exempt — a template has to start empty to be built at all.
+    if (next === "active" && template.fields.length === 0) {
+      toast.error(t("templates.cannotPublishEmpty"));
+      return;
+    }
+
     updateTemplate.mutate({ id, payload: { status: next } });
   }
 
@@ -358,12 +368,14 @@ export default function TemplateBuilderPage() {
               {t("templates.draftBannerTitle")}
             </p>
             <p className="text-[12px] text-amber-600">
-              {t("templates.draftBannerBody")}
+              {fields.length === 0
+                ? t("templates.draftBannerEmptyBody")
+                : t("templates.draftBannerBody")}
             </p>
           </div>
           <button
             onClick={toggleStatus}
-            disabled={updateTemplate.isPending}
+            disabled={updateTemplate.isPending || fields.length === 0}
             className="inline-flex items-center gap-1.5 h-9 px-4 rounded-xl bg-emerald-500 hover:bg-emerald-600 disabled:opacity-60 text-white text-[13px] font-semibold shadow-pop transition-all shrink-0"
           >
             <ToggleRight className="w-4 h-4" />
