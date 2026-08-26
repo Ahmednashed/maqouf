@@ -153,18 +153,6 @@ export interface ReportSummary {
   audited_products:        number | null;
   /** null when audited_products is null. Distinct products short on shelf. */
   products_with_shortfall: number | null;
-  /**
-   * Active branches whose last real visit was over 14 days ago, or never.
-   *
-   * Measured across ALL history against the Riyadh business day, so it is
-   * deliberately independent of the selected range — a branch is not "fresh"
-   * just because you narrowed the report to last week. It respects the branch
-   * filter but not the merchandiser filter: "nobody has been there" is the
-   * operational question, not "this one person has not been there".
-   */
-  stale_branches:      number;
-  /** Active branches considered, for the denominator. */
-  total_branches:      number;
 }
 
 interface SummaryVisitRow {
@@ -197,13 +185,6 @@ export async function fetchReportSummary(
 
   // Product shortfall rides the same inner-join filter the product report uses,
   // so it stays consistent with that tab and needs no visit-id round trip.
-  let branchQuery = supabase
-    .from("places")
-    .select("id")
-    .eq("is_active", true);
-
-  if (filters?.placeId) branchQuery = branchQuery.eq("id", filters.placeId);
-
   let productQuery = supabase
     .from("visit_products")
     .select("product_id, qty_missing, visit:visits!inner (scheduled_date, status, merch_id, place_id)")
@@ -214,16 +195,10 @@ export async function fetchReportSummary(
   if (filters?.merchId) productQuery = productQuery.eq("visit.merch_id", filters.merchId);
   if (filters?.placeId) productQuery = productQuery.eq("visit.place_id", filters.placeId);
 
-  const [visitsRes, productsRes, branchesRes, lastVisits] = await Promise.all([
-    visitQuery,
-    productQuery,
-    branchQuery,
-    fetchBranchLastVisits(),
-  ]);
+  const [visitsRes, productsRes] = await Promise.all([visitQuery, productQuery]);
 
   if (visitsRes.error)   throw visitsRes.error;
   if (productsRes.error) throw productsRes.error;
-  if (branchesRes.error) throw branchesRes.error;
 
   const visits = (visitsRes.data ?? []) as unknown as SummaryVisitRow[];
 
@@ -250,17 +225,6 @@ export async function fetchReportSummary(
   }
 
   const finished = completed + missed;
-
-  // Staleness uses the same rule and the same threshold as the "gt14" bucket
-  // in the Branch Coverage filter, so the card and the filter agree.
-  const today = riyadhToday();
-  const activeBranches = (branchesRes.data ?? []) as unknown as { id: string }[];
-  let staleBranches = 0;
-  for (const b of activeBranches) {
-    const since = daysSinceIso(lastVisits[b.id]?.last_visit_date ?? null, today);
-    if (matchesLastVisitBucket(since, "gt14")) staleBranches++;
-  }
-
   const products = (productsRes.data ?? []) as unknown as SummaryProductRow[];
 
   const shortfall = new Set<string>();
@@ -286,8 +250,6 @@ export async function fetchReportSummary(
     // "nothing was missing" — surface it as unknown, not as zero.
     audited_products:        products.length > 0 ? auditedProducts.size : null,
     products_with_shortfall: products.length > 0 ? shortfall.size       : null,
-    stale_branches:          staleBranches,
-    total_branches:          activeBranches.length,
   };
 }
 

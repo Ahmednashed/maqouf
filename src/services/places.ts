@@ -83,10 +83,16 @@ export interface BranchLastVisit {
  * make every stale branch look either fine or unvisited depending on where the
  * window happened to fall.
  *
- * "Real" excludes pending — a visit that has not happened yet is not a last
- * visit. Rows arrive newest-first, so the first non-pending row seen for a
- * branch is its answer and the rest can be skipped.
+ * "Real" means the visit actually happened: completed, or in progress right
+ * now. Pending has not happened yet, and MISSED means nobody went — counting
+ * either would report a branch as visited when no one set foot in it, which is
+ * the exact opposite of what a staleness figure is for.
+ *
+ * Rows arrive newest-first, so the first qualifying row for a branch is its
+ * answer and the rest can be skipped.
  */
+const VISITED_STATUSES = new Set(["completed", "inprogress"]);
+
 export async function fetchBranchLastVisits(): Promise<Record<string, BranchLastVisit>> {
   const supabase = createClient();
 
@@ -106,7 +112,7 @@ export async function fetchBranchLastVisits(): Promise<Record<string, BranchLast
       last_visit_merch:  null,
     });
     if (row.last_visit_date !== null) continue;
-    if (v.status === "pending") continue;
+    if (!VISITED_STATUSES.has(v.status)) continue;
     row.last_visit_date   = v.scheduled_date;
     row.last_visit_status = v.status;
     row.last_visit_merch  = v.merch_id;

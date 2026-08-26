@@ -173,7 +173,7 @@ function SummaryCards({
   return (
     <div>
       <p className="text-[12px] font-semibold text-ink-500 mb-2">{t("reports.summaryTitle")}</p>
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2.5">
         <SummaryCard
           loading={isLoading}
           label={t("reports.sum.totalVisits")}
@@ -217,15 +217,6 @@ function SummaryCards({
           loading={isLoading}
           label={t("reports.sum.avgDuration")}
           value={s ? durationLabel(s.avg_duration, t) : "—"}
-        />
-        {/* Branches nobody has been to in over a fortnight. All-history, so it
-            does not soften when the reporting window is narrowed. */}
-        <SummaryCard
-          loading={isLoading}
-          label={t("reports.sum.staleBranches")}
-          value={s ? String(s.stale_branches) : "—"}
-          tone={s && s.stale_branches > 0 ? "bad" : "good"}
-          hint={s ? t("reports.sum.ofBranches").replace("{count}", String(s.total_branches)) : undefined}
         />
         {/* Products short on shelf. When no audit happened the figure is
             unknown, not zero — a confident 0 would read as "all good". */}
@@ -862,7 +853,6 @@ export default function ReportsPage() {
           { [t("reports.exp.metric")]: t("reports.sum.activeMerch"),     [t("reports.exp.value")]: summary.data.active_merchandisers },
           { [t("reports.exp.metric")]: t("reports.sum.coveredBranches"), [t("reports.exp.value")]: `${summary.data.covered_branches} / ${summary.data.scheduled_branches}` },
           { [t("reports.exp.metric")]: t("reports.sum.avgDuration"),     [t("reports.exp.value")]: durationLabel(summary.data.avg_duration, t) },
-          { [t("reports.exp.metric")]: t("reports.sum.staleBranches"), [t("reports.exp.value")]: `${summary.data.stale_branches} / ${summary.data.total_branches}` },
           {
             [t("reports.exp.metric")]: t("reports.sum.productIssues"),
             [t("reports.exp.value")]: summary.data.products_with_shortfall == null
