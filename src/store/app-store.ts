@@ -6,8 +6,25 @@ interface AppState {
   locale: Locale;
   setLocale: (locale: Locale) => void;
   toggleLocale: () => void;
-  sidebarOpen: boolean;
-  setSidebarOpen: (open: boolean) => void;
+
+  /**
+   * DESKTOP ONLY (lg+). Whether the rail shows labels (260px) or icons
+   * only (72px). Never controls the mobile drawer — see mobileNavOpen.
+   */
+  sidebarExpanded: boolean;
+  setSidebarExpanded: (expanded: boolean) => void;
+
+  /**
+   * MOBILE ONLY (below lg). Whether the overlay drawer is showing.
+   *
+   * Deliberately separate from sidebarExpanded and deliberately NOT
+   * persisted: a single flag used to drive both, defaulting to "open",
+   * meant the drawer and its scrim covered the page on every load below
+   * lg and swallowed clicks until dismissed. A drawer is a transient
+   * response to a tap, so it always starts closed.
+   */
+  mobileNavOpen: boolean;
+  setMobileNavOpen: (open: boolean) => void;
 }
 
 export const useAppStore = create<AppState>()(
@@ -17,8 +34,12 @@ export const useAppStore = create<AppState>()(
       setLocale: (locale) => set({ locale }),
       toggleLocale: () =>
         set({ locale: get().locale === "ar" ? "en" : "ar" }),
-      sidebarOpen: true,
-      setSidebarOpen: (open) => set({ sidebarOpen: open }),
+
+      sidebarExpanded: true,
+      setSidebarExpanded: (expanded) => set({ sidebarExpanded: expanded }),
+
+      mobileNavOpen: false,
+      setMobileNavOpen: (open) => set({ mobileNavOpen: open }),
     }),
     {
       name:      "malgoof-app",

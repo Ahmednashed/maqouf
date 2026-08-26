@@ -171,6 +171,7 @@ export const translations = {
     "products.priceLabel":         "السعر",
     // Place Products (Assortment) page
     "nav.assortment":                    "تشكيلة الفرع",
+    "nav.openMenu":                      "فتح القائمة",
     "placeProducts.pageTitle":           "توزيع المنتجات",
     "placeProducts.pageSubtitle":        "إدارة تشكيلة المنتجات لكل فرع",
     "placeProducts.selectBranchTitle":   "اختر الفرع",
@@ -1133,6 +1134,7 @@ export const translations = {
     "products.priceLabel":         "Price",
     // Place Products (Assortment) page
     "nav.assortment":                    "Assortment",
+    "nav.openMenu":                      "Open menu",
     "placeProducts.pageTitle":           "Product Assortment",
     "placeProducts.pageSubtitle":        "Manage each branch's product lineup",
     "placeProducts.selectBranchTitle":   "Select a Branch",

@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useEffect } from "react";
 import { usePathname } from "next/navigation";
 import {
   LayoutDashboard, MapPinned, Building2,
@@ -152,7 +153,19 @@ export function Sidebar() {
   const pathname               = usePathname();
   const router                 = useRouter();
   const { t, locale }          = useTranslation();
-  const { sidebarOpen, setSidebarOpen } = useAppStore();
+  const {
+    sidebarExpanded, setSidebarExpanded,
+    mobileNavOpen,   setMobileNavOpen,
+  } = useAppStore();
+
+  /**
+   * Close the drawer whenever the route changes. Client-side navigation
+   * keeps the store alive, so without this the drawer would stay open on
+   * top of the page the user just navigated to.
+   */
+  useEffect(() => {
+    setMobileNavOpen(false);
+  }, [pathname, setMobileNavOpen]);
 
   async function handleLogout() {
     const supabase = createClient();
@@ -160,13 +173,22 @@ export function Sidebar() {
     router.push("/login");
   }
 
-  const panelProps: PanelProps = {
-    expanded: sidebarOpen,
+  // Desktop rail: the toggle collapses/expands the rail in place.
+  const desktopPanelProps: PanelProps = {
+    expanded: sidebarExpanded,
     locale,
     t,
     pathname,
-    onToggle:  () => setSidebarOpen(!sidebarOpen),
+    onToggle:  () => setSidebarExpanded(!sidebarExpanded),
     onLogout:  handleLogout,
+  };
+
+  // Mobile drawer: always full-width, and its toggle dismisses the drawer
+  // rather than collapsing anything.
+  const mobilePanelProps: PanelProps = {
+    ...desktopPanelProps,
+    expanded: true,
+    onToggle: () => setMobileNavOpen(false),
   };
 
   return (
@@ -186,10 +208,10 @@ export function Sidebar() {
           "bg-white border-e border-ink-200",
           "transition-[width] duration-200 ease-in-out",
           "z-30 overflow-hidden",
-          sidebarOpen ? "w-[260px]" : "w-[72px]"
+          sidebarExpanded ? "w-[260px]" : "w-[72px]"
         )}
       >
-        <SidebarPanel {...panelProps} />
+        <SidebarPanel {...desktopPanelProps} />
       </aside>
 
       {/* ── Mobile overlay + drawer ──────────────────────────────────────────
@@ -197,12 +219,13 @@ export function Sidebar() {
           Both elements are `fixed` so they never participate in the flex row.
           Hidden entirely on lg+ via `lg:hidden`.
       ─────────────────────────────────────────────────────────────────── */}
-      {sidebarOpen && (
+      {mobileNavOpen && (
         <>
           {/* Scrim */}
           <div
+            aria-hidden="true"
             className="fixed inset-0 z-20 bg-black/40 lg:hidden"
-            onClick={() => setSidebarOpen(false)}
+            onClick={() => setMobileNavOpen(false)}
           />
 
           {/* Drawer — always full-width on mobile */}
@@ -214,7 +237,7 @@ export function Sidebar() {
               "lg:hidden"
             )}
           >
-            <SidebarPanel {...panelProps} expanded={true} />
+            <SidebarPanel {...mobilePanelProps} />
           </aside>
         </>
       )}

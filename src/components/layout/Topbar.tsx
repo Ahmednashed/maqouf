@@ -146,13 +146,14 @@ function AccountMenu() {
 
 export function Topbar() {
   const { t, locale }               = useTranslation();
-  const { toggleLocale, setSidebarOpen } = useAppStore();
+  const { toggleLocale, setMobileNavOpen } = useAppStore();
 
   return (
     <header className="sticky top-0 z-20 h-16 bg-white/80 backdrop-blur-xl border-b border-ink-200 flex items-center px-4 gap-3">
       {/* Mobile menu toggle */}
       <button
-        onClick={() => setSidebarOpen(true)}
+        onClick={() => setMobileNavOpen(true)}
+        aria-label={t("nav.openMenu")}
         className="lg:hidden h-10 w-10 rounded-xl border border-ink-200 flex items-center justify-center text-ink-600 hover:bg-ink-50"
       >
         <Menu className="w-5 h-5" />
