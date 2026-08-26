@@ -1,4 +1,6 @@
 import { createClient } from "@/lib/supabase/client";
+import { fetchBranchLastVisits, daysSinceIso } from "@/services/places";
+import { riyadhToday } from "@/lib/utils/date";
 
 // ─── Shared types ─────────────────────────────────────────────────────────────
 
@@ -15,10 +17,38 @@ export interface DateRange {
  * status, so filtering to one value would empty their columns rather than
  * focus them, and is deliberately not applied there.
  */
+/**
+ * Branch recency buckets, measured from the last real visit across ALL history
+ * to the Riyadh business day — never from inside the selected range, or a
+ * branch's staleness would change with the window rather than with reality.
+ *
+ * "gt14"/"gt30" deliberately INCLUDE never-visited branches: a branch nobody
+ * has ever been to has, self-evidently, not been visited in the last 30 days,
+ * and a manager asking that question wants the worst offenders in the answer.
+ * "never" remains separately selectable for the stricter question.
+ */
+export type LastVisitBucket = "never" | "le7" | "le14" | "gt14" | "gt30";
+
+export function matchesLastVisitBucket(
+  daysSince: number | null,
+  bucket: LastVisitBucket,
+): boolean {
+  const never = daysSince === null;
+  switch (bucket) {
+    case "never": return never;
+    case "le7":   return !never && daysSince <= 7;
+    case "le14":  return !never && daysSince <= 14;
+    case "gt14":  return never || daysSince > 14;
+    case "gt30":  return never || daysSince > 30;
+  }
+}
+
 export interface ReportFilters {
   merchId?: string;
   placeId?: string;
   status?:  string;
+  /** Branch Coverage only — the other reports are not per-branch. */
+  lastVisit?: LastVisitBucket;
 }
 
 /**
@@ -123,6 +153,18 @@ export interface ReportSummary {
   audited_products:        number | null;
   /** null when audited_products is null. Distinct products short on shelf. */
   products_with_shortfall: number | null;
+  /**
+   * Active branches whose last real visit was over 14 days ago, or never.
+   *
+   * Measured across ALL history against the Riyadh business day, so it is
+   * deliberately independent of the selected range — a branch is not "fresh"
+   * just because you narrowed the report to last week. It respects the branch
+   * filter but not the merchandiser filter: "nobody has been there" is the
+   * operational question, not "this one person has not been there".
+   */
+  stale_branches:      number;
+  /** Active branches considered, for the denominator. */
+  total_branches:      number;
 }
 
 interface SummaryVisitRow {
@@ -155,6 +197,13 @@ export async function fetchReportSummary(
 
   // Product shortfall rides the same inner-join filter the product report uses,
   // so it stays consistent with that tab and needs no visit-id round trip.
+  let branchQuery = supabase
+    .from("places")
+    .select("id")
+    .eq("is_active", true);
+
+  if (filters?.placeId) branchQuery = branchQuery.eq("id", filters.placeId);
+
   let productQuery = supabase
     .from("visit_products")
     .select("product_id, qty_missing, visit:visits!inner (scheduled_date, status, merch_id, place_id)")
@@ -165,10 +214,16 @@ export async function fetchReportSummary(
   if (filters?.merchId) productQuery = productQuery.eq("visit.merch_id", filters.merchId);
   if (filters?.placeId) productQuery = productQuery.eq("visit.place_id", filters.placeId);
 
-  const [visitsRes, productsRes] = await Promise.all([visitQuery, productQuery]);
+  const [visitsRes, productsRes, branchesRes, lastVisits] = await Promise.all([
+    visitQuery,
+    productQuery,
+    branchQuery,
+    fetchBranchLastVisits(),
+  ]);
 
   if (visitsRes.error)   throw visitsRes.error;
   if (productsRes.error) throw productsRes.error;
+  if (branchesRes.error) throw branchesRes.error;
 
   const visits = (visitsRes.data ?? []) as unknown as SummaryVisitRow[];
 
@@ -195,6 +250,17 @@ export async function fetchReportSummary(
   }
 
   const finished = completed + missed;
+
+  // Staleness uses the same rule and the same threshold as the "gt14" bucket
+  // in the Branch Coverage filter, so the card and the filter agree.
+  const today = riyadhToday();
+  const activeBranches = (branchesRes.data ?? []) as unknown as { id: string }[];
+  let staleBranches = 0;
+  for (const b of activeBranches) {
+    const since = daysSinceIso(lastVisits[b.id]?.last_visit_date ?? null, today);
+    if (matchesLastVisitBucket(since, "gt14")) staleBranches++;
+  }
+
   const products = (productsRes.data ?? []) as unknown as SummaryProductRow[];
 
   const shortfall = new Set<string>();
@@ -220,6 +286,8 @@ export async function fetchReportSummary(
     // "nothing was missing" — surface it as unknown, not as zero.
     audited_products:        products.length > 0 ? auditedProducts.size : null,
     products_with_shortfall: products.length > 0 ? shortfall.size       : null,
+    stale_branches:          staleBranches,
+    total_branches:          activeBranches.length,
   };
 }
 
@@ -390,8 +458,21 @@ export interface BranchReportRow {
   missed:          number;
   completion_rate: number;
   avg_duration:    number;
+  /** Last real visit across all history — NOT limited to the report range. */
+  last_visit_date: string | null;
+  /** Whole days from that visit to the Riyadh business day; null = never. */
+  days_since:      number | null;
 }
 
+/**
+ * Branch coverage, including branches that were NOT covered.
+ *
+ * The report used to be built purely from visits in the range, so a branch
+ * nobody went to simply had no row — a coverage report that silently omitted
+ * the uncovered branches, which are the ones a manager is looking for. It now
+ * starts from the active branch list and fills in whatever visits exist, so a
+ * zero row is a real answer rather than an absence.
+ */
 export async function fetchBranchReport(
   range: DateRange,
   filters?: ReportFilters,
@@ -410,30 +491,69 @@ export async function fetchBranchReport(
   if (filters?.merchId) query = query.eq("merch_id", filters.merchId);
   if (filters?.placeId) query = query.eq("place_id", filters.placeId);
 
-  const { data, error } = await query;
+  let placeQuery = supabase
+    .from("places")
+    .select("id, branch_ar, branch_en, code, is_active, chain:chains (name_ar, name_en)")
+    .eq("is_active", true);
 
-  if (error) throw error;
+  if (filters?.placeId) placeQuery = placeQuery.eq("id", filters.placeId);
 
-  const rows = (data ?? []) as unknown as BranchReportQueryRow[];
+  const [visitsRes, placesRes, lastVisits] = await Promise.all([
+    query,
+    placeQuery,
+    fetchBranchLastVisits(),
+  ]);
+
+  if (visitsRes.error) throw visitsRes.error;
+  if (placesRes.error) throw placesRes.error;
+
+  const rows = (visitsRes.data ?? []) as unknown as BranchReportQueryRow[];
+  const today = riyadhToday();
 
   const map = new Map<string, BranchReportRow>();
+
+  const blankRow = (
+    id: string,
+    branch_ar: string, branch_en: string, code: string,
+    chain_ar: string, chain_en: string,
+  ): BranchReportRow => ({
+    place_id:        id,
+    branch_ar, branch_en,
+    branch_code:     code,
+    chain_ar, chain_en,
+    total_visits:    0,
+    completed:       0,
+    missed:          0,
+    completion_rate: 0,
+    avg_duration:    0,
+    last_visit_date: lastVisits[id]?.last_visit_date ?? null,
+    days_since:      daysSinceIso(lastVisits[id]?.last_visit_date ?? null, today),
+  });
+
+  // Seed every active branch so uncovered ones still appear.
+  const places = (placesRes.data ?? []) as unknown as {
+    id: string; branch_ar: string; branch_en: string; code: string;
+    chain: { name_ar: string; name_en: string } | null;
+  }[];
+
+  for (const p of places) {
+    map.set(p.id, blankRow(
+      p.id, p.branch_ar, p.branch_en, p.code,
+      p.chain?.name_ar ?? "—", p.chain?.name_en ?? "—",
+    ));
+  }
 
   for (const row of rows) {
     const id = row.place_id;
     if (!map.has(id)) {
-      map.set(id, {
-        place_id:        id,
-        branch_ar:       row.place?.branch_ar      ?? "—",
-        branch_en:       row.place?.branch_en      ?? "—",
-        branch_code:     row.place?.code           ?? "—",
-        chain_ar:        row.place?.chain?.name_ar ?? "—",
-        chain_en:        row.place?.chain?.name_en ?? "—",
-        total_visits:    0,
-        completed:       0,
-        missed:          0,
-        completion_rate: 0,
-        avg_duration:    0,
-      });
+      // A visit against a branch that is inactive or otherwise not in the list
+      // above — keep it rather than dropping real history on the floor.
+      map.set(id, blankRow(
+        id,
+        row.place?.branch_ar ?? "—", row.place?.branch_en ?? "—",
+        row.place?.code      ?? "—",
+        row.place?.chain?.name_ar ?? "—", row.place?.chain?.name_en ?? "—",
+      ));
     }
     const b = map.get(id)!;
     b.total_visits++;
@@ -452,7 +572,7 @@ export async function fetchBranchReport(
     }
   }
 
-  const result = Array.from(map.values()).map((b) => {
+  let result = Array.from(map.values()).map((b) => {
     const finished  = b.completed + b.missed;
     const durations = durMap.get(b.place_id) ?? [];
     return {
@@ -463,6 +583,11 @@ export async function fetchBranchReport(
         : 0,
     };
   });
+
+  if (filters?.lastVisit) {
+    const bucket = filters.lastVisit;
+    result = result.filter((b) => matchesLastVisitBucket(b.days_since, bucket));
+  }
 
   return result.sort((a, b) => b.total_visits - a.total_visits);
 }

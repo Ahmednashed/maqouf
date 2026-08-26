@@ -16,6 +16,7 @@ import {
   type DateRange,
   type ReportFilters,
   type ReportSummary,
+  type LastVisitBucket,
 } from "@/hooks/use-reports";
 import { useCompanyUsers } from "@/hooks/use-company-users";
 import { usePlaces } from "@/hooks/use-places";
@@ -172,7 +173,7 @@ function SummaryCards({
   return (
     <div>
       <p className="text-[12px] font-semibold text-ink-500 mb-2">{t("reports.summaryTitle")}</p>
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 gap-2.5">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5">
         <SummaryCard
           loading={isLoading}
           label={t("reports.sum.totalVisits")}
@@ -216,6 +217,15 @@ function SummaryCards({
           loading={isLoading}
           label={t("reports.sum.avgDuration")}
           value={s ? durationLabel(s.avg_duration, t) : "—"}
+        />
+        {/* Branches nobody has been to in over a fortnight. All-history, so it
+            does not soften when the reporting window is narrowed. */}
+        <SummaryCard
+          loading={isLoading}
+          label={t("reports.sum.staleBranches")}
+          value={s ? String(s.stale_branches) : "—"}
+          tone={s && s.stale_branches > 0 ? "bad" : "good"}
+          hint={s ? t("reports.sum.ofBranches").replace("{count}", String(s.total_branches)) : undefined}
         />
         {/* Products short on shelf. When no audit happened the figure is
             unknown, not zero — a confident 0 would read as "all good". */}
@@ -516,6 +526,8 @@ function BranchTab({ range, locale, filters, meta }: { range: DateRange; locale:
       [t("reports.col.missed")]:      r.missed,
       [t("reports.col.rate")]:        `${r.completion_rate}%`,
       [t("reports.col.avgDuration")]: r.avg_duration || "",
+      [t("reports.col.lastVisit")]:   r.last_visit_date ?? t("reports.neverVisited"),
+      [t("reports.col.daysSince")]:   r.days_since ?? "",
     }));
     await exportXlsx(rows, `branches-${range.from}-${range.to}`, meta);
   }
@@ -543,11 +555,12 @@ function BranchTab({ range, locale, filters, meta }: { range: DateRange; locale:
               <SortTh<Row> col="missed"          label={t("reports.col.missed")}      sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} align="center" />
               <SortTh<Row> col="completion_rate" label={t("reports.col.rate")}        sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} align="center" />
               <SortTh<Row> col="avg_duration"    label={t("reports.col.avgDuration")} sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} align="end" />
+              <SortTh<Row> col="days_since"      label={t("reports.col.lastVisit")}   sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} align="end" />
             </tr>
           </thead>
           <tbody>
-            {isLoading && <LoadingRow cols={7} />}
-            {!isLoading && sorted.length === 0 && <EmptyRow cols={7} message={t("reports.noData")} />}
+            {isLoading && <LoadingRow cols={8} />}
+            {!isLoading && sorted.length === 0 && <EmptyRow cols={8} message={t("reports.noData")} />}
             {!isLoading && slice.map((r, i) => (
               <tr key={r.place_id} className={cn(i > 0 && "border-t border-ink-50")}>
                 <td className="ps-4 py-2.5">
@@ -559,8 +572,31 @@ function BranchTab({ range, locale, filters, meta }: { range: DateRange; locale:
                 <td className="text-center px-3 py-2.5 text-emerald-600 font-semibold">{r.completed}</td>
                 <td className="text-center px-3 py-2.5 text-rose-500 font-semibold">{r.missed}</td>
                 <td className="text-center px-3 py-2.5"><RateBadge rate={r.completion_rate} /></td>
-                <td className="text-end pe-4 py-2.5 text-ink-600">
+                <td className="text-end px-3 py-2.5 text-ink-600">
                   {durationLabel(r.avg_duration, t)}
+                </td>
+                <td className="text-end pe-4 py-2.5">
+                  {r.days_since == null ? (
+                    <span className="inline-flex px-2 py-0.5 rounded-full bg-rose-50 text-rose-600 text-[11px] font-semibold">
+                      {t("reports.neverVisited")}
+                    </span>
+                  ) : (
+                    <>
+                      <span
+                        className={cn(
+                          "inline-flex px-2 py-0.5 rounded-full text-[11px] font-semibold",
+                          r.days_since > 14 ? "bg-amber-50 text-amber-700" : "bg-ink-100 text-ink-600"
+                        )}
+                      >
+                        {r.days_since === 0
+                          ? t("places.visitToday")
+                          : r.days_since === 1
+                            ? t("places.visitYesterday")
+                            : t("places.visitDaysAgo").replace("{count}", String(r.days_since))}
+                      </span>
+                      <p className="mt-0.5 text-[10.5px] text-ink-400 font-mono">{r.last_visit_date}</p>
+                    </>
+                  )}
                 </td>
               </tr>
             ))}
@@ -740,6 +776,7 @@ export default function ReportsPage() {
   const [merchId, setMerchId] = useState("");
   const [placeId, setPlaceId] = useState("");
   const [status,  setStatus]  = useState("");
+  const [lastVisit, setLastVisit] = useState<"" | LastVisitBucket>("");
 
   const { data: members = [] } = useCompanyUsers();
   const { data: places  = [] } = usePlaces();
@@ -757,17 +794,36 @@ export default function ReportsPage() {
       merchId: merchId || undefined,
       placeId: placeId || undefined,
       status:  tab === "visits" ? (status || undefined) : undefined,
+      // Branch Coverage is the only per-branch report, so recency only narrows
+      // there — same rule as status narrowing the Visits tab only.
+      lastVisit: tab === "branch" ? (lastVisit || undefined) : undefined,
     }),
-    [merchId, placeId, status, tab],
+    [merchId, placeId, status, lastVisit, tab],
   );
 
-  const filtersApplied = Boolean(merchId || placeId || status);
+  const filtersApplied = Boolean(merchId || placeId || status || lastVisit);
 
   function clearFilters() {
     setMerchId("");
     setPlaceId("");
     setStatus("");
+    setLastVisit("");
+    // The date range is deliberately left alone: it is a separate control with
+    // its own Apply, and silently moving someone's reporting window while they
+    // think they are clearing a merchandiser is worse than leaving it set.
   }
+
+  const LAST_VISIT_OPTIONS: { value: LastVisitBucket; key: TranslationKey }[] = [
+    { value: "never", key: "reports.filter.lvNever" },
+    { value: "le7",   key: "reports.filter.lvLe7"   },
+    { value: "le14",  key: "reports.filter.lvLe14"  },
+    { value: "gt14",  key: "reports.filter.lvGt14"  },
+    { value: "gt30",  key: "reports.filter.lvGt30"  },
+  ];
+
+  const lastVisitLabel = lastVisit
+    ? t(LAST_VISIT_OPTIONS.find((o) => o.value === lastVisit)!.key)
+    : t("reports.exp.none");
 
   const summary = useReportSummary(range, filters);
 
@@ -797,6 +853,7 @@ export default function ReportsPage() {
           { [t("reports.exp.metric")]: t("reports.exp.filterMerch"),  [t("reports.exp.value")]: merchLabel },
           { [t("reports.exp.metric")]: t("reports.exp.filterBranch"), [t("reports.exp.value")]: placeLabel },
           { [t("reports.exp.metric")]: t("reports.exp.filterStatus"), [t("reports.exp.value")]: status ? statusLabel(status, t) : t("reports.exp.none") },
+          { [t("reports.exp.metric")]: t("reports.exp.filterLastVisit"), [t("reports.exp.value")]: lastVisitLabel },
           { [t("reports.exp.metric")]: t("reports.sum.totalVisits"),     [t("reports.exp.value")]: summary.data.total_visits },
           { [t("reports.exp.metric")]: t("reports.sum.completed"),       [t("reports.exp.value")]: summary.data.completed },
           { [t("reports.exp.metric")]: t("reports.sum.missed"),          [t("reports.exp.value")]: summary.data.missed },
@@ -805,6 +862,7 @@ export default function ReportsPage() {
           { [t("reports.exp.metric")]: t("reports.sum.activeMerch"),     [t("reports.exp.value")]: summary.data.active_merchandisers },
           { [t("reports.exp.metric")]: t("reports.sum.coveredBranches"), [t("reports.exp.value")]: `${summary.data.covered_branches} / ${summary.data.scheduled_branches}` },
           { [t("reports.exp.metric")]: t("reports.sum.avgDuration"),     [t("reports.exp.value")]: durationLabel(summary.data.avg_duration, t) },
+          { [t("reports.exp.metric")]: t("reports.sum.staleBranches"), [t("reports.exp.value")]: `${summary.data.stale_branches} / ${summary.data.total_branches}` },
           {
             [t("reports.exp.metric")]: t("reports.sum.productIssues"),
             [t("reports.exp.value")]: summary.data.products_with_shortfall == null
@@ -915,6 +973,25 @@ export default function ReportsPage() {
             </select>
           </div>
 
+          <div className="flex flex-col gap-1 min-w-[190px]">
+            <label className="text-[11.5px] font-semibold text-ink-500">{t("reports.filter.lastVisit")}</label>
+            <select
+              value={lastVisit}
+              onChange={(e) => setLastVisit(e.target.value as "" | LastVisitBucket)}
+              disabled={tab !== "branch"}
+              className={cn(
+                "h-9 px-3 rounded-xl border border-ink-200 bg-white text-[13px] text-ink-800 outline-none transition-all cursor-pointer",
+                "focus:border-brand-500 focus:ring-2 focus:ring-brand-50",
+                "disabled:opacity-50 disabled:cursor-not-allowed"
+              )}
+            >
+              <option value="">{t("reports.filter.lvAll")}</option>
+              {LAST_VISIT_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>{t(o.key)}</option>
+              ))}
+            </select>
+          </div>
+
           {filtersApplied && (
             <button
               onClick={clearFilters}
@@ -927,6 +1004,12 @@ export default function ReportsPage() {
 
         {tab !== "visits" && status && (
           <p className="mt-2 text-[11px] text-amber-600">{t("reports.filter.statusNote")}</p>
+        )}
+        {tab !== "branch" && lastVisit && (
+          <p className="mt-1 text-[11px] text-amber-600">{t("reports.filter.lvNote")}</p>
+        )}
+        {tab === "branch" && (
+          <p className="mt-2 text-[11px] text-ink-400">{t("reports.filter.lvHint")}</p>
         )}
       </div>
 

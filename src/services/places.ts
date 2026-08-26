@@ -67,6 +67,65 @@ export interface PlaceOps {
   required_count:    number;
 }
 
+/** When a branch was last actually visited. Shared by the branch register and
+ *  the Branch Coverage report so both mean the same thing by "last visit". */
+export interface BranchLastVisit {
+  last_visit_date:   string | null;
+  last_visit_status: string | null;
+  last_visit_merch:  string | null;
+}
+
+/**
+ * Most recent real visit per branch, across ALL history.
+ *
+ * Deliberately not scoped to any reporting window: "last visited 40 days ago"
+ * is a fact about the branch, and measuring it inside a 30-day range would
+ * make every stale branch look either fine or unvisited depending on where the
+ * window happened to fall.
+ *
+ * "Real" excludes pending — a visit that has not happened yet is not a last
+ * visit. Rows arrive newest-first, so the first non-pending row seen for a
+ * branch is its answer and the rest can be skipped.
+ */
+export async function fetchBranchLastVisits(): Promise<Record<string, BranchLastVisit>> {
+  const supabase = createClient();
+
+  const { data, error } = await supabase
+    .from("visits")
+    .select("place_id, scheduled_date, status, merch_id")
+    .order("scheduled_date", { ascending: false });
+
+  if (error) throw error;
+
+  const out: Record<string, BranchLastVisit> = {};
+
+  for (const v of data ?? []) {
+    const row = (out[v.place_id] ??= {
+      last_visit_date:   null,
+      last_visit_status: null,
+      last_visit_merch:  null,
+    });
+    if (row.last_visit_date !== null) continue;
+    if (v.status === "pending") continue;
+    row.last_visit_date   = v.scheduled_date;
+    row.last_visit_status = v.status;
+    row.last_visit_merch  = v.merch_id;
+  }
+
+  return out;
+}
+
+/**
+ * Whole days from a "YYYY-MM-DD" date to the Riyadh business day, or null when
+ * the branch has never been visited. UTC-anchored so it cannot drift.
+ */
+export function daysSinceIso(iso: string | null, todayIso: string): number | null {
+  if (!iso) return null;
+  const a = Date.parse(iso      + "T00:00:00Z");
+  const b = Date.parse(todayIso + "T00:00:00Z");
+  return Math.round((b - a) / 86_400_000);
+}
+
 /**
  * Roll up per-branch operational stats in two queries rather than N+1.
  *
@@ -81,17 +140,13 @@ export interface PlaceOps {
 export async function fetchPlaceOperations(): Promise<Record<string, PlaceOps>> {
   const supabase = createClient();
 
-  const [visitsRes, productsRes] = await Promise.all([
-    supabase
-      .from("visits")
-      .select("place_id, scheduled_date, status, merch_id")
-      .order("scheduled_date", { ascending: false }),
+  const [lastVisits, productsRes] = await Promise.all([
+    fetchBranchLastVisits(),
     supabase
       .from("place_products")
       .select("place_id, is_mandatory"),
   ]);
 
-  if (visitsRes.error)   throw visitsRes.error;
   if (productsRes.error) throw productsRes.error;
 
   const ops: Record<string, PlaceOps> = {};
@@ -104,15 +159,11 @@ export async function fetchPlaceOperations(): Promise<Record<string, PlaceOps>> 
     required_count:    0,
   });
 
-  for (const v of visitsRes.data ?? []) {
-    const row = (ops[v.place_id] ??= blank());
-    // Newest-first ordering means the first row wins; skip the rest. A visit
-    // that is still "pending" has not happened yet, so it is not a last visit.
-    if (row.last_visit_date !== null) continue;
-    if (v.status === "pending") continue;
-    row.last_visit_date   = v.scheduled_date;
-    row.last_visit_status = v.status;
-    row.last_visit_merch  = v.merch_id;
+  for (const [placeId, lv] of Object.entries(lastVisits)) {
+    const row = (ops[placeId] ??= blank());
+    row.last_visit_date   = lv.last_visit_date;
+    row.last_visit_status = lv.last_visit_status;
+    row.last_visit_merch  = lv.last_visit_merch;
   }
 
   for (const p of productsRes.data ?? []) {

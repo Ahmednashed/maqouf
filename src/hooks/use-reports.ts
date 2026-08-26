@@ -11,6 +11,7 @@ import {
   type DateRange,
   type ReportFilters,
   type ReportSummary,
+  type LastVisitBucket,
   type VisitReportRow,
   type MerchReportRow,
   type BranchReportRow,
@@ -20,7 +21,7 @@ import {
 
 // Re-export so consumers can import from one place
 export type {
-  DateRange, ReportFilters, ReportSummary,
+  DateRange, ReportFilters, ReportSummary, LastVisitBucket,
   VisitReportRow, MerchReportRow, BranchReportRow, ProductReportRow, GpsReportRow,
 };
 
@@ -41,6 +42,7 @@ const key = (type: string, range: DateRange, filters?: ReportFilters) =>
     filters?.merchId ?? "",
     filters?.placeId ?? "",
     filters?.status  ?? "",
+    filters?.lastVisit ?? "",
   ] as const;
 
 const ready = (range: DateRange) => Boolean(range.from) && Boolean(range.to);
