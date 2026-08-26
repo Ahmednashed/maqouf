@@ -4,18 +4,21 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
   fetchPlaces,
+  fetchPlaceOperations,
   createPlace,
   updatePlace,
   deletePlace,
   type PlaceInsert,
   type PlaceUpdate,
   type PlaceWithChain,
+  type PlaceOps,
 } from "@/services/places";
 import { useTranslation } from "@/hooks/use-translation";
 import { CHAINS_QUERY_KEY } from "@/hooks/use-chains";
 
 // ─── Query key ────────────────────────────────────────────────────────────────
 export const PLACES_QUERY_KEY = ["places"] as const;
+export const PLACE_OPS_QUERY_KEY = ["places", "operations"] as const;
 
 // ─── Read ─────────────────────────────────────────────────────────────────────
 
@@ -23,6 +26,20 @@ export function usePlaces() {
   return useQuery<PlaceWithChain[]>({
     queryKey: PLACES_QUERY_KEY,
     queryFn:  fetchPlaces,
+  });
+}
+
+/**
+ * Per-branch operational roll-up (last visit, assortment size).
+ *
+ * Kept as its own query so the branch table paints immediately from the much
+ * cheaper places list and fills the operational columns in when they arrive —
+ * a slow roll-up must never hold up the register itself.
+ */
+export function usePlaceOperations() {
+  return useQuery<Record<string, PlaceOps>>({
+    queryKey: PLACE_OPS_QUERY_KEY,
+    queryFn:  fetchPlaceOperations,
   });
 }
 

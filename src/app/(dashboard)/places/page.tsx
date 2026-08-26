@@ -15,9 +15,12 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
 import { useTranslation, type TranslationFn } from "@/hooks/use-translation";
-import { usePlaces } from "@/hooks/use-places";
+import { usePlaces, usePlaceOperations } from "@/hooks/use-places";
 import { useChains } from "@/hooks/use-chains";
-import type { PlaceWithChain } from "@/services/places";
+import { useCompanyUsers } from "@/hooks/use-company-users";
+import { riyadhToday } from "@/lib/utils/date";
+import type { PlaceWithChain, PlaceOps } from "@/services/places";
+import { memberDisplayName } from "@/services/company-users";
 import { PlaceModal } from "./_components/PlaceModal";
 import { DeleteModal } from "./_components/DeleteModal";
 
@@ -25,7 +28,7 @@ import { DeleteModal } from "./_components/DeleteModal";
 function SkeletonRow() {
   return (
     <tr className="border-b border-ink-100">
-      {[...Array(5)].map((_, i) => (
+      {[...Array(8)].map((_, i) => (
         <td key={i} className="px-4 py-3.5">
           <div className="h-4 rounded-md bg-ink-100 animate-pulse w-full max-w-[140px]" />
         </td>
@@ -112,6 +115,19 @@ export default function PlacesPage() {
   const { t, locale } = useTranslation();
   const { data: places = [], isLoading, isError, error } = usePlaces();
   const { data: chains = [] } = useChains();
+  // Operational roll-up and the team roster load alongside the register; the
+  // table paints without them and fills these columns in when they land.
+  const { data: ops = {} }     = usePlaceOperations();
+  const { data: members = [] } = useCompanyUsers();
+
+  // Riyadh business day — the same definition the rest of the app uses, so
+  // "منذ يومين" here agrees with the visit calendar.
+  const today = riyadhToday();
+
+  const memberById = useMemo(
+    () => new Map(members.map((m) => [m.id, m])),
+    [members]
+  );
 
   // ── Modal state ─────────────────────────────────────────────────────────────
   const [showCreate, setShowCreate]     = useState(false);
@@ -121,6 +137,15 @@ export default function PlacesPage() {
   // ── Search & filter ─────────────────────────────────────────────────────────
   const [search,          setSearch]          = useState("");
   const [filterChainId,   setFilterChainId]   = useState<string>("");
+  const [filterStatus,    setFilterStatus]    = useState<"" | "active" | "inactive">("");
+
+  const filtersApplied = Boolean(search.trim() || filterChainId || filterStatus);
+
+  function clearFilters() {
+    setSearch("");
+    setFilterChainId("");
+    setFilterStatus("");
+  }
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -128,6 +153,10 @@ export default function PlacesPage() {
     return places.filter((p) => {
       // Chain filter
       if (filterChainId && p.chain_id !== filterChainId) return false;
+
+      // Status filter
+      if (filterStatus === "active"   && !p.is_active) return false;
+      if (filterStatus === "inactive" &&  p.is_active) return false;
 
       // Text search
       if (!q) return true;
@@ -141,7 +170,7 @@ export default function PlacesPage() {
         (p.address_en ?? "").toLowerCase().includes(q)
       );
     });
-  }, [places, search, filterChainId]);
+  }, [places, search, filterChainId, filterStatus]);
 
   // ── Summary stats ───────────────────────────────────────────────────────────
   const totalCount  = places.length;
@@ -238,6 +267,29 @@ export default function PlacesPage() {
                 <ChevronDown className="absolute end-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-ink-400 pointer-events-none" />
               </div>
             )}
+
+            {/* Status filter */}
+            <div className="relative">
+              <select
+                value={filterStatus}
+                onChange={(e) => setFilterStatus(e.target.value as "" | "active" | "inactive")}
+                className="h-9 ps-3 pe-8 rounded-lg border border-ink-200 bg-ink-50 text-[13px] text-ink-700 outline-none focus:border-brand-400 focus:ring-1 focus:ring-brand-100 transition-all appearance-none cursor-pointer"
+              >
+                <option value="">{t("places.allStatuses")}</option>
+                <option value="active">{t("common.active")}</option>
+                <option value="inactive">{t("common.inactive")}</option>
+              </select>
+              <ChevronDown className="absolute end-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-ink-400 pointer-events-none" />
+            </div>
+
+            {filtersApplied && (
+              <button
+                onClick={clearFilters}
+                className="h-9 px-3 rounded-lg border border-ink-200 text-[12.5px] font-semibold text-ink-600 hover:bg-ink-50 transition-all"
+              >
+                {t("places.clearFilters")}
+              </button>
+            )}
           </div>
         )}
 
@@ -275,8 +327,21 @@ export default function PlacesPage() {
               <tbody>
                 {filtered.length === 0 ? (
                   <tr>
-                    <td colSpan={5} className="py-12 text-center text-ink-400 text-[13px]">
-                      {t("common.noData")}
+                    <td colSpan={8} className="py-12 text-center">
+                      <p className="text-[13.5px] font-semibold text-ink-600">
+                        {t("places.noResults")}
+                      </p>
+                      <p className="mt-1 text-[12px] text-ink-400">
+                        {t("places.noResultsDesc")}
+                      </p>
+                      {filtersApplied && (
+                        <button
+                          onClick={clearFilters}
+                          className="mt-3 h-9 px-4 rounded-lg border border-ink-200 text-[12.5px] font-semibold text-ink-600 hover:bg-ink-50 transition-all"
+                        >
+                          {t("places.clearFilters")}
+                        </button>
+                      )}
                     </td>
                   </tr>
                 ) : (
@@ -284,6 +349,17 @@ export default function PlacesPage() {
                     <PlaceRow
                       key={place.id}
                       place={place}
+                      ops={ops[place.id]}
+                      assignedName={
+                        (() => {
+                          if (!place.assigned_user_id) return null;
+                          const m = memberById.get(place.assigned_user_id);
+                          // Unknown id = the member row is gone or not loaded;
+                          // showing "unassigned" beats printing a raw UUID.
+                          return m ? memberDisplayName(m) : null;
+                        })()
+                      }
+                      today={today}
                       locale={locale}
                       t={t}
                       onEdit={() => openEdit(place)}
@@ -311,6 +387,74 @@ export default function PlacesPage() {
   );
 }
 
+/** Whole days between two "YYYY-MM-DD" strings, UTC-anchored so it cannot drift. */
+function daysBetween(fromIso: string, toIso: string): number {
+  const a = Date.parse(fromIso + "T00:00:00Z");
+  const b = Date.parse(toIso   + "T00:00:00Z");
+  return Math.round((b - a) / 86_400_000);
+}
+
+// ─── Last-visit cell ──────────────────────────────────────────────────────────
+
+/**
+ * How long this branch has gone unvisited, in words.
+ *
+ * Deliberately shows staleness rather than a bare date: "منذ ٢٣ يوم" is the
+ * thing a supervisor reacts to, where "2026-08-04" needs mental arithmetic.
+ * Amber past a fortnight, rose when never visited at all.
+ */
+function LastVisitCell({
+  ops, today, t,
+}: { ops?: PlaceOps; today: string; t: TranslationFn }) {
+  if (!ops || !ops.last_visit_date) {
+    return (
+      <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-rose-50 text-rose-600 text-[11.5px] font-semibold">
+        {t("places.neverVisited")}
+      </span>
+    );
+  }
+
+  const days = daysBetween(ops.last_visit_date, today);
+  const when =
+    days <= 0 ? t("places.visitToday")
+    : days === 1 ? t("places.visitYesterday")
+    : t("places.visitDaysAgo").replace("{count}", String(days));
+
+  return (
+    <div>
+      <span
+        className={cn(
+          "inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11.5px] font-semibold",
+          days > 14 ? "bg-amber-50 text-amber-700" : "bg-ink-100 text-ink-600"
+        )}
+      >
+        {when}
+      </span>
+      <p className="mt-0.5 text-[11px] text-ink-400 font-mono">{ops.last_visit_date}</p>
+    </div>
+  );
+}
+
+// ─── Assortment cell ──────────────────────────────────────────────────────────
+
+function AssortmentCell({ ops, t }: { ops?: PlaceOps; t: TranslationFn }) {
+  if (!ops || ops.product_count === 0) {
+    return <span className="text-[12px] text-ink-300">{t("places.noAssortment")}</span>;
+  }
+  return (
+    <div className="text-ink-700">
+      <span className="font-semibold">
+        {t("places.assortmentCount").replace("{count}", String(ops.product_count))}
+      </span>
+      {ops.required_count > 0 && (
+        <p className="text-[11.5px] text-amber-600">
+          {t("places.requiredCount").replace("{count}", String(ops.required_count))}
+        </p>
+      )}
+    </div>
+  );
+}
+
 // ─── Table head ───────────────────────────────────────────────────────────────
 function TableHead({ t }: { t: TranslationFn }) {
   return (
@@ -325,6 +469,15 @@ function TableHead({ t }: { t: TranslationFn }) {
         {t("places.cityAr")} / {t("places.region")}
       </th>
       <th className="px-4 py-3 text-start text-[11.5px] font-semibold text-ink-400 uppercase tracking-wide">
+        {t("places.colAssigned")}
+      </th>
+      <th className="px-4 py-3 text-start text-[11.5px] font-semibold text-ink-400 uppercase tracking-wide">
+        {t("places.colLastVisit")}
+      </th>
+      <th className="px-4 py-3 text-start text-[11.5px] font-semibold text-ink-400 uppercase tracking-wide">
+        {t("places.colAssortment")}
+      </th>
+      <th className="px-4 py-3 text-start text-[11.5px] font-semibold text-ink-400 uppercase tracking-wide">
         {t("common.status")}
       </th>
       <th className="px-4 py-3 text-end text-[11.5px] font-semibold text-ink-400 uppercase tracking-wide">
@@ -336,14 +489,19 @@ function TableHead({ t }: { t: TranslationFn }) {
 
 // ─── Table row ────────────────────────────────────────────────────────────────
 interface PlaceRowProps {
-  place:    PlaceWithChain;
-  locale:   string;
-  t:        TranslationFn;
-  onEdit:   () => void;
-  onDelete: () => void;
+  place:        PlaceWithChain;
+  /** Undefined while the operational roll-up is still loading. */
+  ops?:         PlaceOps;
+  /** Resolved display name, or null when the branch has no owner. */
+  assignedName: string | null;
+  today:        string;
+  locale:       string;
+  t:            TranslationFn;
+  onEdit:       () => void;
+  onDelete:     () => void;
 }
 
-function PlaceRow({ place, locale, t, onEdit, onDelete }: PlaceRowProps) {
+function PlaceRow({ place, ops, assignedName, today, locale, t, onEdit, onDelete }: PlaceRowProps) {
   const primaryName   = locale === "ar" ? place.branch_ar : place.branch_en;
   const secondaryName = locale === "ar" ? place.branch_en : place.branch_ar;
   const city          = locale === "ar" ? (place.city_ar ?? place.city_en) : (place.city_en ?? place.city_ar);
@@ -401,6 +559,25 @@ function PlaceRow({ place, locale, t, onEdit, onDelete }: PlaceRowProps) {
             <p className="text-[11.5px] text-ink-400">{place.region}</p>
           )}
         </div>
+      </td>
+
+      {/* Assigned merchandiser */}
+      <td className="px-4 py-3.5">
+        {assignedName ? (
+          <span className="font-medium text-ink-700">{assignedName}</span>
+        ) : (
+          <span className="text-[12px] text-ink-300">{t("places.unassigned")}</span>
+        )}
+      </td>
+
+      {/* Last visit */}
+      <td className="px-4 py-3.5">
+        <LastVisitCell ops={ops} today={today} t={t} />
+      </td>
+
+      {/* Assortment */}
+      <td className="px-4 py-3.5">
+        <AssortmentCell ops={ops} t={t} />
       </td>
 
       {/* Status */}

@@ -88,7 +88,12 @@ export interface Place {
   region?:          string;
   lat?:             number;
   lng?:             number;
-  assigned_user_id?: string;
+  /**
+   * Merchandiser who owns this branch. Nullable in the DB (the FK is
+   * ON DELETE SET NULL), so an unassigned branch is a normal state, not an
+   * absent field.
+   */
+  assigned_user_id?: string | null;
   is_active:        boolean;
   created_at:       string;
   updated_at:       string;

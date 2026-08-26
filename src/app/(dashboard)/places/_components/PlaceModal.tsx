@@ -6,13 +6,15 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import {
   MapPin, Hash, Link2, Navigation,
-  Home, Globe, Map, ChevronDown,
+  Home, Globe, Map, ChevronDown, UserRound,
 } from "lucide-react";
 import { Modal } from "@/components/ui/Modal";
 import { cn } from "@/lib/utils/cn";
 import { useTranslation } from "@/hooks/use-translation";
 import { useCreatePlace, useUpdatePlace } from "@/hooks/use-places";
 import { useChains } from "@/hooks/use-chains";
+import { useCompanyUsers } from "@/hooks/use-company-users";
+import { memberDisplayName } from "@/services/company-users";
 import type { PlaceWithChain } from "@/services/places";
 
 // ─── Zod schema ───────────────────────────────────────────────────────────────
@@ -52,6 +54,8 @@ const placeSchema = z.object({
       "بين ‑180 و 180"
     ),
   is_active: z.boolean().default(true),
+  /** Empty string = deliberately unassigned; mapped to NULL on submit. */
+  assigned_user_id: z.string().optional(),
 });
 
 type PlaceFormData = z.infer<typeof placeSchema>;
@@ -86,6 +90,11 @@ export function PlaceModal({ place, onClose }: PlaceModalProps) {
   const { data: chains = [], isLoading: chainsLoading } = useChains();
   const activeChains = chains.filter((c) => c.is_active);
 
+  // Only current team members can own a branch; an inactive member would be a
+  // dead assignment the moment it was saved.
+  const { data: members = [] } = useCompanyUsers();
+  const activeMembers = members.filter((m) => m.status === "active");
+
   const {
     register,
     handleSubmit,
@@ -108,6 +117,7 @@ export function PlaceModal({ place, onClose }: PlaceModalProps) {
       lat:        place?.lat != null ? String(place.lat) : "",
       lng:        place?.lng != null ? String(place.lng) : "",
       is_active:  place?.is_active ?? true,
+      assigned_user_id: place?.assigned_user_id ?? "",
     },
   });
 
@@ -128,6 +138,7 @@ export function PlaceModal({ place, onClose }: PlaceModalProps) {
       lat:        place?.lat != null ? String(place.lat) : "",
       lng:        place?.lng != null ? String(place.lng) : "",
       is_active:  place?.is_active ?? true,
+      assigned_user_id: place?.assigned_user_id ?? "",
     });
   }, [place, reset]);
 
@@ -144,6 +155,9 @@ export function PlaceModal({ place, onClose }: PlaceModalProps) {
       city_ar:    data.city_ar?.trim()    || undefined,
       city_en:    data.city_en?.trim()    || undefined,
       region:     data.region?.trim()     || undefined,
+      // "" is the select's "unassigned" option. The column is a UUID FK, so it
+      // has to go to the DB as NULL, never an empty string.
+      assigned_user_id: data.assigned_user_id ? data.assigned_user_id : null,
     };
 
     try {
@@ -295,6 +309,35 @@ export function PlaceModal({ place, onClose }: PlaceModalProps) {
               {errors.chain_id && (
                 <p className="mt-0.5 text-[11px] text-rose-500">{errors.chain_id.message}</p>
               )}
+            </div>
+
+            {/* Assigned merchandiser — optional branch owner */}
+            <div className="md:col-span-2">
+              <label className="block text-[12px] font-semibold text-ink-700 mb-1">
+                {t("places.assignedLabel")}
+                <span className="ms-1.5 text-[11px] font-normal text-ink-400">
+                  ({t("common.optional")})
+                </span>
+              </label>
+              <div className="relative">
+                <UserRound className="absolute start-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-ink-400 pointer-events-none z-10" />
+                <ChevronDown className="absolute end-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-ink-400 pointer-events-none z-10" />
+                <select
+                  {...register("assigned_user_id")}
+                  className={cn(
+                    "w-full h-10 ps-9 pe-8 rounded-xl border border-ink-200 bg-white text-[13px] outline-none transition-all appearance-none cursor-pointer",
+                    "focus:border-brand-500 focus:ring-2 focus:ring-brand-50"
+                  )}
+                >
+                  <option value="">{t("places.assignedNone")}</option>
+                  {activeMembers.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {memberDisplayName(m)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <p className="mt-0.5 text-[10.5px] text-ink-400">{t("places.assignedHint")}</p>
             </div>
           </div>
 
