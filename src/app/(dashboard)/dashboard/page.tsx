@@ -9,7 +9,7 @@ import {
 } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "@/lib/utils/cn";
-import { riyadhToday } from "@/lib/utils/date";
+import { riyadhToday, riyadhHour } from "@/lib/utils/date";
 import { useTranslation } from "@/hooks/use-translation";
 import { useCurrentMember, currentMemberLabel } from "@/hooks/use-current-member";
 import { presenceOf } from "@/services/dashboard-extras";
@@ -89,7 +89,10 @@ export default function DashboardPage() {
 
   // Hero derivations
   const greetingKey = useMemo(() => {
-    const h = new Date().getHours();
+    // Riyadh hour, never the renderer's own clock: this page is server-rendered
+    // and Vercel runs in UTC, so new Date().getHours() disagreed with the
+    // browser for 9 of every 24 hours and the greeting failed to hydrate.
+    const h = riyadhHour();
     if (h < 12) return "dashboard.hero.morning" as const;
     if (h < 17) return "dashboard.hero.afternoon" as const;
     return "dashboard.hero.evening" as const;

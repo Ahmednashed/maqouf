@@ -1,50 +1,37 @@
-"use client";
+import { DashboardShell } from "./DashboardShell";
 
-import { useEffect } from "react";
-import { useAppStore } from "@/store/app-store";
-import { getDir } from "@/lib/utils/locale";
-import { Sidebar } from "@/components/layout/Sidebar";
-import { Topbar } from "@/components/layout/Topbar";
-import { Providers } from "./providers";
+/**
+ * Render every dashboard route per request instead of prerendering it.
+ *
+ * WHY
+ * ───
+ * These pages decide what to show from the clock: the dashboard greets by hour
+ * and defaults to today, Reports defaults to "this month → today", Visits
+ * anchors on today, the AI page dates its questions. All of it is computed
+ * during render.
+ *
+ * Statically prerendered, that render happens once at BUILD time on Vercel and
+ * the resulting HTML is then served to everyone, for as long as the deployment
+ * lives. The browser re-computes the same expressions at hydration and gets
+ * different answers — a stale date, the wrong greeting — so the markup did not
+ * match and React reported the recoverable hydration error #418 on every load
+ * in production. It was invisible locally only because a build and its test
+ * happen minutes apart, inside the same day and the same greeting bucket.
+ *
+ * Rendering per request makes the server's "now" the visitor's "now", so both
+ * sides agree. Combined with riyadhHour()/riyadhToday(), which are anchored to
+ * Riyadh rather than to whatever timezone the machine is in, server and client
+ * are now identical by construction rather than by coincidence.
+ *
+ * The cost is nil in practice: every one of these routes is behind auth, hits
+ * middleware and Supabase on each request anyway, and prerendering only ever
+ * produced an empty shell — the real content is client-fetched.
+ *
+ * This file must stay a Server Component for the export below to take effect;
+ * the shell itself is the client component it wraps.
+ */
+export const dynamic = "force-dynamic";
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
-  const { locale } = useAppStore();
-
-  // Keep <html> lang + dir in sync with the Zustand locale.
-  useEffect(() => {
-    document.documentElement.lang = locale;
-    document.documentElement.dir  = getDir(locale);
-  }, [locale]);
-
-  return (
-    <Providers>
-      {/*
-        App shell: horizontal flex row pinned to the viewport.
-        – `h-dvh` (a DEFINITE height, not min-height) is what lets the flex
-          chain below resolve: without it `<main className="flex-1
-          overflow-y-auto">` has no height to scroll within, so it grows and
-          the document body ends up owning the scroll — taking the sidebar
-          with it.
-        – Sidebar occupies its own column via `hidden lg:flex` on the <aside>
-          inside Sidebar.tsx.  On mobile the sidebar is a fixed overlay and
-          takes NO space in this row.
-        – The content column (`flex-1`) always fills the remaining width.
-        – `overflow-hidden` on the shell prevents a stray horizontal scrollbar
-          from appearing when the mobile drawer is animating.
-      */}
-      <div className="flex flex-row h-dvh bg-ink-50 overflow-hidden">
-        <Sidebar />
-
-        {/* Content column: topbar + page body */}
-        <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
-          <Topbar />
-          <main className="flex-1 overflow-y-auto overflow-x-hidden">
-            <div className="px-4 md:px-8 py-6 md:py-8 max-w-[1400px] mx-auto page-enter">
-              {children}
-            </div>
-          </main>
-        </div>
-      </div>
-    </Providers>
-  );
+  return <DashboardShell>{children}</DashboardShell>;
 }

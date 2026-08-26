@@ -36,6 +36,13 @@
 export { riyadhToday } from "@/lib/recurrence";
 
 /**
+ * Current hour (0–23) of the Riyadh business day. Use this instead of
+ * `new Date().getHours()` for anything that renders, so a UTC server and an
+ * AST browser cannot disagree. Same single-implementation rule as riyadhToday.
+ */
+export { riyadhHour } from "@/lib/recurrence";
+
+/**
  * Shift a "YYYY-MM-DD" string by whole days and return "YYYY-MM-DD".
  * UTC-anchored internally so it can never drift across an offset boundary.
  */

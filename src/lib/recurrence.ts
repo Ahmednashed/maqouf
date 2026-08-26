@@ -77,6 +77,22 @@ export function riyadhToday(now: Date = new Date()): string {
     .slice(0, 10);
 }
 
+/**
+ * Hour of the Riyadh business day, 0–23.
+ *
+ * Deliberately NOT `new Date().getHours()`, which reads whatever timezone the
+ * *machine* happens to be in. Vercel renders in UTC and the users are in AST,
+ * so for 9 of every 24 hours those two land in different greeting buckets: the
+ * HTML said "مساء الخير" and the browser rendered "صباح الخير", which is a
+ * hydration text mismatch — React #418 on every dashboard load in production.
+ *
+ * Anchoring to Riyadh makes server and client agree by construction, and keeps
+ * the greeting consistent with how the rest of the app defines a day.
+ */
+export function riyadhHour(now: Date = new Date()): number {
+  return new Date(now.getTime() + RIYADH_OFFSET_MINUTES * 60_000).getUTCHours();
+}
+
 /** First date on/after `iso` whose weekday is `dow`. Returns `iso` if it matches. */
 export function alignForward(iso: string, dow: DayOfWeek): string {
   const diff = (dow - dayOfWeek(iso) + 7) % 7;
