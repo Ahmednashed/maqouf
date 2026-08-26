@@ -18,6 +18,7 @@ import {
 import { uploadUserAvatar } from "@/services/storage";
 import { logActivity } from "@/services/activity-logs";
 import { useTranslation } from "@/hooks/use-translation";
+import { inviteErrorKey } from "@/lib/i18n/invite-errors";
 import { COMPANY_USERS_QUERY_KEY } from "@/hooks/use-company-users";
 import { CURRENT_MEMBER_KEY } from "@/hooks/use-current-member";
 
@@ -85,7 +86,8 @@ export function useInviteUser() {
     },
 
     onError: (err: Error) => {
-      toast.error(err.message || t("users.errorInvite"));
+      const key = inviteErrorKey(err.message);
+      toast.error(key ? t(key) : err.message || t("users.errorInvite"));
     },
 
     onSettled: () => {

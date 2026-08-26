@@ -328,6 +328,9 @@ export const translations = {
     "users.inviteAdded":          "تمت إضافة العضو مباشرةً إلى الفريق",
     "users.alreadyMember":        "هذا الشخص موجود بالفعل في الفريق",
     "users.errorInvite":          "فشل في إرسال الدعوة",
+    "users.errorInviteRateLimit":  "تم إرسال عدد كبير من الدعوات. انتظر قليلاً ثم حاول مرة أخرى",
+    "users.errorInviteInvalidEmail": "البريد الإلكتروني غير صالح",
+    "users.errorInvitePermission":  "لا تملك صلاحية دعوة أعضاء",
     // Soft-delete / inactive users
     "users.inactive":             "مستخدم غير نشط",
     "users.unknown":              "مستخدم غير معروف",
@@ -1295,6 +1298,9 @@ export const translations = {
     "users.inviteAdded":          "Member added directly to your team",
     "users.alreadyMember":        "This person is already a member of your company",
     "users.errorInvite":          "Failed to send invitation",
+    "users.errorInviteRateLimit":  "Too many invitations sent. Wait a moment and try again",
+    "users.errorInviteInvalidEmail": "That email address is not valid",
+    "users.errorInvitePermission":  "You don't have permission to invite members",
     // Soft-delete / inactive users
     "users.inactive":             "Inactive User",
     "users.unknown":              "Unknown User",

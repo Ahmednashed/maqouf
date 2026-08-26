@@ -122,30 +122,41 @@ export function UserModal({ user, onClose }: UserModalProps) {
 
   // ── Submit ──────────────────────────────────────────────────────────────────
   async function onSubmitCreate(data: CreateFormData) {
-    await create.mutateAsync({
-      email:  data.email,
-      role:   data.role,
-      color:  data.color,
-      emp_id: data.emp_id || undefined,
-      region: data.region || undefined,
-    });
-    onClose();
+    try {
+      await create.mutateAsync({
+        email:  data.email,
+        role:   data.role,
+        color:  data.color,
+        emp_id: data.emp_id || undefined,
+        region: data.region || undefined,
+      });
+      onClose();
+    } catch {
+      // Already reported by the mutation's onError toast. Swallowing it here
+      // keeps react-hook-form from re-throwing into an unhandled rejection,
+      // and leaves the dialog open with the user's input intact so they can
+      // correct the address and retry.
+    }
   }
 
   async function onSubmitEdit(data: EditFormData) {
     if (!user) return;
-    await update.mutateAsync({
-      id: user.id,
-      payload: {
-        display_name: data.display_name || null,
-        role:         data.role,
-        color:        data.color,
-        emp_id:       data.emp_id || undefined,
-        region:       data.region || undefined,
-        status:       data.status,
-      },
-    });
-    onClose();
+    try {
+      await update.mutateAsync({
+        id: user.id,
+        payload: {
+          display_name: data.display_name || null,
+          role:         data.role,
+          color:        data.color,
+          emp_id:       data.emp_id || undefined,
+          region:       data.region || undefined,
+          status:       data.status,
+        },
+      });
+      onClose();
+    } catch {
+      // See onSubmitCreate.
+    }
   }
 
   function handleAvatarChange(e: React.ChangeEvent<HTMLInputElement>) {
