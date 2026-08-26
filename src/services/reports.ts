@@ -7,6 +7,32 @@ export interface DateRange {
   to:   string;
 }
 
+/**
+ * Optional narrowing applied to every report and to the summary, so what a
+ * manager exports is exactly what they were looking at.
+ *
+ * `status` only narrows the Visits report — the other four aggregate *by*
+ * status, so filtering to one value would empty their columns rather than
+ * focus them, and is deliberately not applied there.
+ */
+export interface ReportFilters {
+  merchId?: string;
+  placeId?: string;
+  status?:  string;
+}
+
+/**
+ * Merchandiser display name, matching the precedence the Users screen uses:
+ * the admin-set display_name first, then the auth account's full_name.
+ *
+ * Reports previously read full_name alone, so a member whose auth user had
+ * been removed — or who had an admin display-name override — showed as "—"
+ * in every report while appearing correctly everywhere else in the app.
+ */
+function merchName(m: { display_name?: string | null; user?: { full_name: string } | null } | null): string {
+  return m?.display_name?.trim() || m?.user?.full_name || "—";
+}
+
 // ─── Raw Supabase join row shapes (private to this module) ────────────────────
 // Each interface mirrors exactly what PostgREST returns for the corresponding
 // query's select() columns — the single boundary cast in each fetch function
@@ -23,7 +49,10 @@ interface VisitReportQueryRow {
     code:      string;
     chain: { name_ar: string; name_en: string } | null;
   } | null;
+  merch_id: string;
+  place_id: string;
   merch: {
+    display_name: string | null;
     user: { full_name: string } | null;
   } | null;
 }
@@ -33,7 +62,8 @@ interface MerchReportQueryRow {
   duration_minutes: number | null;
   merch_id:         string;
   merch: {
-    id:   string;
+    id:           string;
+    display_name: string | null;
     user: { full_name: string } | null;
   } | null;
 }
@@ -63,10 +93,143 @@ interface ProductReportQueryRow {
   } | null;
 }
 
+// ─── Range summary ────────────────────────────────────────────────────────────
+
+/**
+ * Headline numbers for the whole window, independent of which tab is open.
+ *
+ * Everything here is counted from real rows. Where the underlying data does not
+ * exist — no product audits recorded in the window — the field is null and the
+ * card says so, rather than showing a confident zero that reads like "nothing
+ * is missing" when it actually means "nobody checked".
+ */
+export interface ReportSummary {
+  total_visits:     number;
+  completed:        number;
+  missed:           number;
+  pending:          number;
+  inprogress:       number;
+  /** completed / (completed + missed) — visits still ahead do not count against it. */
+  completion_rate:  number;
+  /** Distinct merchandisers with at least one visit in the window. */
+  active_merchandisers: number;
+  /** Distinct branches with at least one COMPLETED visit. */
+  covered_branches:     number;
+  /** Distinct branches with at least one visit of any status. */
+  scheduled_branches:   number;
+  /** Mean duration over completed visits that recorded one. */
+  avg_duration:     number;
+  /** null = no product audit rows in this window at all. */
+  audited_products:        number | null;
+  /** null when audited_products is null. Distinct products short on shelf. */
+  products_with_shortfall: number | null;
+}
+
+interface SummaryVisitRow {
+  status:           string;
+  duration_minutes: number | null;
+  merch_id:         string;
+  place_id:         string;
+}
+
+interface SummaryProductRow {
+  product_id:  string;
+  qty_missing: number | null;
+}
+
+export async function fetchReportSummary(
+  range: DateRange,
+  filters?: ReportFilters,
+): Promise<ReportSummary> {
+  const supabase = createClient();
+
+  let visitQuery = supabase
+    .from("visits")
+    .select("status, duration_minutes, merch_id, place_id")
+    .gte("scheduled_date", range.from)
+    .lte("scheduled_date", range.to);
+
+  if (filters?.merchId) visitQuery = visitQuery.eq("merch_id", filters.merchId);
+  if (filters?.placeId) visitQuery = visitQuery.eq("place_id", filters.placeId);
+  if (filters?.status)  visitQuery = visitQuery.eq("status",   filters.status);
+
+  // Product shortfall rides the same inner-join filter the product report uses,
+  // so it stays consistent with that tab and needs no visit-id round trip.
+  let productQuery = supabase
+    .from("visit_products")
+    .select("product_id, qty_missing, visit:visits!inner (scheduled_date, status, merch_id, place_id)")
+    .gte("visit.scheduled_date", range.from)
+    .lte("visit.scheduled_date", range.to)
+    .eq("visit.status", "completed");
+
+  if (filters?.merchId) productQuery = productQuery.eq("visit.merch_id", filters.merchId);
+  if (filters?.placeId) productQuery = productQuery.eq("visit.place_id", filters.placeId);
+
+  const [visitsRes, productsRes] = await Promise.all([visitQuery, productQuery]);
+
+  if (visitsRes.error)   throw visitsRes.error;
+  if (productsRes.error) throw productsRes.error;
+
+  const visits = (visitsRes.data ?? []) as unknown as SummaryVisitRow[];
+
+  const merchants        = new Set<string>();
+  const branchesAny      = new Set<string>();
+  const branchesCompleted = new Set<string>();
+  const durations: number[] = [];
+
+  let completed = 0, missed = 0, pending = 0, inprogress = 0;
+
+  for (const v of visits) {
+    merchants.add(v.merch_id);
+    branchesAny.add(v.place_id);
+
+    if (v.status === "completed") {
+      completed++;
+      branchesCompleted.add(v.place_id);
+      if (v.duration_minutes != null && v.duration_minutes > 0) {
+        durations.push(v.duration_minutes);
+      }
+    } else if (v.status === "missed")     missed++;
+    else if (v.status === "pending")      pending++;
+    else if (v.status === "inprogress")   inprogress++;
+  }
+
+  const finished = completed + missed;
+  const products = (productsRes.data ?? []) as unknown as SummaryProductRow[];
+
+  const shortfall = new Set<string>();
+  for (const p of products) {
+    if ((p.qty_missing ?? 0) > 0) shortfall.add(p.product_id);
+  }
+  const auditedProducts = new Set(products.map((p) => p.product_id));
+
+  return {
+    total_visits:     visits.length,
+    completed,
+    missed,
+    pending,
+    inprogress,
+    completion_rate:  finished > 0 ? Math.round((completed / finished) * 100) : 0,
+    active_merchandisers: merchants.size,
+    covered_branches:     branchesCompleted.size,
+    scheduled_branches:   branchesAny.size,
+    avg_duration: durations.length > 0
+      ? Math.round(durations.reduce((a, b) => a + b, 0) / durations.length)
+      : 0,
+    // No audit rows at all means "nobody checked", which is not the same as
+    // "nothing was missing" — surface it as unknown, not as zero.
+    audited_products:        products.length > 0 ? auditedProducts.size : null,
+    products_with_shortfall: products.length > 0 ? shortfall.size       : null,
+  };
+}
+
 // ─── Visits report ────────────────────────────────────────────────────────────
 
 export interface VisitReportRow {
   id:               string;
+  /** Kept on the row so the page can filter and count distinct without re-querying. */
+  merch_id:         string;
+  place_id:         string;
   scheduled_date:   string;
   status:           string;
   duration_minutes: number;
@@ -78,25 +241,35 @@ export interface VisitReportRow {
   merch_name:       string;
 }
 
-export async function fetchVisitsReport(range: DateRange): Promise<VisitReportRow[]> {
+export async function fetchVisitsReport(
+  range: DateRange,
+  filters?: ReportFilters,
+): Promise<VisitReportRow[]> {
   const supabase = createClient();
 
-  const { data, error } = await supabase
+  let query = supabase
     .from("visits")
     .select(`
-      id, scheduled_date, status, duration_minutes,
+      id, scheduled_date, status, duration_minutes, merch_id, place_id,
       place:places (branch_ar, branch_en, code, chain:chains (name_ar, name_en)),
-      merch:company_users (user:users!company_users_user_id_fkey (full_name))
+      merch:company_users (display_name, user:users!company_users_user_id_fkey (full_name))
     `)
     .gte("scheduled_date", range.from)
-    .lte("scheduled_date", range.to)
-    .order("scheduled_date", { ascending: false });
+    .lte("scheduled_date", range.to);
+
+  if (filters?.merchId) query = query.eq("merch_id", filters.merchId);
+  if (filters?.placeId) query = query.eq("place_id", filters.placeId);
+  if (filters?.status) query = query.eq("status", filters.status);
+
+  const { data, error } = await query.order("scheduled_date", { ascending: false });
 
   if (error) throw error;
 
   const rows = (data ?? []) as unknown as VisitReportQueryRow[];
   return rows.map((row) => ({
     id:               row.id,
+    merch_id:         row.merch_id,
+    place_id:         row.place_id,
     scheduled_date:   row.scheduled_date,
     status:           row.status,
     duration_minutes: row.duration_minutes ?? 0,
@@ -105,7 +278,7 @@ export async function fetchVisitsReport(range: DateRange): Promise<VisitReportRo
     branch_code:      row.place?.code           ?? "—",
     chain_ar:         row.place?.chain?.name_ar ?? "—",
     chain_en:         row.place?.chain?.name_en ?? "—",
-    merch_name:       row.merch?.user?.full_name ?? "—",
+    merch_name:       merchName(row.merch),
   }));
 }
 
@@ -123,20 +296,28 @@ export interface MerchReportRow {
   avg_duration:    number;   // minutes
 }
 
-export async function fetchMerchReport(range: DateRange): Promise<MerchReportRow[]> {
+export async function fetchMerchReport(
+  range: DateRange,
+  filters?: ReportFilters,
+): Promise<MerchReportRow[]> {
   const supabase = createClient();
 
-  const { data, error } = await supabase
+  let query = supabase
     .from("visits")
     .select(`
       status, duration_minutes, merch_id,
       merch:company_users (
-        id,
+        id, display_name,
         user:users!company_users_user_id_fkey (full_name)
       )
     `)
     .gte("scheduled_date", range.from)
     .lte("scheduled_date", range.to);
+
+  if (filters?.merchId) query = query.eq("merch_id", filters.merchId);
+  if (filters?.placeId) query = query.eq("place_id", filters.placeId);
+
+  const { data, error } = await query;
 
   if (error) throw error;
 
@@ -150,7 +331,7 @@ export async function fetchMerchReport(range: DateRange): Promise<MerchReportRow
     if (!map.has(id)) {
       map.set(id, {
         merch_id:        id,
-        full_name:       row.merch?.user?.full_name ?? "—",
+        full_name:       merchName(row.merch),
         total_visits:    0,
         completed:       0,
         missed:          0,
@@ -211,10 +392,13 @@ export interface BranchReportRow {
   avg_duration:    number;
 }
 
-export async function fetchBranchReport(range: DateRange): Promise<BranchReportRow[]> {
+export async function fetchBranchReport(
+  range: DateRange,
+  filters?: ReportFilters,
+): Promise<BranchReportRow[]> {
   const supabase = createClient();
 
-  const { data, error } = await supabase
+  let query = supabase
     .from("visits")
     .select(`
       status, duration_minutes, place_id,
@@ -222,6 +406,11 @@ export async function fetchBranchReport(range: DateRange): Promise<BranchReportR
     `)
     .gte("scheduled_date", range.from)
     .lte("scheduled_date", range.to);
+
+  if (filters?.merchId) query = query.eq("merch_id", filters.merchId);
+  if (filters?.placeId) query = query.eq("place_id", filters.placeId);
+
+  const { data, error } = await query;
 
   if (error) throw error;
 
@@ -293,30 +482,31 @@ export interface ProductReportRow {
   total_missing:    number;   // sum of qty_missing
 }
 
-export async function fetchProductReport(range: DateRange): Promise<ProductReportRow[]> {
+export async function fetchProductReport(
+  range: DateRange,
+  filters?: ReportFilters,
+): Promise<ProductReportRow[]> {
   const supabase = createClient();
 
-  // Step 1: get visit IDs in the date range
-  const { data: visitIds, error: vidErr } = await supabase
-    .from("visits")
-    .select("id")
-    .gte("scheduled_date", range.from)
-    .lte("scheduled_date", range.to)
-    .eq("status", "completed");
-
-  if (vidErr) throw vidErr;
-  if (!visitIds || visitIds.length === 0) return [];
-
-  const ids = visitIds.map((v) => v.id);
-
-  // Step 2: get visit_products for those visits
-  const { data: vpRows, error: vpErr } = await supabase
+  // Filter through an inner join on the parent visit rather than fetching
+  // visit ids first and passing them back as .in(...). That two-step version
+  // put every completed visit id into the request URL, which silently breaks
+  // once a window contains enough visits to exceed the URL length limit.
+  let query = supabase
     .from("visit_products")
     .select(`
       product_id, qty_found, qty_missing,
-      product:products (id, name_ar, name_en, sku, unit)
+      product:products (id, name_ar, name_en, sku, unit),
+      visit:visits!inner (scheduled_date, status, merch_id, place_id)
     `)
-    .in("visit_id", ids);
+    .gte("visit.scheduled_date", range.from)
+    .lte("visit.scheduled_date", range.to)
+    .eq("visit.status", "completed");
+
+  if (filters?.merchId) query = query.eq("visit.merch_id", filters.merchId);
+  if (filters?.placeId) query = query.eq("visit.place_id", filters.placeId);
+
+  const { data: vpRows, error: vpErr } = await query;
 
   if (vpErr) throw vpErr;
 
@@ -374,6 +564,7 @@ interface GpsQueryRow {
   checkin_verified:        boolean | null;
   checkin_distance_meters: number  | null;
   merch: {
+    display_name: string | null;
     user: { full_name: string } | null;
   } | null;
 }
@@ -388,18 +579,26 @@ export interface GpsReportRow {
   avg_distance:      number;   // metres, verified visits only
 }
 
-export async function fetchGpsReport(range: DateRange): Promise<GpsReportRow[]> {
+export async function fetchGpsReport(
+  range: DateRange,
+  filters?: ReportFilters,
+): Promise<GpsReportRow[]> {
   const supabase = createClient();
 
-  const { data, error } = await supabase
+  let query = supabase
     .from("visits")
     .select(`
       merch_id, checkin_verified, checkin_distance_meters,
-      merch:company_users (user:users!company_users_user_id_fkey (full_name))
+      merch:company_users (display_name, user:users!company_users_user_id_fkey (full_name))
     `)
     .gte("scheduled_date", range.from)
     .lte("scheduled_date", range.to)
     .not("started_at", "is", null);   // only started visits
+
+  if (filters?.merchId) query = query.eq("merch_id", filters.merchId);
+  if (filters?.placeId) query = query.eq("place_id", filters.placeId);
+
+  const { data, error } = await query;
 
   if (error) throw error;
 
@@ -413,7 +612,7 @@ export async function fetchGpsReport(range: DateRange): Promise<GpsReportRow[]> 
       map.set(id, {
         row: {
           merch_id:          id,
-          full_name:         r.merch?.user?.full_name ?? "—",
+          full_name:         merchName(r.merch),
           total_started:     0,
           gps_verified:      0,
           gps_unverified:    0,

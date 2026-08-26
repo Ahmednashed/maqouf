@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo } from "react";
 import { Download, ChevronDown, ChevronUp, ShieldCheck, ChevronLeft, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
 import { riyadhToday, startOfMonthIso } from "@/lib/utils/date";
@@ -12,8 +12,14 @@ import {
   useBranchReport,
   useProductReport,
   useGpsReport,
+  useReportSummary,
   type DateRange,
+  type ReportFilters,
+  type ReportSummary,
 } from "@/hooks/use-reports";
+import { useCompanyUsers } from "@/hooks/use-company-users";
+import { usePlaces } from "@/hooks/use-places";
+import { memberDisplayName } from "@/services/company-users";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -78,12 +84,161 @@ function usePagination<T>(data: T[]) {
 
 // ─── Excel export ─────────────────────────────────────────────────────────────
 
-async function exportXlsx(rows: Record<string, unknown>[], filename: string) {
+/**
+ * One sheet of headline numbers and the filters that produced them, written
+ * ahead of the data sheet.
+ *
+ * Without it an exported file is a bare grid: a week later nobody can tell
+ * which window it covered or whether it was filtered to one merchandiser, and
+ * a filtered export is indistinguishable from a complete one.
+ */
+export interface ExportMeta {
+  sheetName: string;
+  rows:      Record<string, unknown>[];
+  dataSheet: string;
+}
+
+async function exportXlsx(
+  rows: Record<string, unknown>[],
+  filename: string,
+  meta?: ExportMeta,
+) {
   const XLSX = await import("xlsx");
-  const ws   = XLSX.utils.json_to_sheet(rows);
   const wb   = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, "Report");
+
+  if (meta) {
+    XLSX.utils.book_append_sheet(
+      wb,
+      XLSX.utils.json_to_sheet(meta.rows),
+      meta.sheetName,
+    );
+  }
+
+  XLSX.utils.book_append_sheet(
+    wb,
+    XLSX.utils.json_to_sheet(rows),
+    meta?.dataSheet ?? "Report",
+  );
+
   XLSX.writeFile(wb, `${filename}.xlsx`);
+}
+
+// ─── Summary cards ────────────────────────────────────────────────────────────
+
+/**
+ * One headline figure. `hint` carries the denominator that makes the number
+ * mean something — "8 branches covered" is noise until you know it is 8 of 40.
+ */
+function SummaryCard({
+  label, value, hint, tone = "plain", loading,
+}: {
+  label:   string;
+  value:   string;
+  hint?:   string;
+  tone?:   "plain" | "good" | "warn" | "bad";
+  loading: boolean;
+}) {
+  const toneCls =
+    tone === "good" ? "text-emerald-600" :
+    tone === "warn" ? "text-amber-600"   :
+    tone === "bad"  ? "text-rose-600"    :
+                      "text-ink-900";
+
+  return (
+    <div className="bg-white rounded-xl border border-ink-100 px-3.5 py-3">
+      <p className="text-[11px] font-semibold text-ink-400 leading-tight">{label}</p>
+      {loading ? (
+        <div className="mt-1.5 h-6 w-14 rounded-md bg-ink-100 animate-pulse" />
+      ) : (
+        <p className={cn("mt-0.5 text-[20px] font-bold leading-tight", toneCls)}>{value}</p>
+      )}
+      {hint && !loading && (
+        <p className="mt-0.5 text-[10.5px] text-ink-400 leading-tight">{hint}</p>
+      )}
+    </div>
+  );
+}
+
+function SummaryCards({
+  summary, isLoading, t,
+}: { summary?: ReportSummary; isLoading: boolean; t: TranslationFn }) {
+  const s = summary;
+  const num = (n: number | undefined) => (n == null ? "—" : String(n));
+
+  // Completion rate is only reassuring above 80; below half it is a problem.
+  const rateTone: "good" | "warn" | "bad" =
+    !s ? "warn" : s.completion_rate >= 80 ? "good" : s.completion_rate >= 50 ? "warn" : "bad";
+
+  return (
+    <div>
+      <p className="text-[12px] font-semibold text-ink-500 mb-2">{t("reports.summaryTitle")}</p>
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 gap-2.5">
+        <SummaryCard
+          loading={isLoading}
+          label={t("reports.sum.totalVisits")}
+          value={num(s?.total_visits)}
+        />
+        <SummaryCard
+          loading={isLoading}
+          label={t("reports.sum.completed")}
+          value={num(s?.completed)}
+          tone="good"
+        />
+        <SummaryCard
+          loading={isLoading}
+          label={t("reports.sum.missed")}
+          value={num(s?.missed)}
+          tone={s && s.missed > 0 ? "bad" : "plain"}
+        />
+        <SummaryCard
+          loading={isLoading}
+          label={t("reports.sum.pending")}
+          value={num(s?.pending)}
+        />
+        <SummaryCard
+          loading={isLoading}
+          label={t("reports.sum.rate")}
+          value={s ? `${s.completion_rate}%` : "—"}
+          tone={rateTone}
+        />
+        <SummaryCard
+          loading={isLoading}
+          label={t("reports.sum.activeMerch")}
+          value={num(s?.active_merchandisers)}
+        />
+        <SummaryCard
+          loading={isLoading}
+          label={t("reports.sum.coveredBranches")}
+          value={num(s?.covered_branches)}
+          hint={s ? t("reports.sum.ofScheduled").replace("{count}", String(s.scheduled_branches)) : undefined}
+        />
+        <SummaryCard
+          loading={isLoading}
+          label={t("reports.sum.avgDuration")}
+          value={s ? durationLabel(s.avg_duration, t) : "—"}
+        />
+        {/* Products short on shelf. When no audit happened the figure is
+            unknown, not zero — a confident 0 would read as "all good". */}
+        <SummaryCard
+          loading={isLoading}
+          label={t("reports.sum.productIssues")}
+          value={
+            !s ? "—"
+            : s.products_with_shortfall == null ? t("reports.sum.noAudits")
+            : String(s.products_with_shortfall)
+          }
+          tone={s && (s.products_with_shortfall ?? 0) > 0 ? "bad" : "plain"}
+          hint={
+            s && s.audited_products != null
+              ? t("reports.sum.ofAudited").replace("{count}", String(s.audited_products))
+              : s && s.products_with_shortfall == null
+                ? t("reports.sum.noAuditsHint")
+                : undefined
+          }
+        />
+      </div>
+    </div>
+  );
 }
 
 // ─── Shared UI atoms ──────────────────────────────────────────────────────────
@@ -209,9 +364,9 @@ function Pagination({
 
 // ─── Tab components ───────────────────────────────────────────────────────────
 
-function VisitsTab({ range, locale }: { range: DateRange; locale: string }) {
+function VisitsTab({ range, locale, filters, meta }: { range: DateRange; locale: string; filters: ReportFilters; meta?: ExportMeta }) {
   const { t }                                     = useTranslation();
-  const { data = [], isLoading }                  = useVisitsReport(range);
+  const { data = [], isLoading }                  = useVisitsReport(range, filters);
   const { sorted, sortKey, sortDir, toggleSort }  = useSortedData(data);
   const { slice, page, setPage, totalPages }      = usePagination(sorted);
   type Row = (typeof data)[number];
@@ -227,7 +382,7 @@ function VisitsTab({ range, locale }: { range: DateRange; locale: string }) {
       [t("reports.col.status")]:   statusLabel(r.status, t),
       [t("reports.col.duration")]: r.duration_minutes || "",
     }));
-    await exportXlsx(rows, `visits-${range.from}-${range.to}`);
+    await exportXlsx(rows, `visits-${range.from}-${range.to}`, meta);
   }
 
   return (
@@ -280,9 +435,9 @@ function VisitsTab({ range, locale }: { range: DateRange; locale: string }) {
   );
 }
 
-function MerchTab({ range, locale }: { range: DateRange; locale: string }) {
+function MerchTab({ range, locale, filters, meta }: { range: DateRange; locale: string; filters: ReportFilters; meta?: ExportMeta }) {
   const { t }                                    = useTranslation();
-  const { data = [], isLoading }                 = useMerchReport(range);
+  const { data = [], isLoading }                 = useMerchReport(range, filters);
   const { sorted, sortKey, sortDir, toggleSort } = useSortedData(data);
   type Row = (typeof data)[number];
 
@@ -295,7 +450,7 @@ function MerchTab({ range, locale }: { range: DateRange; locale: string }) {
       [t("reports.col.rate")]:        `${r.completion_rate}%`,
       [t("reports.col.avgDuration")]: r.avg_duration || "",
     }));
-    await exportXlsx(rows, `merch-${range.from}-${range.to}`);
+    await exportXlsx(rows, `merch-${range.from}-${range.to}`, meta);
   }
 
   return (
@@ -344,9 +499,9 @@ function MerchTab({ range, locale }: { range: DateRange; locale: string }) {
   );
 }
 
-function BranchTab({ range, locale }: { range: DateRange; locale: string }) {
+function BranchTab({ range, locale, filters, meta }: { range: DateRange; locale: string; filters: ReportFilters; meta?: ExportMeta }) {
   const { t }                                    = useTranslation();
-  const { data = [], isLoading }                 = useBranchReport(range);
+  const { data = [], isLoading }                 = useBranchReport(range, filters);
   const { sorted, sortKey, sortDir, toggleSort } = useSortedData(data);
   const { slice, page, setPage, totalPages }     = usePagination(sorted);
   type Row = (typeof data)[number];
@@ -362,7 +517,7 @@ function BranchTab({ range, locale }: { range: DateRange; locale: string }) {
       [t("reports.col.rate")]:        `${r.completion_rate}%`,
       [t("reports.col.avgDuration")]: r.avg_duration || "",
     }));
-    await exportXlsx(rows, `branches-${range.from}-${range.to}`);
+    await exportXlsx(rows, `branches-${range.from}-${range.to}`, meta);
   }
 
   return (
@@ -417,9 +572,9 @@ function BranchTab({ range, locale }: { range: DateRange; locale: string }) {
   );
 }
 
-function ProductTab({ range, locale }: { range: DateRange; locale: string }) {
+function ProductTab({ range, locale, filters, meta }: { range: DateRange; locale: string; filters: ReportFilters; meta?: ExportMeta }) {
   const { t }                                    = useTranslation();
-  const { data = [], isLoading }                 = useProductReport(range);
+  const { data = [], isLoading }                 = useProductReport(range, filters);
   const { sorted, sortKey, sortDir, toggleSort } = useSortedData(data);
   type Row = (typeof data)[number];
   const isAr = locale === "ar";
@@ -434,7 +589,7 @@ function ProductTab({ range, locale }: { range: DateRange; locale: string }) {
       [t("reports.col.availability")]: `${r.availability_pct}%`,
       [t("reports.col.totalMissing")]: r.total_missing,
     }));
-    await exportXlsx(rows, `products-${range.from}-${range.to}`);
+    await exportXlsx(rows, `products-${range.from}-${range.to}`, meta);
   }
 
   return (
@@ -494,9 +649,9 @@ function ProductTab({ range, locale }: { range: DateRange; locale: string }) {
   );
 }
 
-function GpsTab({ range }: { range: DateRange }) {
+function GpsTab({ range, filters, meta }: { range: DateRange; filters: ReportFilters; meta?: ExportMeta }) {
   const { t }                                    = useTranslation();
-  const { data = [], isLoading }                 = useGpsReport(range);
+  const { data = [], isLoading }                 = useGpsReport(range, filters);
   const { sorted, sortKey, sortDir, toggleSort } = useSortedData(data);
   type Row = (typeof data)[number];
 
@@ -509,7 +664,7 @@ function GpsTab({ range }: { range: DateRange }) {
       [t("reports.col.gpsRate")]:     `${r.verification_rate}%`,
       [t("reports.col.avgDistance")]: r.avg_distance || "",
     }));
-    await exportXlsx(rows, `gps-compliance-${range.from}-${range.to}`);
+    await exportXlsx(rows, `gps-compliance-${range.from}-${range.to}`, meta);
   }
 
   return (
@@ -581,7 +736,84 @@ export default function ReportsPage() {
   const [draft, setDraft] = useState<DateRange>(thisMonthRange);
   const [tab,   setTab]   = useState<Tab>("visits");
 
+  // ── Filters ───────────────────────────────────────────────────────────────
+  const [merchId, setMerchId] = useState("");
+  const [placeId, setPlaceId] = useState("");
+  const [status,  setStatus]  = useState("");
+
+  const { data: members = [] } = useCompanyUsers();
+  const { data: places  = [] } = usePlaces();
+
+  const activeMembers = useMemo(
+    () => members.filter((m) => m.status === "active"),
+    [members],
+  );
+
+  // The status filter narrows the Visits tab only — the other four aggregate
+  // by status, so pinning one value would blank their columns. Keeping it out
+  // of the filter object elsewhere means the tabs and their exports agree.
+  const filters: ReportFilters = useMemo(
+    () => ({
+      merchId: merchId || undefined,
+      placeId: placeId || undefined,
+      status:  tab === "visits" ? (status || undefined) : undefined,
+    }),
+    [merchId, placeId, status, tab],
+  );
+
+  const filtersApplied = Boolean(merchId || placeId || status);
+
+  function clearFilters() {
+    setMerchId("");
+    setPlaceId("");
+    setStatus("");
+  }
+
+  const summary = useReportSummary(range, filters);
+
   function applyRange() { setRange({ ...draft }); }
+
+  // ── Export metadata ───────────────────────────────────────────────────────
+  const merchLabel = merchId
+    ? (activeMembers.find((m) => m.id === merchId)
+        ? memberDisplayName(activeMembers.find((m) => m.id === merchId)!)
+        : merchId)
+    : t("reports.exp.none");
+
+  const placeLabel = placeId
+    ? (() => {
+        const p = places.find((x) => x.id === placeId);
+        if (!p) return placeId;
+        return locale === "ar" ? p.branch_ar : p.branch_en;
+      })()
+    : t("reports.exp.none");
+
+  const exportMeta: ExportMeta | undefined = summary.data
+    ? {
+        sheetName: t("reports.exp.sheetSummary"),
+        dataSheet: t("reports.exp.sheetData"),
+        rows: [
+          { [t("reports.exp.metric")]: t("reports.exp.range"),        [t("reports.exp.value")]: `${range.from} → ${range.to}` },
+          { [t("reports.exp.metric")]: t("reports.exp.filterMerch"),  [t("reports.exp.value")]: merchLabel },
+          { [t("reports.exp.metric")]: t("reports.exp.filterBranch"), [t("reports.exp.value")]: placeLabel },
+          { [t("reports.exp.metric")]: t("reports.exp.filterStatus"), [t("reports.exp.value")]: status ? statusLabel(status, t) : t("reports.exp.none") },
+          { [t("reports.exp.metric")]: t("reports.sum.totalVisits"),     [t("reports.exp.value")]: summary.data.total_visits },
+          { [t("reports.exp.metric")]: t("reports.sum.completed"),       [t("reports.exp.value")]: summary.data.completed },
+          { [t("reports.exp.metric")]: t("reports.sum.missed"),          [t("reports.exp.value")]: summary.data.missed },
+          { [t("reports.exp.metric")]: t("reports.sum.pending"),         [t("reports.exp.value")]: summary.data.pending },
+          { [t("reports.exp.metric")]: t("reports.sum.rate"),            [t("reports.exp.value")]: `${summary.data.completion_rate}%` },
+          { [t("reports.exp.metric")]: t("reports.sum.activeMerch"),     [t("reports.exp.value")]: summary.data.active_merchandisers },
+          { [t("reports.exp.metric")]: t("reports.sum.coveredBranches"), [t("reports.exp.value")]: `${summary.data.covered_branches} / ${summary.data.scheduled_branches}` },
+          { [t("reports.exp.metric")]: t("reports.sum.avgDuration"),     [t("reports.exp.value")]: durationLabel(summary.data.avg_duration, t) },
+          {
+            [t("reports.exp.metric")]: t("reports.sum.productIssues"),
+            [t("reports.exp.value")]: summary.data.products_with_shortfall == null
+              ? t("reports.sum.noAudits")
+              : summary.data.products_with_shortfall,
+          },
+        ],
+      }
+    : undefined;
 
   const tabLabel: Record<Tab, string> = {
     visits:  t("reports.tab.visits"),
@@ -631,6 +863,76 @@ export default function ReportsPage() {
         </p>
       </div>
 
+      {/* Filters */}
+      <div className="bg-white rounded-2xl border border-ink-100 shadow-sm px-4 py-3">
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="flex flex-col gap-1 min-w-[160px]">
+            <label className="text-[11.5px] font-semibold text-ink-500">{t("reports.filter.merch")}</label>
+            <select
+              value={merchId}
+              onChange={(e) => setMerchId(e.target.value)}
+              className="h-9 px-3 rounded-xl border border-ink-200 bg-white text-[13px] text-ink-800 outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-50 transition-all cursor-pointer"
+            >
+              <option value="">{t("reports.filter.allMerch")}</option>
+              {activeMembers.map((m) => (
+                <option key={m.id} value={m.id}>{memberDisplayName(m)}</option>
+              ))}
+            </select>
+          </div>
+
+          <div className="flex flex-col gap-1 min-w-[160px]">
+            <label className="text-[11.5px] font-semibold text-ink-500">{t("reports.filter.branch")}</label>
+            <select
+              value={placeId}
+              onChange={(e) => setPlaceId(e.target.value)}
+              className="h-9 px-3 rounded-xl border border-ink-200 bg-white text-[13px] text-ink-800 outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-50 transition-all cursor-pointer"
+            >
+              <option value="">{t("reports.filter.allBranches")}</option>
+              {places.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {locale === "ar" ? p.branch_ar : p.branch_en}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="flex flex-col gap-1 min-w-[150px]">
+            <label className="text-[11.5px] font-semibold text-ink-500">{t("reports.filter.status")}</label>
+            <select
+              value={status}
+              onChange={(e) => setStatus(e.target.value)}
+              disabled={tab !== "visits"}
+              className={cn(
+                "h-9 px-3 rounded-xl border border-ink-200 bg-white text-[13px] text-ink-800 outline-none transition-all cursor-pointer",
+                "focus:border-brand-500 focus:ring-2 focus:ring-brand-50",
+                "disabled:opacity-50 disabled:cursor-not-allowed"
+              )}
+            >
+              <option value="">{t("reports.filter.allStatuses")}</option>
+              {(["pending", "inprogress", "completed", "missed"] as const).map((s) => (
+                <option key={s} value={s}>{statusLabel(s, t)}</option>
+              ))}
+            </select>
+          </div>
+
+          {filtersApplied && (
+            <button
+              onClick={clearFilters}
+              className="h-9 px-4 rounded-xl border border-ink-200 text-[12.5px] font-semibold text-ink-600 hover:bg-ink-50 transition-all"
+            >
+              {t("reports.filter.clear")}
+            </button>
+          )}
+        </div>
+
+        {tab !== "visits" && status && (
+          <p className="mt-2 text-[11px] text-amber-600">{t("reports.filter.statusNote")}</p>
+        )}
+      </div>
+
+      {/* Period summary */}
+      <SummaryCards summary={summary.data} isLoading={summary.isLoading} t={t} />
+
       {/* Tab strip */}
       <div className="flex gap-1 bg-ink-100/60 p-1 rounded-xl w-fit overflow-x-auto max-w-full">
         {TABS.map((tb) => (
@@ -651,11 +953,11 @@ export default function ReportsPage() {
 
       {/* Table card */}
       <div className="bg-white rounded-2xl border border-ink-100 shadow-sm overflow-hidden">
-        {tab === "visits"  && <VisitsTab  range={range} locale={locale} />}
-        {tab === "merch"   && <MerchTab   range={range} locale={locale} />}
-        {tab === "branch"  && <BranchTab  range={range} locale={locale} />}
-        {tab === "product" && <ProductTab range={range} locale={locale} />}
-        {tab === "gps"     && <GpsTab     range={range} />}
+        {tab === "visits"  && <VisitsTab  range={range} locale={locale} filters={filters} meta={exportMeta} />}
+        {tab === "merch"   && <MerchTab   range={range} locale={locale} filters={filters} meta={exportMeta} />}
+        {tab === "branch"  && <BranchTab  range={range} locale={locale} filters={filters} meta={exportMeta} />}
+        {tab === "product" && <ProductTab range={range} locale={locale} filters={filters} meta={exportMeta} />}
+        {tab === "gps"     && <GpsTab     range={range} filters={filters} meta={exportMeta} />}
       </div>
 
     </div>
