@@ -5,9 +5,10 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import {
-  X, MapPin, Hash, Link2, Navigation,
+  MapPin, Hash, Link2, Navigation,
   Home, Globe, Map, ChevronDown,
 } from "lucide-react";
+import { Modal } from "@/components/ui/Modal";
 import { cn } from "@/lib/utils/cn";
 import { useTranslation } from "@/hooks/use-translation";
 import { useCreatePlace, useUpdatePlace } from "@/hooks/use-places";
@@ -177,35 +178,14 @@ export function PlaceModal({ place, onClose }: PlaceModalProps) {
 
   // ── Render ──────────────────────────────────────────────────────────────────
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4"
-      onClick={onClose}
+    <Modal
+      onClose={onClose}
+      busy={isPending}
+      size="xl"
+      scrollable
+      title={isEdit ? t("places.edit") : t("places.add")}
+      icon={<MapPin className="w-4 h-4 text-brand-500" />}
     >
-      <div className="absolute inset-0 bg-ink-900/40 backdrop-blur-sm animate-fade-in" />
-
-      {/* Panel — wider to fit 2-column grid, scrollable */}
-      <div
-        className="relative w-full max-w-2xl bg-white rounded-2xl shadow-modal border border-ink-100 animate-slide-up flex flex-col max-h-[92vh]"
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* ── Sticky header ──────────────────────────────────────────────── */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-ink-100 shrink-0">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-brand-50 flex items-center justify-center">
-              <MapPin className="w-4 h-4 text-brand-500" />
-            </div>
-            <h2 className="text-[16px] font-bold text-ink-900">
-              {isEdit ? t("places.edit") : t("places.add")}
-            </h2>
-          </div>
-          <button
-            onClick={onClose}
-            className="w-8 h-8 rounded-lg flex items-center justify-center text-ink-400 hover:text-ink-700 hover:bg-ink-100 transition-all"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-
         {/* ── Scrollable body ────────────────────────────────────────────── */}
         <form
           onSubmit={handleSubmit(onSubmit)}
@@ -484,7 +464,6 @@ export function PlaceModal({ place, onClose }: PlaceModalProps) {
             {isPending ? t("common.loading") : t("common.save")}
           </button>
         </div>
-      </div>
-    </div>
+    </Modal>
   );
 }

@@ -8,6 +8,7 @@ import {
   X, Package, Search, BarChart2,
   ShieldCheck, SortAsc, AlertCircle,
 } from "lucide-react";
+import { Modal } from "@/components/ui/Modal";
 import type { UseFormRegister, UseFormSetValue, UseFormWatch, FieldErrors } from "react-hook-form";
 import { cn } from "@/lib/utils/cn";
 import { useTranslation, type TranslationFn } from "@/hooks/use-translation";
@@ -293,33 +294,14 @@ function AssignMode({ placeId, assignedProducts, onClose }: Omit<AssignProps, "m
   }
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4"
-      onClick={onClose}
+    <Modal
+      onClose={onClose}
+      busy={assign.isPending}
+      size="lg"
+      scrollable
+      title={t("placeProducts.assign")}
+      icon={<Package className="w-4 h-4 text-brand-500" />}
     >
-      <div className="absolute inset-0 bg-ink-900/40 backdrop-blur-sm animate-fade-in" />
-      <div
-        className="relative w-full max-w-lg bg-white rounded-2xl shadow-modal border border-ink-100 animate-slide-up flex flex-col max-h-[90vh]"
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-ink-100 shrink-0">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-brand-50 flex items-center justify-center">
-              <Package className="w-4 h-4 text-brand-500" />
-            </div>
-            <h2 className="text-[16px] font-bold text-ink-900">
-              {t("placeProducts.assign")}
-            </h2>
-          </div>
-          <button
-            onClick={onClose}
-            className="w-8 h-8 rounded-lg flex items-center justify-center text-ink-400 hover:text-ink-700 hover:bg-ink-100 transition-all"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-
         {/* Body */}
         <form onSubmit={handleSubmit(onSubmit)} className="overflow-y-auto px-6 py-5 flex-1">
           {/* ── Product selection ──────────────────────────────────────── */}
@@ -442,8 +424,7 @@ function AssignMode({ placeId, assignedProducts, onClose }: Omit<AssignProps, "m
             {assign.isPending ? t("common.loading") : t("common.save")}
           </button>
         </div>
-      </div>
-    </div>
+    </Modal>
   );
 }
 
@@ -494,33 +475,14 @@ function EditMode({ placeId, placeProduct, onClose }: Omit<EditProps, "mode">) {
   }
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4"
-      onClick={onClose}
+    <Modal
+      onClose={onClose}
+      busy={update.isPending}
+      size="lg"
+      scrollable
+      title={t("placeProducts.edit")}
+      icon={<ShieldCheck className="w-4 h-4 text-brand-500" />}
     >
-      <div className="absolute inset-0 bg-ink-900/40 backdrop-blur-sm animate-fade-in" />
-      <div
-        className="relative w-full max-w-lg bg-white rounded-2xl shadow-modal border border-ink-100 animate-slide-up flex flex-col max-h-[90vh]"
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-ink-100 shrink-0">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-brand-50 flex items-center justify-center">
-              <ShieldCheck className="w-4 h-4 text-brand-500" />
-            </div>
-            <h2 className="text-[16px] font-bold text-ink-900">
-              {t("placeProducts.edit")}
-            </h2>
-          </div>
-          <button
-            onClick={onClose}
-            className="w-8 h-8 rounded-lg flex items-center justify-center text-ink-400 hover:text-ink-700 hover:bg-ink-100 transition-all"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-
         {/* Body */}
         <form onSubmit={handleSubmit(onSubmit)} className="overflow-y-auto px-6 py-5 flex-1">
           {/* ── Product info (read-only) ──────────────────────────────────── */}
@@ -571,8 +533,7 @@ function EditMode({ placeId, placeProduct, onClose }: Omit<EditProps, "mode">) {
             {update.isPending ? t("common.loading") : t("common.save")}
           </button>
         </div>
-      </div>
-    </div>
+    </Modal>
   );
 }
 

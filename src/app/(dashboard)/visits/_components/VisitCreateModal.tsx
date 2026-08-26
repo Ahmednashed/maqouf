@@ -6,8 +6,9 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { X, CalendarDays, MapPin, User, FileText, Repeat, Clock, AlertCircle } from "lucide-react";
+import { CalendarDays, MapPin, User, FileText, Repeat, Clock, AlertCircle } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
+import { Modal } from "@/components/ui/Modal";
 import { riyadhToday } from "@/lib/utils/date";
 import { useTranslation } from "@/hooks/use-translation";
 import { useCreateVisit } from "@/hooks/use-visits";
@@ -188,27 +189,12 @@ export function VisitCreateModal({ onClose, initialDate }: VisitCreateModalProps
     );
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4"
-      onClick={onClose}
+    <Modal
+      onClose={onClose}
+      busy={create.isPending || submitting}
+      title={t("visits.add")}
+      icon={<CalendarDays className="w-4 h-4 text-brand-500" />}
     >
-      <div className="absolute inset-0 bg-ink-900/40 backdrop-blur-sm animate-fade-in" />
-
-      <div
-        className="relative w-full max-w-md bg-white rounded-2xl shadow-modal border border-ink-100 animate-slide-up"
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* Header */}
-        <div className="flex items-center justify-between px-6 py-5 border-b border-ink-100">
-          <h2 className="text-[16px] font-bold text-ink-900">{t("visits.add")}</h2>
-          <button
-            onClick={onClose}
-            className="w-8 h-8 rounded-lg flex items-center justify-center text-ink-400 hover:text-ink-700 hover:bg-ink-100 transition-all"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-
         {/* Form */}
         <form onSubmit={handleSubmit(onSubmit)} className="px-6 py-5 space-y-4">
 
@@ -383,7 +369,6 @@ export function VisitCreateModal({ onClose, initialDate }: VisitCreateModalProps
             </button>
           </div>
         </form>
-      </div>
-    </div>
+    </Modal>
   );
 }

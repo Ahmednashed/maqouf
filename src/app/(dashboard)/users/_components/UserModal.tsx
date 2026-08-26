@@ -5,7 +5,6 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import {
-  X,
   User,
   Mail,
   Hash,
@@ -19,6 +18,7 @@ import { useInviteUser, useUpdateUser, useUpdateUserAvatar } from "@/hooks/use-u
 import type { CompanyUserWithProfile } from "@/services/company-users";
 import { memberDisplayName, memberEmail, memberInitials, memberAvatarUrl } from "@/services/company-users";
 import { Camera } from "lucide-react";
+import { Modal } from "@/components/ui/Modal";
 import type { UserRole } from "@/types";
 
 // ─── Preset colour palette ────────────────────────────────────────────────────
@@ -174,38 +174,16 @@ export function UserModal({ user, onClose }: UserModalProps) {
 
   // ── Render ──────────────────────────────────────────────────────────────────
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4"
-      onClick={onClose}
+    <Modal
+      onClose={onClose}
+      busy={isPending}
+      size="lg"
+      scrollable
+      title={isEdit ? t("users.edit") : t("users.inviteTitle")}
+      iconBg={selectedColor + "22"}
+      icon={<User className="w-4 h-4" style={{ color: selectedColor }} />}
     >
-      <div className="absolute inset-0 bg-ink-900/40 backdrop-blur-sm animate-fade-in" />
-
-      {/* Panel */}
-      <div
-        className="relative w-full max-w-lg bg-white rounded-2xl shadow-modal border border-ink-100 animate-slide-up max-h-[90vh] overflow-y-auto"
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* Header */}
-        <div className="flex items-center justify-between px-6 py-5 border-b border-ink-100 sticky top-0 bg-white z-10">
-          <div className="flex items-center gap-3">
-            <div
-              className="w-8 h-8 rounded-lg flex items-center justify-center"
-              style={{ backgroundColor: selectedColor + "22" }}
-            >
-              <User className="w-4 h-4" style={{ color: selectedColor }} />
-            </div>
-            <h2 className="text-[16px] font-bold text-ink-900">
-              {isEdit ? t("users.edit") : t("users.inviteTitle")}
-            </h2>
-          </div>
-          <button
-            onClick={onClose}
-            className="w-8 h-8 rounded-lg flex items-center justify-center text-ink-400 hover:text-ink-700 hover:bg-ink-100 transition-all"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-
+      <div className="overflow-y-auto flex-1">
         {/* ── CREATE FORM ─────────────────────────────────────────────────── */}
         {!isEdit && (
           <form
@@ -528,7 +506,7 @@ export function UserModal({ user, onClose }: UserModalProps) {
           </form>
         )}
       </div>
-    </div>
+    </Modal>
   );
 }
 

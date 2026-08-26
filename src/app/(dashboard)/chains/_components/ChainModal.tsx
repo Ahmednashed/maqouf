@@ -4,7 +4,8 @@ import { useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { X, Store, Hash, Palette } from "lucide-react";
+import { Store, Hash, Palette } from "lucide-react";
+import { Modal } from "@/components/ui/Modal";
 import { cn } from "@/lib/utils/cn";
 import { useTranslation } from "@/hooks/use-translation";
 import { useCreateChain, useUpdateChain } from "@/hooks/use-chains";
@@ -105,39 +106,14 @@ export function ChainModal({ chain, onClose }: ChainModalProps) {
 
   // ── Render ──────────────────────────────────────────────────────────────────
   return (
-    /* Backdrop */
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4"
-      onClick={onClose}
+    <Modal
+      onClose={onClose}
+      busy={isPending}
+      size="lg"
+      title={isEdit ? t("chains.edit") : t("chains.add")}
+      iconBg={selectedColor + "22"}
+      icon={<Store className="w-4 h-4" style={{ color: selectedColor }} />}
     >
-      <div className="absolute inset-0 bg-ink-900/40 backdrop-blur-sm animate-fade-in" />
-
-      {/* Panel */}
-      <div
-        className="relative w-full max-w-lg bg-white rounded-2xl shadow-modal border border-ink-100 animate-slide-up"
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* Header */}
-        <div className="flex items-center justify-between px-6 py-5 border-b border-ink-100">
-          <div className="flex items-center gap-3">
-            <div
-              className="w-8 h-8 rounded-lg flex items-center justify-center"
-              style={{ backgroundColor: selectedColor + "22" }}
-            >
-              <Store className="w-4 h-4" style={{ color: selectedColor }} />
-            </div>
-            <h2 className="text-[16px] font-bold text-ink-900">
-              {isEdit ? t("chains.edit") : t("chains.add")}
-            </h2>
-          </div>
-          <button
-            onClick={onClose}
-            className="w-8 h-8 rounded-lg flex items-center justify-center text-ink-400 hover:text-ink-700 hover:bg-ink-100 transition-all"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-
         {/* Form */}
         <form onSubmit={handleSubmit(onSubmit)} className="px-6 py-5 space-y-4">
 
@@ -285,7 +261,6 @@ export function ChainModal({ chain, onClose }: ChainModalProps) {
             </button>
           </div>
         </form>
-      </div>
-    </div>
+    </Modal>
   );
 }
