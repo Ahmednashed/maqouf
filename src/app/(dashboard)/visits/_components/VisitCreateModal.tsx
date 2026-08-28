@@ -317,6 +317,8 @@ export function VisitCreateModal({ onClose, initialDate }: VisitCreateModalProps
                 {assignableTemplates.map((tmpl) => (
                   <option key={tmpl.id} value={tmpl.id}>
                     {tmpl.name_ar} / {tmpl.name_en}
+                    {" — "}
+                    {tmpl.field_count} {t("templates.fieldsCount")}
                   </option>
                 ))}
                 {emptyTemplates.map((tmpl) => (

@@ -78,6 +78,15 @@ function FieldRow({ field, index, total, onEdit, onDelete, onMoveUp, onMoveDown 
 
   return (
     <div className="flex items-center gap-3 px-4 py-3 bg-white rounded-xl border border-ink-100 shadow-sm hover:border-brand-200 transition-all group">
+      {/* Position — the arrows convey movement, not where you are. */}
+      <span
+        className="w-6 shrink-0 text-center text-[11px] font-bold text-ink-300 tabular-nums"
+        title={t("templates.fieldOrder")}
+        aria-label={`${t("templates.fieldOrder")} ${index + 1}`}
+      >
+        {index + 1}
+      </span>
+
       {/* Reorder buttons */}
       <div className="flex flex-col gap-0.5">
         <button

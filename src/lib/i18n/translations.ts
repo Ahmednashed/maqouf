@@ -644,6 +644,11 @@ export const translations = {
     "templates.previewLabel":         "معاينة القالب",
     // ── aliases & new keys for builder/list pages ──────────────────────────
     "templates.title":                "القوالب",
+    "templates.optionsRequired":   "أضف خياراً واحداً على الأقل — لا يمكن الإجابة على حقل اختيار بلا خيارات",
+    "templates.lastUpdated":       "آخر تحديث",
+    "templates.usableInVisits":    "متاح للزيارات",
+    "templates.notUsableEmpty":    "منشور بدون حقول — لا يظهر عند إنشاء الزيارات",
+    "templates.fieldOrder":        "الترتيب",
     "templates.subtitle":             "إنشاء وإدارة نماذج الزيارات الميدانية",
     "templates.statusActive":         "نشط",
     "templates.statusDraft":          "مسودة",
@@ -1677,6 +1682,11 @@ export const translations = {
     "templates.previewLabel":         "Template Preview",
     // ── aliases & new keys for builder/list pages ──────────────────────────
     "templates.title":                "Templates",
+    "templates.optionsRequired":   "Add at least one option — a choice field with no options cannot be answered",
+    "templates.lastUpdated":       "Last updated",
+    "templates.usableInVisits":    "Usable in visits",
+    "templates.notUsableEmpty":    "Published with no fields — will not appear when creating visits",
+    "templates.fieldOrder":        "Order",
     "templates.subtitle":             "Create and manage visit form templates",
     "templates.statusActive":         "Active",
     "templates.statusDraft":          "Draft",

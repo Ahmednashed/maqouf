@@ -138,9 +138,19 @@ export function FieldEditorModal({
     setOptions((prev) => prev.filter((o) => o !== opt));
   }
 
+  /**
+   * A single/multiple-choice field with no options is unusable: it reaches the
+   * merchandiser as a picker with nothing to pick, and there is no way to
+   * answer it. Options are component state rather than form state, so the zod
+   * resolver never saw them — this is the guard that was missing.
+   */
+  const missingOptions = needsOptions && options.length === 0;
+
   // ── Submit ──────────────────────────────────────────────────────────────────
 
   async function onSubmit(data: FormData) {
+    if (missingOptions) return;   // the button is disabled too; belt and braces
+
     const payload = {
       type:          selectedType,
       label_ar:      data.label_ar,
@@ -332,6 +342,12 @@ export function FieldEditorModal({
                   )}
                 </div>
 
+                {missingOptions && (
+                  <p className="mb-2 text-[11.5px] text-rose-500">
+                    {t("templates.optionsRequired")}
+                  </p>
+                )}
+
                 {/* Add option row */}
                 <div className="flex gap-2">
                   <input
@@ -415,7 +431,8 @@ export function FieldEditorModal({
             <button
               type="submit"
               form="field-form"
-              disabled={pending}
+              disabled={pending || missingOptions}
+              title={missingOptions ? t("templates.optionsRequired") : undefined}
               className="flex-1 h-11 rounded-xl bg-brand-500 hover:bg-brand-600 disabled:opacity-60 text-white text-[13.5px] font-semibold shadow-pop transition-all"
             >
               {pending ? t("common.loading") : t("common.save")}
