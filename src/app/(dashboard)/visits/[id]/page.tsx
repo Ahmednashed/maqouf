@@ -29,6 +29,7 @@ import {
 import { useVisitProducts, useSaveVisitProducts } from "@/hooks/use-visit-products";
 import { useVisitResponses, useSaveVisitResponses } from "@/hooks/use-visit-responses";
 import { useTemplate } from "@/hooks/use-templates";
+import { merchDisplayName, merchInitial } from "@/lib/utils/member-name";
 import type { VisitProductWithDetails } from "@/services/visit-products";
 import type { VisitWithDetails } from "@/services/visits";
 import { CompleteModal } from "../_components/CompleteModal";
@@ -763,7 +764,9 @@ export default function VisitDetailPage() {
     ? (locale === "ar" ? visit.place.chain?.name_ar : visit.place.chain?.name_en)
     : "";
   const chainColor = visit?.place.chain?.color ?? "#6366F1";
-  const merchName  = visit?.merch.user?.full_name ?? "";
+  // Cached override first: a member whose auth account is gone still has a
+  // name here, where this used to render "" and an avatar initial of "?".
+  const merchName  = merchDisplayName(visit?.merch, t("users.unknown"));
   const merchColor = visit?.merch.color ?? "#6366F1";
   const isRtl      = locale === "ar";
   const BackIcon   = isRtl ? ArrowRight : ArrowLeft;
@@ -861,7 +864,7 @@ export default function VisitDetailPage() {
                 className="w-10 h-10 rounded-xl flex items-center justify-center text-white font-bold text-[13px] shrink-0"
                 style={{ backgroundColor: merchColor }}
               >
-                {(merchName[0] ?? "?").toUpperCase()}
+                {merchInitial(merchName, locale)}
               </div>
               <div>
                 <p className="text-[12px] font-semibold text-ink-400 flex items-center gap-1">

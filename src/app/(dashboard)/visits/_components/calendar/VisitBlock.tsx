@@ -2,7 +2,7 @@
 
 import { memo } from "react";
 import Link from "next/link";
-import { Repeat, Play, Check, AlertCircle, Clock } from "lucide-react";
+import { ClipboardList, Repeat, Play, Check, AlertCircle, Clock } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
 import type { TranslationFn } from "@/hooks/use-translation";
 import type { CalendarVisitItem } from "@/lib/calendar-model";
@@ -45,6 +45,8 @@ export const VisitBlock = memo(function VisitBlock({
     item.time ? `${t("visits.calendar.at")} ${item.time}` : t("visits.calendar.noTime"),
     t(`visits.status.${item.status}` as Parameters<typeof t>[0]),
     item.origin === "unplanned" ? t("visits.calendar.unplanned") : "",
+    // Announce the checklist too, so the label matches what the icon conveys.
+    item.hasTemplate ? (item.templateName ?? t("visits.calendar.hasTemplate")) : "",
   ].filter(Boolean).join(" · ");
 
   return (
@@ -70,6 +72,14 @@ export const VisitBlock = memo(function VisitBlock({
         {/* Subtle repeat mark — origin, not a loud badge on every block. */}
         {item.origin === "planned" && !compact && (
           <Repeat className="w-2.5 h-2.5 opacity-40 shrink-0" aria-hidden="true" />
+        )}
+        {/* Checklist mark: this visit has a template to fill in. Same weight as
+            the repeat mark — an indicator while scanning, not a badge. */}
+        {item.hasTemplate && (
+          <ClipboardList
+            className={cn("opacity-45 shrink-0", compact ? "w-2 h-2" : "w-2.5 h-2.5")}
+            aria-hidden="true"
+          />
         )}
       </span>
 

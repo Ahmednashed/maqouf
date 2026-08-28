@@ -1,3 +1,4 @@
+import { merchDisplayName } from "@/lib/utils/member-name";
 // ─────────────────────────────────────────────────────────────────────────────
 // Calendar presentation model — pure, deterministic, unit-tested.
 //
@@ -43,6 +44,14 @@ export interface CalendarVisitItem {
   status:        VisitStatus;
   scheduleId:    string | null;
   origin:        VisitOrigin;
+  /**
+   * The visit carries a checklist. Read from the visit row's own template_id,
+   * so it costs nothing extra — a manager scanning the calendar can tell which
+   * visits have work to fill in without opening each one.
+   */
+  hasTemplate:   boolean;
+  /** Template name for the tooltip, when the join provided it. */
+  templateName:  string | null;
 }
 
 // ─── Input shapes (structural — accepts the existing service rows) ───────────
@@ -60,9 +69,12 @@ export interface VisitLike {
     chain?: { name_ar?: string; name_en?: string; color?: string | null } | null;
   } | null;
   merch?: {
-    color?: string | null;
-    user?:  { full_name?: string } | null;
+    color?:        string | null;
+    display_name?: string | null;
+    user?:         { full_name?: string } | null;
   } | null;
+  template_id?:   string | null;
+  template?: { name_ar?: string; name_en?: string } | null;
 }
 
 export interface ScheduleTimeLike {
@@ -134,7 +146,7 @@ export function toCalendarItem(
   return {
     id:            visit.id,
     merchId:       visit.merch_id,
-    merchName:     visit.merch?.user?.full_name?.trim() || fallbackMerchName,
+    merchName:     merchDisplayName(visit.merch, fallbackMerchName),
     merchColor:    visit.merch?.color ?? null,
     placeName:     (locale === "ar" ? place?.branch_ar : place?.branch_en) || "—",
     chainName:     (locale === "ar" ? chain?.name_ar : chain?.name_en) || null,
@@ -146,6 +158,10 @@ export function toCalendarItem(
     status:        visit.status,
     scheduleId,
     origin:        scheduleId ? "planned" : "unplanned",
+    hasTemplate:   Boolean(visit.template_id),
+    templateName:  visit.template
+      ? ((locale === "ar" ? visit.template.name_ar : visit.template.name_en) ?? null)
+      : null,
   };
 }
 

@@ -6,6 +6,7 @@ import { CalendarClock, Sunrise, Sun, CalendarPlus } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
 import type { TranslationFn } from "@/hooks/use-translation";
 import type { DashboardVisit } from "@/services/dashboard";
+import { merchDisplayName } from "@/lib/utils/member-name";
 import { DashboardSection, Card, EmptyState, Skeleton } from "./shared";
 
 // ─── Status → timeline dot/badge styling ──────────────────────────────────────
@@ -65,7 +66,7 @@ const TimelineItem = memo(function TimelineItem({
           )}
         </div>
         <p className="text-[11.5px] text-ink-400 truncate">
-          {visit.merch.user.full_name}
+          {merchDisplayName(visit.merch, t("users.unknown"))}
           {chain ? ` · ${chain}` : ""}
           {" · "}
           <span className={cn(

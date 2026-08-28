@@ -5,6 +5,7 @@ import { cn } from "@/lib/utils/cn";
 import { useTranslation, type TranslationFn } from "@/hooks/use-translation";
 import type { ScheduleWithDetails } from "@/services/schedules";
 import type { DayOfWeek, ScheduleFrequency } from "@/types";
+import { merchDisplayName } from "@/lib/utils/member-name";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -35,7 +36,7 @@ interface ScheduleCardProps {
 }
 
 function ScheduleCard({ schedule, locale, t, onEdit, onDelete }: ScheduleCardProps) {
-  const merchName  = schedule.merch?.user?.full_name ?? "—";
+  const merchName  = merchDisplayName(schedule.merch, "—");
   const branchName = locale === "ar"
     ? schedule.place?.branch_ar
     : schedule.place?.branch_en;

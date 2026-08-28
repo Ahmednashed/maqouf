@@ -16,6 +16,7 @@ import { usePlaces } from "@/hooks/use-places";
 import { useTemplates } from "@/hooks/use-templates";
 import type { ScheduleWithDetails } from "@/services/schedules";
 import type { DayOfWeek, ScheduleFrequency } from "@/types";
+import { merchDisplayName } from "@/lib/utils/member-name";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -216,7 +217,7 @@ export function ScheduleModal({ schedule, onClose }: ScheduleModalProps) {
                   )}
                   {merchs.map((m) => (
                     <option key={m.id} value={m.id}>
-                      {m.user?.full_name ?? "—"}
+                      {merchDisplayName(m, "—")}
                     </option>
                   ))}
                 </select>

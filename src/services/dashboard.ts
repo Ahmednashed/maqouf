@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/client";
+import { merchDisplayName } from "@/lib/utils/member-name";
 import { riyadhToday, shiftIsoDate } from "@/lib/utils/date";
 
 // ─── Raw Supabase join row shapes (private to this module) ────────────────────
@@ -30,8 +31,9 @@ interface DashboardVisitQueryRow {
     } | null;
   } | null;
   merch: {
-    id:    string;
-    color: string | null;
+    id:           string;
+    color:        string | null;
+    display_name: string | null;
     user: {
       id:         string;
       full_name:  string;
@@ -96,6 +98,13 @@ export interface DashboardVisit {
   merch: {
     id:    string;
     color: string | null;
+    /**
+     * Admin-set override, cached on company_users (migration 011). It is the
+     * only name left once an auth account is deleted, so it has to travel with
+     * the row — reading user.full_name alone rendered those members as "—".
+     */
+    display_name: string | null;
+    /** Normalised below, so never null here; full_name may be "". */
     user: {
       id:        string;
       full_name: string;
@@ -206,7 +215,7 @@ export async function fetchDashboard(date: string): Promise<DashboardData> {
           chain:chains (id, name_ar, name_en, color)
         ),
         merch:company_users (
-          id, color,
+          id, color, display_name,
           user:users!company_users_user_id_fkey (id, full_name, avatar_url)
         )
       `)
@@ -265,11 +274,14 @@ export async function fetchDashboard(date: string): Promise<DashboardData> {
         : null,
     },
     merch: {
-      id:    row.merch?.id    ?? "",
-      color: row.merch?.color ?? null,
+      id:           row.merch?.id           ?? "",
+      color:        row.merch?.color        ?? null,
+      display_name: row.merch?.display_name ?? null,
       user: {
         id:         row.merch?.user?.id         ?? "",
-        full_name:  row.merch?.user?.full_name  ?? "—",
+        // "" not "—": an empty string lets merchDisplayName fall through to the
+        // caller's fallback, where a literal dash would masquerade as a name.
+        full_name:  row.merch?.user?.full_name  ?? "",
         avatar_url: row.merch?.user?.avatar_url ?? undefined,
       },
     },
@@ -473,7 +485,7 @@ export async function fetchActivityFeed(): Promise<ActivityVisit[]> {
         chain:chains (name_ar, name_en, color)
       ),
       merch:company_users (
-        color,
+        color, display_name,
         user:users!company_users_user_id_fkey (full_name)
       )
     `)
@@ -494,7 +506,9 @@ export async function fetchActivityFeed(): Promise<ActivityVisit[]> {
     chain_ar:         r.place?.chain?.name_ar ?? "—",
     chain_en:         r.place?.chain?.name_en ?? "—",
     chain_color:      r.place?.chain?.color   ?? null,
-    merch_name:       r.merch?.user?.full_name ?? "—",
+    // Cached override first, then the auth name — see merchDisplayName. "—"
+    // stays the last resort here because this feed is a service-layer string.
+    merch_name:       merchDisplayName(r.merch, "—"),
     merch_color:      r.merch?.color           ?? null,
   }));
 }

@@ -10,6 +10,7 @@ import { useSchedules } from "@/hooks/use-schedules";
 import { useCompanyUsers } from "@/hooks/use-company-users";
 import { usePlaces } from "@/hooks/use-places";
 import type { VisitStatus } from "@/types";
+import { merchDisplayName } from "@/lib/utils/member-name";
 import {
   toCalendarItem,
   buildScheduleTimeMap,
@@ -96,14 +97,14 @@ function VisitsWorkspace() {
       schedules.map((s) => ({ id: s.id, start_time: s.start_time ?? null }))
     );
     return (visits as unknown as VisitLike[]).map((v) =>
-      toCalendarItem(v, timeMap, locale, t("users.inactive"))
+      toCalendarItem(v, timeMap, locale, t("users.unknown"))
     );
   }, [visits, schedules, locale, t]);
 
   const allMerchs = useMemo(
     () => members.map((m) => ({
       id:    m.id,
-      name:  m.user?.full_name?.trim() || t("users.inactive"),
+      name:  merchDisplayName(m, t("users.unknown")),
       color: m.color ?? null,
     })),
     [members, t]

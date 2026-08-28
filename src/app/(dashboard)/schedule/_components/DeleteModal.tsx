@@ -4,6 +4,7 @@ import { AlertTriangle, Trash2, X } from "lucide-react";
 import { useTranslation } from "@/hooks/use-translation";
 import { useDeleteSchedule } from "@/hooks/use-schedules";
 import type { ScheduleWithDetails } from "@/services/schedules";
+import { merchDisplayName } from "@/lib/utils/member-name";
 
 interface DeleteModalProps {
   schedule: ScheduleWithDetails;
@@ -14,7 +15,7 @@ export function DeleteModal({ schedule, onClose }: DeleteModalProps) {
   const { t, locale } = useTranslation();
   const del           = useDeleteSchedule();
 
-  const merchName  = schedule.merch?.user?.full_name ?? "—";
+  const merchName  = merchDisplayName(schedule.merch, "—");
   const branchName = locale === "ar"
     ? schedule.place?.branch_ar
     : schedule.place?.branch_en;
