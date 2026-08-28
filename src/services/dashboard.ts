@@ -16,6 +16,7 @@ interface DashboardVisitQueryRow {
   duration_minutes:        number | null;
   place_id:                string;
   merch_id:                string;
+  template_id:             string | null;
   checkin_verified:        boolean | null;
   checkin_distance_meters: number | null;
   place: {
@@ -81,6 +82,8 @@ export interface DashboardVisit {
   duration_minutes:        number;
   place_id:                string;
   merch_id:                string;
+  /** Checklist attached to the visit; null when it carries none. */
+  template_id:             string | null;
   checkin_verified:        boolean | null;
   checkin_distance_meters: number | null;
   place: {
@@ -209,7 +212,7 @@ export async function fetchDashboard(date: string): Promise<DashboardData> {
       .from("visits")
       .select(`
         id, status, scheduled_date, started_at, completed_at, duration_minutes,
-        place_id, merch_id, checkin_verified, checkin_distance_meters,
+        place_id, merch_id, template_id, checkin_verified, checkin_distance_meters,
         place:places (
           id, branch_ar, branch_en, code,
           chain:chains (id, name_ar, name_en, color)
@@ -257,6 +260,7 @@ export async function fetchDashboard(date: string): Promise<DashboardData> {
     duration_minutes:        row.duration_minutes ?? 0,
     place_id:                row.place_id,
     merch_id:                row.merch_id,
+    template_id:             row.template_id,
     checkin_verified:        row.checkin_verified,
     checkin_distance_meters: row.checkin_distance_meters,
     place: {

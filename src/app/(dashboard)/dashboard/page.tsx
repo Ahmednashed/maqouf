@@ -26,7 +26,7 @@ import { ACTIVITY_LOGS_KEY } from "@/hooks/use-activity-logs";
 import { Skeleton } from "./_components/shared";
 import { ExecutiveKpiRow }  from "./_components/ExecutiveKpiRow";
 import { LiveActivityFeed } from "./_components/LiveActivityFeed";
-import { AiInsightsCard }   from "./_components/AiInsightsCard";
+import { AttentionPanel }   from "./_components/AttentionPanel";
 import { LiveTeamMapCard }  from "./_components/LiveTeamMapCard";
 import { FieldTeamTable }   from "./_components/FieldTeamTable";
 import { TodayTimeline }    from "./_components/TodayTimeline";
@@ -38,6 +38,10 @@ import { SmartAlerts }        from "./_components/SmartAlerts";
 import { PerformersPanel }    from "./_components/PerformersPanel";
 import { CommandPalette, useCommandPalette } from "./_components/CommandPalette";
 import { deriveInsights }     from "@/lib/insights";
+import { deriveAttention }    from "@/lib/attention";
+import { usePlaces, usePlaceOperations } from "@/hooks/use-places";
+import { useProductCoverage, useProducts } from "@/hooks/use-products";
+import { useTemplates }       from "@/hooks/use-templates";
 
 // Recharts is the heaviest client dependency on this page — defer it so the
 // KPI row and feed paint first.
@@ -115,6 +119,32 @@ export default function DashboardPage() {
   );
 
   // Command-center derivations (presentation-level, no new queries)
+  /**
+   * Structural attention data. Each rides its own query so a slow roll-up never
+   * holds up the dashboard paint — the panel shows its own skeleton instead.
+   */
+  const placesQ    = usePlaces();
+  const placeOpsQ  = usePlaceOperations();
+  const productsQ  = useProducts();
+  const coverageQ  = useProductCoverage();
+  const templatesQ = useTemplates();
+
+  const attention = useMemo(
+    () => deriveAttention({
+      places:    placesQ.data,
+      placeOps:  placeOpsQ.data,
+      products:  productsQ.data,
+      coverage:  coverageQ.data,
+      templates: templatesQ.data,
+      today:     date,
+    }),
+    [placesQ.data, placeOpsQ.data, productsQ.data, coverageQ.data, templatesQ.data, date],
+  );
+
+  const attentionLoading =
+    placesQ.isLoading || placeOpsQ.isLoading || productsQ.isLoading ||
+    coverageQ.isLoading || templatesQ.isLoading;
+
   const insights = useMemo(
     () => deriveInsights(dashboard.data, extras.data),
     [dashboard.data, extras.data]
@@ -307,15 +337,10 @@ export default function DashboardPage() {
         locale={locale}
       />
 
-      {/* ── ROW 6 · AI brief + suggested actions ─────────────────────────── */}
+      {/* ── ROW 6 · Setup attention + suggested actions ──────────────────── */}
       <div className="grid grid-cols-1 xl:grid-cols-12 gap-4 items-stretch">
         <div className="xl:col-span-7 min-w-0">
-          <AiInsightsCard
-            t={t}
-            greeting={t(greetingKey)}
-            firstName={firstName}
-            issueCount={insights.issueCount}
-          />
+          <AttentionPanel items={attention} loading={attentionLoading} t={t} />
         </div>
         <div className="xl:col-span-5 min-w-0">
           <RecommendedActions

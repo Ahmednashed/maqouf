@@ -2,7 +2,7 @@
 
 import { memo, useMemo } from "react";
 import Link from "next/link";
-import { CalendarClock, Sunrise, Sun, CalendarPlus } from "lucide-react";
+import { CalendarClock, ClipboardList, Sunrise, Sun, CalendarPlus } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
 import type { TranslationFn } from "@/hooks/use-translation";
 import type { DashboardVisit } from "@/services/dashboard";
@@ -67,6 +67,15 @@ const TimelineItem = memo(function TimelineItem({
         </div>
         <p className="text-[11.5px] text-ink-400 truncate">
           {merchDisplayName(visit.merch, t("users.unknown"))}
+          {/* Same checklist mark the calendar uses, read from the visit's own
+              template_id — no extra query, and it means "has a checklist",
+              never "the checklist is done". */}
+          {visit.template_id && (
+            <ClipboardList
+              className="inline-block w-2.5 h-2.5 ms-1 opacity-45 align-baseline"
+              aria-label={t("visits.calendar.hasTemplate")}
+            />
+          )}
           {chain ? ` · ${chain}` : ""}
           {" · "}
           <span className={cn(
@@ -149,7 +158,18 @@ export const TodayTimeline = memo(function TodayTimeline({
         <Skeleton className="h-[260px]" />
       ) : groups.length === 0 ? (
         <Card fill>
-          <EmptyState icon={CalendarClock} message={t("dashboard.timeline.empty")} />
+          <EmptyState
+            icon={CalendarClock}
+            message={t("dashboard.timeline.empty")}
+            action={
+              <Link
+                href="/visits"
+                className="text-[12.5px] font-semibold text-brand-600 hover:text-brand-700 transition-colors"
+              >
+                {t("dashboard.timeline.planVisits")}
+              </Link>
+            }
+          />
         </Card>
       ) : (
         <Card fill padded={false}>
