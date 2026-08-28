@@ -27,6 +27,7 @@ import {
   type PlanError,
 } from "@/lib/visit-create-plan";
 import type { TranslationKey } from "@/lib/i18n/translations";
+import { merchDisplayName } from "@/lib/utils/member-name";
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
@@ -239,7 +240,7 @@ export function VisitCreateModal({ onClose, initialDate }: VisitCreateModalProps
                 <option value="">{t("visits.assignMerchPlaceholder")}</option>
                 {activeMembers.map((m) => (
                   <option key={m.id} value={m.id}>
-                    {m.user?.full_name ?? "—"}
+                    {merchDisplayName(m, "—")}
                   </option>
                 ))}
               </select>

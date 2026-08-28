@@ -6,6 +6,7 @@ import { useTranslation } from "@/hooks/use-translation";
 import { useCompleteVisit } from "@/hooks/use-visits";
 import type { VisitWithDetails } from "@/services/visits";
 import type { VisitProductWithDetails } from "@/services/visit-products";
+import { merchDisplayName } from "@/lib/utils/member-name";
 
 interface CompleteModalProps {
   visit:    VisitWithDetails;
@@ -38,7 +39,7 @@ export function CompleteModal({
   const branchName =
     locale === "ar" ? visit.place.branch_ar : visit.place.branch_en;
   // merch.user can be null when the auth user was hard-deleted
-  const merchName  = visit.merch.user?.full_name ?? "—";
+  const merchName  = merchDisplayName(visit.merch, "—");
 
   async function handleConfirm() {
     await complete.mutateAsync({ id: visit.id, notes: extraNotes || undefined });

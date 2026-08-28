@@ -208,7 +208,7 @@ function VisitsWorkspace() {
             <option value="">{t("visits.allMerchs")}</option>
             {members.map((m) => (
               <option key={m.id} value={m.id}>
-                {m.user?.full_name ?? t("users.inactive")}
+                {merchDisplayName(m, t("users.unknown"))}
               </option>
             ))}
           </select>

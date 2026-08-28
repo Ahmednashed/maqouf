@@ -373,7 +373,7 @@ export async function fetchDashboard(date: string): Promise<DashboardData> {
     if (!merchMap.has(v.merch_id)) {
       merchMap.set(v.merch_id, {
         merch_id:    v.merch_id,
-        full_name:   v.merch?.user?.full_name ?? "—",
+        full_name:   merchDisplayName(v.merch, "—"),
         avatar_url:  v.merch?.user?.avatar_url,
         color:       v.merch?.color ?? null,
         total:       0,

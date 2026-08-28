@@ -16,6 +16,7 @@ import type { DayOfWeek, ScheduleFrequency } from "@/types";
 import { ScheduleModal } from "../../schedule/_components/ScheduleModal";
 import { DeleteModal }   from "../../schedule/_components/DeleteModal";
 import { WeeklyView }    from "../../schedule/_components/WeeklyView";
+import { merchDisplayName } from "@/lib/utils/member-name";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Recurring schedules — the planning half of the Visits workspace.
@@ -162,7 +163,7 @@ interface RowProps {
 }
 
 function ScheduleRow({ schedule, locale, t, onEdit, onDelete }: RowProps) {
-  const merchName  = schedule.merch?.user?.full_name ?? "—";
+  const merchName  = merchDisplayName(schedule.merch, "—");
   const branchName = locale === "ar" ? schedule.place?.branch_ar : schedule.place?.branch_en;
   const chainColor = (schedule.place as { chain?: { color?: string } })?.chain?.color ?? "#111827";
   const dayLabel   = t(`schedule.day${schedule.day_of_week}` as Parameters<typeof t>[0]);
@@ -278,7 +279,7 @@ export function RecurringSchedulesPanel() {
       if (filterMerchId && s.merch_id            !== filterMerchId) return false;
       if (filterPlaceId && s.place_id            !== filterPlaceId) return false;
       if (!q) return true;
-      const merch    = s.merch?.user?.full_name ?? "";
+      const merch    = merchDisplayName(s.merch, "");
       const branchAr = s.place?.branch_ar ?? "";
       const branchEn = s.place?.branch_en ?? "";
       return (
@@ -405,7 +406,7 @@ export function RecurringSchedulesPanel() {
                   <option value="">{t("schedule.allMerchs")}</option>
                   {merchs.map((m) => (
                     <option key={m.id} value={m.id}>
-                      {m.user?.full_name ?? "—"}
+                      {merchDisplayName(m, "—")}
                     </option>
                   ))}
                 </select>
