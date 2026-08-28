@@ -30,6 +30,52 @@ export interface ProductUpdate {
   is_active?: boolean;
 }
 
+// ─── Assortment coverage ──────────────────────────────────────────────────────
+
+/**
+ * Where a product is actually tracked. A catalogue entry that no branch carries
+ * is operationally dead — nobody will ever be asked to check it — and the
+ * products screen had no way to tell those apart from the ones doing work.
+ */
+export interface ProductCoverage {
+  /** Branches whose assortment includes this product (active rows only). */
+  branch_count:   number;
+  /** Of those, the branches that mark it required. */
+  required_count: number;
+}
+
+/**
+ * Roll up assortment coverage per product in one query.
+ *
+ * Reads the narrowest possible column set from place_products and reduces in
+ * memory rather than issuing a count per product. Inactive assortment rows are
+ * excluded: a product parked on a branch is not being tracked there.
+ *
+ * NOTE ON SCALE: this reads every visible place_products row. Fine at current
+ * volume and keeps the change migration-free; convert to a view or RPC if
+ * assortments grow into the tens of thousands.
+ */
+export async function fetchProductCoverage(): Promise<Record<string, ProductCoverage>> {
+  const supabase = createClient();
+
+  const { data, error } = await supabase
+    .from("place_products")
+    .select("product_id, is_mandatory, is_active");
+
+  if (error) throw error;
+
+  const out: Record<string, ProductCoverage> = {};
+
+  for (const row of data ?? []) {
+    if (!row.is_active) continue;
+    const entry = (out[row.product_id] ??= { branch_count: 0, required_count: 0 });
+    entry.branch_count += 1;
+    if (row.is_mandatory) entry.required_count += 1;
+  }
+
+  return out;
+}
+
 // ─── Read ─────────────────────────────────────────────────────────────────────
 
 /**

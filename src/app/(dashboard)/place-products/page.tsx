@@ -15,6 +15,8 @@ import {
   ShieldCheck,
   MapPin,
   Tag,
+  BarChart2,
+  EyeOff,
 } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
 import { useTranslation, type TranslationFn } from "@/hooks/use-translation";
@@ -236,6 +238,12 @@ export default function PlaceProductsPage() {
   // ── Stats ───────────────────────────────────────────────────────────────────
   const totalCount     = placeProducts.length;
   const mandatoryCount = placeProducts.filter((pp) => pp.is_mandatory).length;
+  // A parked row still occupies the assortment but is not tracked on a visit,
+  // so the total alone overstates what the merchandiser will actually see.
+  const inactiveCount  = placeProducts.filter((pp) => !pp.is_active).length;
+  // min_stock is the shelf quantity a visit is measured against; 0 means no
+  // expectation was set, which is different from expecting zero.
+  const withMinCount   = placeProducts.filter((pp) => pp.min_stock > 0).length;
 
   const activePlaces = useMemo(
     () => places.filter((p) => p.is_active),
@@ -301,6 +309,18 @@ export default function PlaceProductsPage() {
                 <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-50 text-amber-700 text-[12px] font-semibold">
                   <ShieldCheck className="w-3.5 h-3.5" />
                   {t("placeProducts.mandatory").replace("{count}", String(mandatoryCount))}
+                </span>
+              )}
+              {withMinCount > 0 && (
+                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-ink-100 text-ink-600 text-[12px] font-semibold">
+                  <BarChart2 className="w-3.5 h-3.5" />
+                  {t("placeProducts.withMin").replace("{count}", String(withMinCount))}
+                </span>
+              )}
+              {inactiveCount > 0 && (
+                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-ink-100 text-ink-500 text-[12px] font-semibold">
+                  <EyeOff className="w-3.5 h-3.5" />
+                  {t("placeProducts.inactive").replace("{count}", String(inactiveCount))}
                 </span>
               )}
             </div>

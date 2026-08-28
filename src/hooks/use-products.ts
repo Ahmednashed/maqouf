@@ -4,19 +4,34 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
   fetchProducts,
+  fetchProductCoverage,
   createProduct,
   updateProduct,
   deleteProduct,
   type ProductInsert,
   type ProductUpdate,
+  type ProductCoverage,
 } from "@/services/products";
 import { useTranslation } from "@/hooks/use-translation";
 import type { Product } from "@/types";
 
 // ─── Query key ────────────────────────────────────────────────────────────────
 export const PRODUCTS_QUERY_KEY = ["products"] as const;
+export const PRODUCT_COVERAGE_QUERY_KEY = ["products", "coverage"] as const;
 
 // ─── Read ─────────────────────────────────────────────────────────────────────
+
+/**
+ * Per-product assortment coverage. Its own query so the catalogue paints from
+ * the much cheaper products list and fills the coverage column in when it
+ * lands — a slow roll-up must never hold up the table itself.
+ */
+export function useProductCoverage() {
+  return useQuery<Record<string, ProductCoverage>>({
+    queryKey: PRODUCT_COVERAGE_QUERY_KEY,
+    queryFn:  fetchProductCoverage,
+  });
+}
 
 export function useProducts() {
   return useQuery<Product[]>({

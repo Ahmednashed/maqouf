@@ -15,7 +15,8 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
 import { useTranslation, type TranslationFn } from "@/hooks/use-translation";
-import { useProducts } from "@/hooks/use-products";
+import { useProductCoverage, useProducts } from "@/hooks/use-products";
+import type { ProductCoverage } from "@/services/products";
 import type { Product, ProductCategory } from "@/types";
 import { ProductModal } from "./_components/ProductModal";
 import { DeleteModal } from "./_components/DeleteModal";
@@ -133,12 +134,26 @@ export default function ProductsPage() {
   // ── Search & filter ─────────────────────────────────────────────────────────
   const [search,           setSearch]           = useState("");
   const [filterCategory,   setFilterCategory]   = useState<string>("");
+  const [filterStatus,     setFilterStatus]     = useState<"" | "active" | "inactive">("");
+
+  const { data: coverage = {} } = useProductCoverage();
+
+  const filtersApplied = Boolean(search.trim() || filterCategory || filterStatus);
+
+  function clearFilters() {
+    setSearch("");
+    setFilterCategory("");
+    setFilterStatus("");
+  }
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
 
     return products.filter((p) => {
       if (filterCategory && p.category !== filterCategory) return false;
+
+      if (filterStatus === "active"   && !p.is_active) return false;
+      if (filterStatus === "inactive" &&  p.is_active) return false;
       if (!q) return true;
       return (
         p.name_ar.toLowerCase().includes(q) ||
@@ -146,7 +161,7 @@ export default function ProductsPage() {
         p.sku.toLowerCase().includes(q)
       );
     });
-  }, [products, search, filterCategory]);
+  }, [products, search, filterCategory, filterStatus]);
 
   // ── Summary stats ───────────────────────────────────────────────────────────
   const totalCount  = products.length;
@@ -230,6 +245,29 @@ export default function ProductsPage() {
               </select>
               <ChevronDown className="absolute end-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-ink-400 pointer-events-none" />
             </div>
+
+            {/* Status filter */}
+            <div className="relative">
+              <select
+                value={filterStatus}
+                onChange={(e) => setFilterStatus(e.target.value as "" | "active" | "inactive")}
+                className="h-9 ps-3 pe-8 rounded-lg border border-ink-200 bg-ink-50 text-[13px] text-ink-700 outline-none focus:border-brand-400 focus:ring-1 focus:ring-brand-100 transition-all appearance-none cursor-pointer"
+              >
+                <option value="">{t("products.allStatuses")}</option>
+                <option value="active">{t("common.active")}</option>
+                <option value="inactive">{t("common.inactive")}</option>
+              </select>
+              <ChevronDown className="absolute end-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-ink-400 pointer-events-none" />
+            </div>
+
+            {filtersApplied && (
+              <button
+                onClick={clearFilters}
+                className="h-9 px-3 rounded-lg border border-ink-200 text-[12.5px] font-semibold text-ink-600 hover:bg-ink-50 transition-all"
+              >
+                {t("products.clearFilters")}
+              </button>
+            )}
           </div>
         )}
 
@@ -263,8 +301,21 @@ export default function ProductsPage() {
               <tbody>
                 {filtered.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="py-12 text-center text-ink-400 text-[13px]">
-                      {t("common.noData")}
+                    <td colSpan={7} className="py-12 text-center">
+                      <p className="text-[13.5px] font-semibold text-ink-600">
+                        {t("products.noResults")}
+                      </p>
+                      <p className="mt-1 text-[12px] text-ink-400">
+                        {t("products.noResultsDesc")}
+                      </p>
+                      {filtersApplied && (
+                        <button
+                          onClick={clearFilters}
+                          className="mt-3 h-9 px-4 rounded-lg border border-ink-200 text-[12.5px] font-semibold text-ink-600 hover:bg-ink-50 transition-all"
+                        >
+                          {t("products.clearFilters")}
+                        </button>
+                      )}
                     </td>
                   </tr>
                 ) : (
@@ -272,6 +323,7 @@ export default function ProductsPage() {
                     <ProductRow
                       key={product.id}
                       product={product}
+                      coverage={coverage[product.id]}
                       locale={locale}
                       t={t}
                       onEdit={() => openEdit(product)}
@@ -316,6 +368,9 @@ function TableHead({ t }: { t: TranslationFn }) {
         {t("products.priceLabel")}
       </th>
       <th className="px-4 py-3 text-start text-[11.5px] font-semibold text-ink-400 uppercase tracking-wide">
+        {t("products.colCoverage")}
+      </th>
+      <th className="px-4 py-3 text-start text-[11.5px] font-semibold text-ink-400 uppercase tracking-wide">
         {t("common.status")}
       </th>
       <th className="px-4 py-3 text-end text-[11.5px] font-semibold text-ink-400 uppercase tracking-wide">
@@ -325,16 +380,55 @@ function TableHead({ t }: { t: TranslationFn }) {
   );
 }
 
+// ─── Coverage cell ────────────────────────────────────────────────────────────
+
+/**
+ * How many branches carry this product, and how many of them require it.
+ *
+ * A product no branch carries will never reach a merchandiser, so it reads as
+ * a warning rather than a zero: it is in the catalogue doing nothing. Counts
+ * are over active assortment rows only — a product parked on a branch is not
+ * being tracked there.
+ */
+function CoverageCell({
+  coverage, t,
+}: { coverage?: ProductCoverage; t: TranslationFn }) {
+  const branches = coverage?.branch_count ?? 0;
+
+  if (branches === 0) {
+    return (
+      <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 text-[11.5px] font-semibold">
+        {t("products.noBranches")}
+      </span>
+    );
+  }
+
+  return (
+    <div className="text-ink-700">
+      <span className="font-semibold">
+        {t("products.branchCount").replace("{count}", String(branches))}
+      </span>
+      {(coverage?.required_count ?? 0) > 0 && (
+        <p className="text-[11.5px] text-amber-600">
+          {t("products.requiredIn").replace("{count}", String(coverage!.required_count))}
+        </p>
+      )}
+    </div>
+  );
+}
+
 // ─── Table row ────────────────────────────────────────────────────────────────
 interface ProductRowProps {
   product:  Product;
+  /** Undefined while the coverage roll-up is still loading. */
+  coverage?: ProductCoverage;
   locale:   string;
   t:        TranslationFn;
   onEdit:   () => void;
   onDelete: () => void;
 }
 
-function ProductRow({ product, locale, t, onEdit, onDelete }: ProductRowProps) {
+function ProductRow({ product, coverage, locale, t, onEdit, onDelete }: ProductRowProps) {
   const primaryName   = locale === "ar" ? product.name_ar : product.name_en;
   const secondaryName = locale === "ar" ? product.name_en : product.name_ar;
   const catLabel      = t(`products.cat.${product.category}` as Parameters<typeof t>[0]);
@@ -408,6 +502,10 @@ function ProductRow({ product, locale, t, onEdit, onDelete }: ProductRowProps) {
       </td>
 
       {/* Status */}
+      <td className="px-4 py-3.5">
+        <CoverageCell coverage={coverage} t={t} />
+      </td>
+
       <td className="px-4 py-3.5">
         <StatusBadge active={product.is_active} t={t} />
       </td>
