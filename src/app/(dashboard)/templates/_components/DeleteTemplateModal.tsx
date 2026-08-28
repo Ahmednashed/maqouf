@@ -4,6 +4,7 @@ import { Trash2, X, AlertTriangle } from "lucide-react";
 import { useTranslation } from "@/hooks/use-translation";
 import { useDeleteTemplate } from "@/hooks/use-templates";
 import type { TemplateListItem } from "@/types";
+import { fieldCountLabel } from "@/lib/i18n/plural";
 
 // ─── Props ────────────────────────────────────────────────────────────────────
 
@@ -70,7 +71,7 @@ export function DeleteTemplateModal({ template, onClose }: DeleteTemplateModalPr
             <span className="text-[13px] font-semibold text-ink-800">{name}</span>
             {template.field_count > 0 && (
               <span className="ms-auto text-[11.5px] text-ink-400">
-                {template.field_count} {t("templates.fieldsCount")}
+                {fieldCountLabel(template.field_count, locale, t)}
               </span>
             )}
           </div>

@@ -22,6 +22,7 @@ import { DeleteTemplateModal } from "../_components/DeleteTemplateModal";
 import { TemplateModal }       from "../_components/TemplateModal";
 import type { FieldType, TemplateFieldFull, TemplateListItem } from "@/types";
 import type { TranslationKey } from "@/lib/i18n/translations";
+import { fieldCountLabel } from "@/lib/i18n/plural";
 
 // ─── Field type label key map ─────────────────────────────────────────────────
 // Maps each FieldType that has a "templates.fieldType_X" translation to that key.
@@ -496,7 +497,7 @@ export default function TemplateBuilderPage() {
 
             {/* Field count chip */}
             <p className="text-center text-[11.5px] text-ink-400 mt-2.5">
-              {fields.length} {t("templates.fieldsCount")}
+              {fieldCountLabel(fields.length, locale, t)}
             </p>
           </div>
         </div>

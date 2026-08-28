@@ -28,6 +28,7 @@ import {
 } from "@/lib/visit-create-plan";
 import type { TranslationKey } from "@/lib/i18n/translations";
 import { merchDisplayName } from "@/lib/utils/member-name";
+import { fieldCountLabel } from "@/lib/i18n/plural";
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
@@ -77,7 +78,7 @@ interface VisitCreateModalProps {
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export function VisitCreateModal({ onClose, initialDate }: VisitCreateModalProps) {
-  const { t }    = useTranslation();
+  const { t, locale } = useTranslation();
   const qc       = useQueryClient();
   const create   = useCreateVisit();
   const [submitting, setSubmitting] = useState(false);
@@ -318,7 +319,7 @@ export function VisitCreateModal({ onClose, initialDate }: VisitCreateModalProps
                   <option key={tmpl.id} value={tmpl.id}>
                     {tmpl.name_ar} / {tmpl.name_en}
                     {" — "}
-                    {tmpl.field_count} {t("templates.fieldsCount")}
+                    {fieldCountLabel(tmpl.field_count, locale, t)}
                   </option>
                 ))}
                 {emptyTemplates.map((tmpl) => (

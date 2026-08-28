@@ -11,6 +11,7 @@ import { useTemplates } from "@/hooks/use-templates";
 import { TemplateModal }       from "./_components/TemplateModal";
 import { DeleteTemplateModal } from "./_components/DeleteTemplateModal";
 import type { TemplateListItem } from "@/types";
+import { fieldCountLabel } from "@/lib/i18n/plural";
 
 // ─── Status badge ─────────────────────────────────────────────────────────────
 
@@ -102,7 +103,7 @@ function TemplateCard({ template, onEdit, onDelete, onOpen }: CardProps) {
           <div className="flex items-center gap-1.5 text-[11.5px] text-ink-500">
             <Hash className="w-3.5 h-3.5 text-ink-400" />
             <span>
-              {template.field_count} {t("templates.fieldsCount")}
+              {fieldCountLabel(template.field_count, locale, t)}
             </span>
           </div>
           {template.usage_count > 0 && (
