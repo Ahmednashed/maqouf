@@ -700,6 +700,7 @@ export const translations = {
     // Dashboard
     "dashboard.title":              "لوحة التحكم",
     "dashboard.attn.title":           "يحتاج إلى إعداد",
+    "dashboard.attn.askAssistant":    "اسأل المساعد عن عملياتك",
     "dashboard.attn.allClear":        "الإعداد مكتمل",
     "dashboard.attn.allClearHint":    "كل فرع لديه تشكيلة ومسؤول، وكل منتج مُسند، وكل قالب منشور يحتوي على حقول.",
     "dashboard.attn.neverVisited":    "{count} فرع لم تتم زيارته مطلقاً",
@@ -1757,6 +1758,7 @@ export const translations = {
     // Dashboard
     "dashboard.title":              "Dashboard",
     "dashboard.attn.title":           "Needs setup",
+    "dashboard.attn.askAssistant":    "Ask the assistant about your operations",
     "dashboard.attn.allClear":        "Setup complete",
     "dashboard.attn.allClearHint":    "Every branch has an assortment and an owner, every product is assigned, and every published template has fields.",
     "dashboard.attn.neverVisited":    "{count} branches never visited",

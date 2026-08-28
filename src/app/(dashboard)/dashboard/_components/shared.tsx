@@ -219,31 +219,3 @@ export function TrendArrow({
   );
 }
 
-// ─── Sparkline placeholder ────────────────────────────────────────────────────
-//
-// Static decorative mini-chart. Replaced with real per-KPI history later.
-
-export function Sparkline({ className }: { className?: string }) {
-  return (
-    <svg
-      viewBox="0 0 64 20"
-      className={cn("w-16 h-5", className)}
-      aria-hidden="true"
-      fill="none"
-    >
-      <path
-        d="M1 15 L9 12 L17 14 L25 8 L33 10 L41 5 L49 7 L57 3 L63 4"
-        stroke="currentColor"
-        strokeWidth="1.6"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        opacity="0.5"
-      />
-      <path
-        d="M1 15 L9 12 L17 14 L25 8 L33 10 L41 5 L49 7 L57 3 L63 4 L63 20 L1 20 Z"
-        fill="currentColor"
-        opacity="0.08"
-      />
-    </svg>
-  );
-}

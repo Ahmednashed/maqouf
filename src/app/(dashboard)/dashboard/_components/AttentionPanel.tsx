@@ -4,7 +4,7 @@ import { memo } from "react";
 import Link from "next/link";
 import {
   ShieldAlert, MapPinOff, PackageX, FileWarning, Clock, UserX,
-  ArrowRight, CheckCircle2, type LucideIcon,
+  ArrowRight, CheckCircle2, Sparkles, type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
 import type { TranslationFn } from "@/hooks/use-translation";
@@ -89,6 +89,14 @@ export const AttentionPanel = memo(function AttentionPanel({ items, loading, t }
             })}
           </ul>
         )}
+        <Link
+          href="/ai"
+          className="flex items-center gap-2 px-4 py-2.5 border-t border-ink-50 text-[12px] text-ink-500 hover:bg-ink-50/60 hover:text-brand-600 transition-colors group"
+        >
+          <Sparkles className="w-3.5 h-3.5 text-violet-400 shrink-0" />
+          <span className="flex-1 min-w-0">{t("dashboard.attn.askAssistant")}</span>
+          <ArrowRight className="w-3.5 h-3.5 text-ink-300 group-hover:text-brand-500 transition-colors shrink-0 rtl:rotate-180" />
+        </Link>
       </Card>
     </DashboardSection>
   );

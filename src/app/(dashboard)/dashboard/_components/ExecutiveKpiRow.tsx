@@ -17,7 +17,7 @@ import { cn } from "@/lib/utils/cn";
 import type { TranslationFn } from "@/hooks/use-translation";
 import type { DashboardData } from "@/services/dashboard";
 import { presenceOf, type ExecutiveExtras } from "@/services/dashboard-extras";
-import { Skeleton, TrendArrow, AnimatedNumber, Sparkline } from "./shared";
+import { Skeleton, TrendArrow, AnimatedNumber } from "./shared";
 
 // ─── Accent system (section 3: color = meaning, used sparingly) ───────────────
 
@@ -93,7 +93,6 @@ const ExecKpiCard = memo(function ExecKpiCard({
           <Icon className="w-4 h-4" />
         </div>
 
-        {!isException && <Sparkline className={cn("mt-0.5", accent.spark)} />}
 
         {raised && (
           <span className="relative flex w-2 h-2 mt-1.5 shrink-0" aria-hidden="true">
