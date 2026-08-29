@@ -141,9 +141,13 @@ export default function DashboardPage() {
     [placesQ.data, placeOpsQ.data, productsQ.data, coverageQ.data, templatesQ.data, date],
   );
 
+  // A failed query resolves to undefined, and deriveAttention would then count
+  // over nothing and report "3 branches never visited" as though it had looked.
+  // Until every input has actually arrived, the panel shows its skeleton rather
+  // than a figure derived from data it does not have.
   const attentionLoading =
-    placesQ.isLoading || placeOpsQ.isLoading || productsQ.isLoading ||
-    coverageQ.isLoading || templatesQ.isLoading;
+    !(placesQ.isSuccess && placeOpsQ.isSuccess && productsQ.isSuccess &&
+      coverageQ.isSuccess && templatesQ.isSuccess);
 
   const insights = useMemo(
     () => deriveInsights(dashboard.data, extras.data),

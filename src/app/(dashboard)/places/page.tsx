@@ -119,7 +119,11 @@ export default function PlacesPage() {
   const { data: chains = [] } = useChains();
   // Operational roll-up and the team roster load alongside the register; the
   // table paints without them and fills these columns in when they land.
-  const { data: ops = {} }     = usePlaceOperations();
+  // isSuccess, not just data: on error the hook returns undefined, and
+  // defaulting that to {} would render every branch as "never visited / no
+  // assortment" — a definite claim built from missing data. The cells below
+  // show an unknown state instead.
+  const { data: ops = {}, isSuccess: opsReady } = usePlaceOperations();
   const { data: members = [] } = useCompanyUsers();
 
   // Riyadh business day — the same definition the rest of the app uses, so
@@ -352,6 +356,7 @@ export default function PlacesPage() {
                       key={place.id}
                       place={place}
                       ops={ops[place.id]}
+                      opsReady={opsReady}
                       assignedName={
                         (() => {
                           if (!place.assigned_user_id) return null;
@@ -406,8 +411,11 @@ function daysBetween(fromIso: string, toIso: string): number {
  * Amber past a fortnight, rose when never visited at all.
  */
 function LastVisitCell({
-  ops, today, t,
-}: { ops?: PlaceOps; today: string; t: TranslationFn }) {
+  ops, opsReady, today, t,
+}: { ops?: PlaceOps; opsReady: boolean; today: string; t: TranslationFn }) {
+  if (!opsReady) {
+    return <span className="text-[12px] text-ink-300" title={t("common.dataUnavailable")}>—</span>;
+  }
   if (!ops || !ops.last_visit_date) {
     return (
       <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-rose-50 text-rose-600 text-[11.5px] font-semibold">
@@ -439,7 +447,10 @@ function LastVisitCell({
 
 // ─── Assortment cell ──────────────────────────────────────────────────────────
 
-function AssortmentCell({ ops, t }: { ops?: PlaceOps; t: TranslationFn }) {
+function AssortmentCell({ ops, opsReady, t }: { ops?: PlaceOps; opsReady: boolean; t: TranslationFn }) {
+  if (!opsReady) {
+    return <span className="text-[12px] text-ink-300" title={t("common.dataUnavailable")}>—</span>;
+  }
   if (!ops || ops.product_count === 0) {
     return <span className="text-[12px] text-ink-300">{t("places.noAssortment")}</span>;
   }
@@ -492,8 +503,10 @@ function TableHead({ t }: { t: TranslationFn }) {
 // ─── Table row ────────────────────────────────────────────────────────────────
 interface PlaceRowProps {
   place:        PlaceWithChain;
-  /** Undefined while the operational roll-up is still loading. */
+  /** Undefined while the operational roll-up is still loading, or on error. */
   ops?:         PlaceOps;
+  /** False until the roll-up has actually resolved — see the hook call site. */
+  opsReady:     boolean;
   /** Resolved display name, or null when the branch has no owner. */
   assignedName: string | null;
   today:        string;
@@ -503,7 +516,7 @@ interface PlaceRowProps {
   onDelete:     () => void;
 }
 
-function PlaceRow({ place, ops, assignedName, today, locale, t, onEdit, onDelete }: PlaceRowProps) {
+function PlaceRow({ place, ops, opsReady, assignedName, today, locale, t, onEdit, onDelete }: PlaceRowProps) {
   const primaryName   = locale === "ar" ? place.branch_ar : place.branch_en;
   const secondaryName = locale === "ar" ? place.branch_en : place.branch_ar;
   const city          = locale === "ar" ? (place.city_ar ?? place.city_en) : (place.city_en ?? place.city_ar);
@@ -591,12 +604,12 @@ function PlaceRow({ place, ops, assignedName, today, locale, t, onEdit, onDelete
 
       {/* Last visit */}
       <td className="px-4 py-3.5">
-        <LastVisitCell ops={ops} today={today} t={t} />
+        <LastVisitCell ops={ops} opsReady={opsReady} today={today} t={t} />
       </td>
 
       {/* Assortment */}
       <td className="px-4 py-3.5">
-        <AssortmentCell ops={ops} t={t} />
+        <AssortmentCell ops={ops} opsReady={opsReady} t={t} />
       </td>
 
       {/* Status */}
