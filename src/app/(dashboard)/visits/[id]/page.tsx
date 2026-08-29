@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { toast } from "sonner";
@@ -32,7 +32,14 @@ import { useTemplate } from "@/hooks/use-templates";
 import { merchDisplayName, merchInitial } from "@/lib/utils/member-name";
 import type { VisitProductWithDetails } from "@/services/visit-products";
 import type { VisitWithDetails } from "@/services/visits";
+import type { VisitStatus } from "@/types";
 import { CompleteModal } from "../_components/CompleteModal";
+import { VisitPlanPanel } from "../_components/VisitPlanPanel";
+import { usePlaceProducts } from "@/hooks/use-place-products";
+import {
+  deriveVisitProductPlan,
+  deriveVisitFieldPlan,
+} from "@/lib/visit-plan";
 import {
   TemplateFieldSection,
   type FieldResponses,
@@ -316,6 +323,28 @@ function ProductCard({ item, entry, readOnly, locale, t, onChange }: ProductCard
   );
 }
 
+// ─── Status chip ──────────────────────────────────────────────────────────────
+// Same colour + icon pairing the calendar uses (VisitBlock), and the same
+// status.* labels, so a visit reads identically wherever it appears. Status is
+// carried by icon AND colour, never colour alone.
+
+const DETAIL_STATUS: Record<VisitStatus, { chip: string; Icon: typeof Clock }> = {
+  pending:    { chip: "border-ink-200 bg-white text-ink-700",              Icon: Clock },
+  inprogress: { chip: "border-blue-300 bg-blue-50 text-blue-800",          Icon: Play },
+  completed:  { chip: "border-emerald-200 bg-emerald-50 text-emerald-800", Icon: CheckCircle2 },
+  missed:     { chip: "border-rose-200 bg-rose-50 text-rose-700",          Icon: XCircle },
+};
+
+function StatusChip({ status, t }: { status: VisitStatus; t: TranslationFn }) {
+  const { chip, Icon } = DETAIL_STATUS[status];
+  return (
+    <span className={cn("inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[12px] font-bold", chip)}>
+      <Icon className="w-3.5 h-3.5" />
+      {t(`status.${status}`)}
+    </span>
+  );
+}
+
 // ─── Status banner ────────────────────────────────────────────────────────────
 
 function StatusBanner({ status, t }: { status: string; t: TranslationFn }) {
@@ -569,6 +598,13 @@ export default function VisitDetailPage() {
   const templateId = visit?.template_id ?? "";
   const { data: template } = useTemplate(templateId);
 
+  // The branch assortment is what the visit is MEANT to cover. visit_products
+  // only exists once initVisitProducts() has run at start-of-visit, so without
+  // this a planned visit can say nothing about itself. Same query key the
+  // /place-products screen uses, so this is usually already cached.
+  const { data: assortment = [], isLoading: assortmentLoading } =
+    usePlaceProducts(visit?.place_id ?? null);
+
   // ── Mutations ────────────────────────────────────────────────────────────
   const startMutation    = useStartVisit();
   const missedMutation   = useMarkMissed();
@@ -775,6 +811,25 @@ export default function VisitDetailPage() {
     ? (locale === "ar" ? template.name_ar : template.name_en)
     : "";
 
+  // Plan vs record. Both sources are already loaded above; this adds no query.
+  // Responses come from the server rows rather than local edit state so the
+  // summary reports what is actually saved, not what is typed but unsent.
+  const savedResponses = useMemo(() => {
+    const m: Record<string, unknown> = {};
+    visitResponses.forEach((r) => { m[r.field_id] = r.value; });
+    return m;
+  }, [visitResponses]);
+
+  const productPlan = useMemo(
+    () => deriveVisitProductPlan(assortment, visitProducts),
+    [assortment, visitProducts],
+  );
+
+  const fieldPlan = useMemo(
+    () => (template?.fields ? deriveVisitFieldPlan(template.fields, savedResponses) : null),
+    [template?.fields, savedResponses],
+  );
+
   // ── Loading ──────────────────────────────────────────────────────────────
   if (visitLoading) {
     return (
@@ -878,6 +933,8 @@ export default function VisitDetailPage() {
 
           {/* Metadata row */}
           <div className="flex flex-wrap items-center gap-4 mt-4 pt-4 border-t border-ink-100">
+            <StatusChip status={visit.status} t={t} />
+
             <span className="flex items-center gap-1.5 text-[12.5px] text-ink-500">
               <CalendarDays className="w-3.5 h-3.5" />
               {new Date(visit.scheduled_date + "T12:00:00").toLocaleDateString(
@@ -934,6 +991,20 @@ export default function VisitDetailPage() {
       {/* ── Status banners ───────────────────────────────────────────────── */}
       <StatusBanner status={visit.status} t={t} />
 
+      {/* ── Pending: what this visit will cover ──────────────────────────── */}
+      {isPending && (
+        <VisitPlanPanel
+          productPlan={productPlan}
+          fieldPlan={fieldPlan}
+          templateName={templateName}
+          planned
+          compact={false}
+          loading={assortmentLoading || (Boolean(templateId) && !template)}
+          locale={locale}
+          t={t}
+        />
+      )}
+
       {/* ── Pending: GPS check-in panel ──────────────────────────────────── */}
       {isPending && (
         <CheckinPanel
@@ -948,6 +1019,20 @@ export default function VisitDetailPage() {
       {/* ── Active / read-only content ───────────────────────────────────── */}
       {(isInProgress || isReadOnly) && (
         <div className="mb-32 space-y-0">
+
+          {/* ── Plan vs record ───────────────────────────────────────────── */}
+          {/* compact: the audit list below owns every product that has a row,
+              so this repeats only the ones it structurally cannot show. */}
+          <VisitPlanPanel
+            productPlan={productPlan}
+            fieldPlan={fieldPlan}
+            templateName={templateName}
+            planned={false}
+            compact
+            loading={assortmentLoading || productsLoading}
+            locale={locale}
+            t={t}
+          />
 
           {/* ── Template fields ──────────────────────────────────────────── */}
           {templateId && template && template.fields.length > 0 && (
