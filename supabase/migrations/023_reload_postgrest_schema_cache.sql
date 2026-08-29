@@ -26,3 +26,26 @@
 -- ─────────────────────────────────────────────────────────────────────────────
 
 notify pgrst, 'reload schema';
+
+-- UPDATE, after the reload alone did not clear the 404.
+--
+-- PostgREST builds its schema cache from what the API roles can actually
+-- SELECT, and reports PGRST205 — "not found in the schema cache" — for an
+-- object they cannot see. A missing privilege and a missing relation are
+-- therefore indistinguishable over REST: both are 404.
+--
+-- That makes the earlier reasoning wrong. v_untouched_generated_visits
+-- answering 200 for the same key showed that THAT view has the grant, not
+-- that every new view inherits one: Supabase default privileges are tied to
+-- the role that creates the object, so a view created through a different
+-- path can land without them.
+--
+-- Granting explicitly is idempotent, costs nothing, and removes the ambiguity
+-- rather than relying on a default that demonstrably did not apply here. RLS
+-- still does the actual filtering: the view is security_invoker, so SELECT
+-- permission only gets a caller as far as their own company rows.
+
+grant select on public.v_branch_operations to authenticated;
+
+-- Reload again, so the grant is picked up in the same step.
+notify pgrst, 'reload schema';
