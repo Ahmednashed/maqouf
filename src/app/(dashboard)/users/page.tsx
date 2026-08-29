@@ -216,9 +216,13 @@ function UserRow({ member, work, t, locale, onEdit, onToggle, onInvite, onActivi
   // Can invite anyone who has a reachable email — live or cached
   const canInvite   = !isActive && !!(member.user?.email || member.display_email);
 
-  const joinedDate = new Date(member.created_at).toLocaleDateString(undefined, {
-    year: "numeric", month: "short", day: "numeric",
-  });
+  // `undefined` here meant the browser locale, so an Arabic screen printed
+  // "May 8, 2026" beside a properly-localised Arabic date in the next column.
+  // Same formatting the pending-invitations list already uses.
+  const joinedDate = new Date(member.created_at).toLocaleDateString(
+    locale === "ar" ? "ar-SA-u-ca-gregory" : "en-GB",
+    { year: "numeric", month: "short", day: "numeric" },
+  );
 
   const lastActivity = member.last_activity_at
     ? formatRelativeTime(member.last_activity_at, locale as "ar" | "en")
