@@ -5,11 +5,12 @@ future batch should run before calling itself verified.
 
 **Deployed:** `main` @ `b3caf205bb148408a6eff7cbb24abc293133a6e0`
 **Environment:** https://malgofappv1.vercel.app (Vercel, region `fra1`)
-**Captured:** Batch 14. **Updated:** Batch 16, after the Batch 15 service swap.
+**Captured:** Batch 14. **Updated:** Batch 17, after the production drift check.
 
-> **This build requires migrations 022 and 023 to be applied.** It is the first
-> release whose correctness depends on database state the repository cannot
-> verify. See §8 before deploying it anywhere new.
+> **This build requires migrations 022 and 023 to be applied.** Both were
+> applied by hand in the SQL Editor and **verified against production on
+> 2026-08-29** — see §10. Read §8 before deploying to any new
+> environment, and re-run the §10 check once you have.
 
 ---
 
@@ -193,6 +194,9 @@ change. From `b3caf20` onward that is no longer true.
 | `SELECT` for `anon`, `authenticated` | migration 023 | granted |
 | PostgREST schema cache | migration 023 | reloaded after the above |
 
+All three were confirmed present and correct in production on 2026-08-29 —
+see §10 for the evidence and the queries that produced it.
+
 ### Failure symptom if the view is missing
 
 The app fails **honestly but visibly** — it does not silently degrade, because
@@ -232,76 +236,178 @@ the code precisely so this ordering held.
 
 ---
 
-## 9. Migration history — an open bookkeeping gap
+## 9. Migration history — this database has never been CLI-managed
 
-Migrations **022 and 023 were applied by hand in the SQL Editor**, not by the
-migration runner. So `supabase_migrations.schema_migrations` most likely has no
-record of either, and the repository's `supabase/migrations/` directory is ahead
-of what the database believes it has run.
+**Corrected in Batch 17.** This section previously described "022 and 023
+missing from `supabase_migrations.schema_migrations`". That framing was wrong,
+and wrong in the direction that made the situation look smaller than it is:
+there is no history table at all, and there never has been.
 
-Both are idempotent — `create index if not exists`, `create or replace view`,
-`grant`, `notify` — so a future `db push` re-running them should be harmless.
-The risk is confusion, not corruption.
-
-### Read-only diagnostic
-
-Run in the SQL Editor. Changes nothing.
+### What the diagnostic returned
 
 ```sql
--- What the database believes it has applied
-select version, name, inserted_at
-from supabase_migrations.schema_migrations
-order by version;
-
--- Narrowed to the two in question
-select version
-from supabase_migrations.schema_migrations
+select version from supabase_migrations.schema_migrations
 where version in ('022', '023');
---   0 rows  → the gap is real
---   2 rows  → history is already correct, nothing to do
+-- ERROR 42P01: relation "supabase_migrations.schema_migrations" does not exist
 ```
 
-The CLI equivalent, also read-only, is `supabase migration list --linked` — but
-see the warning below before linking.
+A `pg_class` scan across every schema for relations matching `%migration%`
+returned exactly three rows, all owned by Supabase's own services:
 
-### If the gap is real
+| Relation | Owner | What it is |
+|---|---|---|
+| `auth.schema_migrations` | `supabase_auth_admin` | GoTrue internal |
+| `storage.migrations` | `supabase_storage_admin` | Storage service internal |
+| `realtime.schema_migrations` | `supabase_admin` | Realtime service internal |
 
-**The official command is `supabase migration repair`,** which updates the
-history table without executing the migration:
+**All three are decoys.** They exist and are populated in every Supabase project
+from day one; rows in them are not evidence of user migration history. No
+`supabase_migrations` schema exists, and no legacy `public.schema_migrations`
+either.
 
-```bash
-supabase migration repair --status applied 022 023
+Use `pg_catalog` for this, not `information_schema` — the latter filters by
+privilege, so an object you lack rights on reads as absent. Same trap as
+`PGRST205` in §8: one symptom, several causes.
+
+### The table the CLI actually uses
+
+Confirmed by reading the CLI binary on the development machine (v2.100.1),
+which carries these statements verbatim:
+
+```sql
+CREATE SCHEMA IF NOT EXISTS supabase_migrations
+CREATE TABLE IF NOT EXISTS supabase_migrations.schema_migrations (version text NOT NULL PRIMARY KEY)
+ALTER TABLE supabase_migrations.schema_migrations ADD COLUMN IF NOT EXISTS name text
+ALTER TABLE supabase_migrations.schema_migrations ADD COLUMN IF NOT EXISTS statements text[]
 ```
 
-**Do not run it yet.** Two things must be checked first, and one of them is
-genuinely unresolved:
+So the name is right for this CLI version. `name` and `statements` are added by
+later `ALTER`s, so an older table may carry only `version` — check the shape
+before assuming columns exist.
 
-1. **This working copy has never been linked.** `supabase/.temp/project-ref`
-   does not exist. `repair --linked` would need a link, which needs the database
-   password — and would repair whatever project the link points at.
+### Why it is absent
 
-2. **An earlier `supabase db push` reported success while the view did not
-   exist in production.** That is unexplained. Until it is, the CLI cannot be
-   assumed to be talking to this database, and `repair` would then write history
-   rows into the wrong one. That is worse than the gap it fixes: a database
-   would claim to have run migrations it never saw.
+This repository was never initialised as a Supabase CLI project:
 
-So the order is: understand where that push went, *then* link, *then* verify
-with `migration list` that the remote history matches expectations, *then*
-repair.
+- `supabase/config.toml` does not exist and **was never committed on any branch,
+  ever**. It is not gitignored, so the absence is real rather than hidden.
+- `supabase/.temp/` holds only `cli-latest`. There is no `project-ref` file, so
+  this working copy has never been linked to any project.
 
-### Manual INSERT — not recommended
+**All 23 migrations, 001 through 023, were applied by hand through the SQL
+Editor.** That has been the deployment model since the beginning. It is not
+something Batch 15 introduced, and 022/023 are in exactly the same state as
+001–021 — which is the accurate statement, replacing "022 and 023 are missing".
 
-Writing rows into `supabase_migrations.schema_migrations` directly would also
-close the gap, and it is deliberately **not** given here as the default. It
-hand-edits the ledger the tooling trusts, with no validation that the migration
-really ran, and a wrong version string or a mismatched hash silently teaches the
-runner to skip a migration that was never applied. `repair` exists for exactly
-this and should be preferred once the targeting question above is settled.
+It also resolves the previously-unexplained `db push` that reported success
+while the view did not exist in production: with no config and no link, a push
+from this directory could not have reached this project at all.
 
-### Doing nothing is also defensible
+### Blast radius of an accidental `db push` — smaller than previously stated
 
-The gap costs one surprise on the next `db push` — two idempotent migrations
-listed as pending. If the CLI is not being used to deploy migrations anyway, the
-honest fix may simply be to record that the SQL Editor is the deployment path
-for this project, and keep this section current.
+This section used to imply a push would attempt all 23 migrations against live
+production. It would not get that far.
+
+`001_initial_schema.sql` contains **13 unguarded `CREATE TABLE` statements** and
+no `IF NOT EXISTS`. A push would abort on the first one with *relation already
+exists*, having applied nothing. Every destructive statement in the tree — 46
+lines, all `DROP … IF EXISTS` on policies, triggers and constraints — lives in
+002 and later and would never be reached.
+
+The failure mode is **loud and safe**. Nothing here is urgent.
+
+### The remaining operational decision
+
+Whether to adopt CLI migration history is a real choice with a real cost. It
+should be made deliberately, not drifted into.
+
+**The former blocker is gone.** The argument against `supabase migration repair`
+was that it marks versions applied *without verifying the database matches
+them*, which would have frozen unknown drift into a state that then claimed to
+be verified. §10 establishes there is no drift to freeze.
+
+**What adoption would cost:** `supabase init`, then `supabase link` (which needs
+the database password), then marking **all 23** versions applied — not just 022
+and 023. That creates the schema and inserts 23 rows. It is a mutation, and it
+deserves its own batch and its own approval.
+
+**Not adopting is equally defensible.** Manual SQL Editor deployment is the real
+process here, it has carried 23 migrations, and §10 shows it produced a database
+matching the files exactly. The cost of staying as-is is narrow: `supabase
+db push`, `db diff` and `migration list` are unavailable, and anyone who reaches
+for one gets a confusing answer rather than a useful one.
+
+**What is not acceptable is leaving the choice unrecorded.** Whichever way it
+goes, it belongs in this file.
+
+---
+
+## 10. Production drift check — verified 2026-08-29
+
+Read-only verification that production matches the committed migration files
+for the objects that matter. Eight `pg_catalog` queries, no mutations.
+
+It was prompted by a specific, nameable risk rather than general caution:
+migration 022 was applied using a manual SQL Editor variant written to be safe
+to paste, not one guaranteed identical to the committed file. Nobody had checked
+whether the two agreed.
+
+### Result: no drift
+
+| Checked | Expected | Found |
+|---|---|---|
+| `v_branch_operations` exists | yes | yes |
+| — `security_invoker` | `true` | `true` |
+| — column shape | 7 columns; `last_visit_status` is the `visit_status` enum | exact match |
+| — definition | the semantics of 022 | semantically identical |
+| — `SELECT` for `anon` / `authenticated` | granted | both granted |
+| `v_untouched_generated_visits` | the 021 state, not the unsafe 020 one | 021 — body **and** comment |
+| — `security_invoker` | `true` | `true` |
+| `idx_visits_place_date` | `(place_id, scheduled_date DESC)`, valid | exact match, valid |
+| `idx_schedules_template`, `idx_visit_products_visit`, `idx_vtr_visit_lookup` | present, valid | all present and valid |
+| `schedules.template_id` | nullable `uuid`, `ON DELETE SET NULL` | exact match |
+| RLS on `visits`, `places`, `place_products` | enabled, with policies | enabled; 4 / 4 / 3 policies |
+
+The comment on each view was compared character by character against the
+committed file. `v_untouched_generated_visits` carries **021's** comment, not
+020's — and since `create or replace view` and `comment on view` are separate
+statements, that shows 021 ran to completion rather than being partially pasted.
+
+### How to read a `pg_get_viewdef` comparison
+
+The live definition never matches the migration file textually. Postgres
+re-renders it from the parse tree: `in (…)` becomes `= ANY (ARRAY[…])`, literals
+gain explicit casts (`0::bigint`), redundant aliases are dropped, and the whole
+thing is re-indented and schema-qualified. **Textual difference is not drift.**
+
+Compare the load-bearing elements instead. For 022 those are:
+
+- the `status in ('completed','inprogress')` filter — the definition of "visited"
+- the `scheduled_date desc, created_at desc, id desc` tiebreak
+- the `limit 1` inside the lateral join
+- `count(*)` with **no** `is_active` filter — the deliberate inconsistency with
+  `initVisitProducts()` is preserved, not silently corrected
+
+All four survived. For 021: all twelve `WHERE` conditions and both `NOT EXISTS`
+probes are present and unmodified.
+
+### One observation, not a defect
+
+`anon` and `authenticated` hold `INSERT`, `UPDATE`, `DELETE` and `TRUNCATE` on
+`v_branch_operations`, not only `SELECT`. Migration 023 granted `SELECT`; the
+rest arrive from Supabase's project-wide default privileges at `CREATE VIEW`
+time. Every table in `public` looks the same.
+
+It is inert on this view — lateral joins, aggregates and a `LIMIT` make it
+non-auto-updatable, so writes fail regardless of the grant. RLS is the real
+boundary either way, and it is enabled on all three base tables above.
+
+### What this buys, and what it does not
+
+Before this check, the repository was *assumed* to describe production. For
+these objects it is now evidenced. The warning at the top of this file — a
+release depending on database state the repository cannot verify — was accurate
+when written and is discharged for `b3caf20`.
+
+It says nothing about the next database-dependent release. Re-run this check
+whenever one ships, before trusting the code that depends on it.

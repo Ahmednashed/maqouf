@@ -11,8 +11,9 @@ replaces each when it stops being so.
 Each entry says what it reads today, why it is fine now, the specific point at
 which it stops being fine, and what should replace it.
 
-**Captured:** Batch 14. **Updated:** Batch 16, after the Batch 15 service swap.
-**Current `main`:** `b3caf20` — §1 and §2 resolved by migration 022.
+**Captured:** Batch 14. **Updated:** Batch 17, after the production drift check.
+**Current `main`:** `b3caf20` — §1 and §2 resolved by migration 022, and
+both verified present and correct in production on 2026-08-29.
 
 ---
 
@@ -85,6 +86,13 @@ broken deterministically by `created_at, id`.
 Riyadh staleness stays in the app: the view returns `last_visit_date` only, and
 `daysSinceIso()` measures it against `riyadhToday()`, so the business day cannot
 drift to the database server's clock.
+
+**Verified in production, 2026-08-29.** The view definition is semantically
+identical to the committed file — the visited-status filter, the
+`created_at, id` tiebreak and the `limit 1` all intact — and
+`idx_visits_place_date` exists as `(place_id, scheduled_date DESC)` and is
+valid, so the payload claim above rests on a real index rather than an assumed
+one. See docs/PRODUCTION-READINESS.md §10.
 
 ---
 
@@ -246,3 +254,8 @@ relation exist?* — settled it in one query.
 **The order that works:** apply the SQL → verify with `pg_views` and
 `pg_class.reloptions` → confirm the REST endpoint answers → *then* ship the code
 that depends on it. Never the other way round.
+
+**And verify afterwards, not just before.** Hand-applied SQL can diverge from
+the file it came from, and nothing in the repository detects that. A read-only
+drift check against `pg_catalog` settled it here in one pass, and found no
+drift; it is cheap enough to repeat on every database-dependent release.
