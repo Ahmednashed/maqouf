@@ -35,6 +35,7 @@ import type { VisitWithDetails } from "@/services/visits";
 import type { VisitStatus } from "@/types";
 import { CompleteModal } from "../_components/CompleteModal";
 import { VisitPlanPanel } from "../_components/VisitPlanPanel";
+import { VisitLocationCard } from "../_components/VisitLocationCard";
 import { usePlaceProducts } from "@/hooks/use-place-products";
 import {
   deriveVisitProductPlan,
@@ -990,6 +991,9 @@ export default function VisitDetailPage() {
 
       {/* ── Status banners ───────────────────────────────────────────────── */}
       <StatusBanner status={visit.status} t={t} />
+
+      {/* ── Location ─────────────────────────────────────────────────────── */}
+      <VisitLocationCard visit={visit} started={Boolean(visit.started_at)} t={t} />
 
       {/* ── Pending: what this visit will cover ──────────────────────────── */}
       {isPending && (

@@ -3,6 +3,7 @@
 import { useState, useMemo } from "react";
 import {
   MapPin,
+  MapPinOff,
   Plus,
   Search,
   Pencil,
@@ -17,6 +18,7 @@ import { cn } from "@/lib/utils/cn";
 import { useTranslation, type TranslationFn } from "@/hooks/use-translation";
 import { usePlaces, usePlaceOperations } from "@/hooks/use-places";
 import { useChains } from "@/hooks/use-chains";
+import { branchHasCoords } from "@/lib/gps-status";
 import { useCompanyUsers } from "@/hooks/use-company-users";
 import { riyadhToday } from "@/lib/utils/date";
 import type { PlaceWithChain, PlaceOps } from "@/services/places";
@@ -506,6 +508,7 @@ function PlaceRow({ place, ops, assignedName, today, locale, t, onEdit, onDelete
   const secondaryName = locale === "ar" ? place.branch_en : place.branch_ar;
   const city          = locale === "ar" ? (place.city_ar ?? place.city_en) : (place.city_en ?? place.city_ar);
   const chainColor    = place.chain?.color ?? "#111827";
+  const hasCoords     = branchHasCoords(place);
   const chainLabel    = place.chain
     ? (locale === "ar" ? place.chain.name_ar : place.chain.name_en)
     : "";
@@ -547,7 +550,10 @@ function PlaceRow({ place, ops, assignedName, today, locale, t, onEdit, onDelete
         </code>
       </td>
 
-      {/* City / Region */}
+      {/* City / Region / coordinate state.
+          Folded into the cell that already means "where is this branch"
+          rather than a ninth column. Coordinates are not cosmetic: without
+          them no visit here can ever be location-verified. */}
       <td className="px-4 py-3.5">
         <div className="text-ink-700">
           {city ? (
@@ -557,6 +563,19 @@ function PlaceRow({ place, ops, assignedName, today, locale, t, onEdit, onDelete
           )}
           {place.region && (
             <p className="text-[11.5px] text-ink-400">{place.region}</p>
+          )}
+          {hasCoords ? (
+            <p className="text-[11px] text-ink-400 flex items-center gap-1 mt-0.5" title={t("places.coords.present")}>
+              <MapPin className="w-3 h-3 text-emerald-500" />
+              <span className="font-mono" dir="ltr">
+                {place.lat!.toFixed(4)}, {place.lng!.toFixed(4)}
+              </span>
+            </p>
+          ) : (
+            <p className="text-[11px] text-amber-600 font-medium flex items-center gap-1 mt-0.5">
+              <MapPinOff className="w-3 h-3" />
+              {t("places.coords.missing")}
+            </p>
           )}
         </div>
       </td>

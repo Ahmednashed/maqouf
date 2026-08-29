@@ -1,46 +1,46 @@
 "use client";
 
 import { memo } from "react";
-import { Map, MapPin, Smartphone } from "lucide-react";
+import Link from "next/link";
+import { Map, MapPinOff, Smartphone, ArrowLeft } from "lucide-react";
 import type { TranslationFn } from "@/hooks/use-translation";
 import { DashboardSection, Card } from "./shared";
 
-// ─── Future contract ──────────────────────────────────────────────────────────
-// When a map provider is integrated, positions plug straight into this prop —
-// the card shell, header, and layout don't change.
-
-export interface TeamPosition {
-  memberId: string;
-  name:     string;
-  color:    string | null;
-  lat:      number;
-  lng:      number;
-  updatedAt: string;
-}
+// ─────────────────────────────────────────────────────────────────────────────
+// There is no live position feed yet, and this card says so.
+//
+// It used to say so in words while drawing a small map tile beside them:
+// two crossing lines commented "Fake roads", two map pins, and a coloured
+// dot — in the same emerald/amber the presence states use. A picture of pins
+// on a map is read before the sentence denying it, so the card asserted
+// exactly what its own text withdrew.
+//
+// A missing feed is not a reason to draw a fake one. What is left is the
+// honest statement plus the one piece of location work that CAN be done from
+// the web app today: branches are only checkable if they have coordinates.
+// ─────────────────────────────────────────────────────────────────────────────
 
 interface LiveTeamMapCardProps {
-  t:          TranslationFn;
-  positions?: TeamPosition[];   // unused until map integration lands
+  t: TranslationFn;
+  /** Branches with no lat/lng. Omitted while the query is still loading. */
+  branchesWithoutCoords?: number;
+  locale: string;
 }
 
-// ─── Placeholder component ────────────────────────────────────────────────────
+export const LiveTeamMapCard = memo(function LiveTeamMapCard({
+  t, branchesWithoutCoords, locale,
+}: LiveTeamMapCardProps) {
+  const Arrow = locale === "ar" ? ArrowLeft : ArrowLeft;
+  const gaps  = branchesWithoutCoords ?? 0;
 
-export const LiveTeamMapCard = memo(function LiveTeamMapCard({ t }: LiveTeamMapCardProps) {
   return (
     <DashboardSection title={t("dashboard.section.map")} icon={Map} fill>
       <Card fill className="flex items-center">
-        <div className="flex items-center gap-4">
-          {/* Mini illustration: stylised map tile */}
-          <div className="relative w-20 h-20 rounded-2xl bg-gradient-to-br from-brand-50 to-blue-50 border border-brand-100 shrink-0 overflow-hidden">
-            {/* Fake roads */}
-            <div className="absolute top-1/2 start-0 end-0 h-px bg-brand-200/70 rotate-6" />
-            <div className="absolute top-0 bottom-0 start-1/2 w-px bg-brand-200/70 -rotate-12" />
-            <MapPin className="absolute top-3 start-4 w-3.5 h-3.5 text-brand-400" />
-            <MapPin className="absolute bottom-4 end-3 w-3 h-3 text-emerald-400" />
-            <span className="absolute bottom-2 start-3 w-1.5 h-1.5 rounded-full bg-amber-400" />
+        <div className="flex items-start gap-4">
+          <div className="w-11 h-11 rounded-2xl bg-ink-100 flex items-center justify-center shrink-0">
+            <MapPinOff className="w-5 h-5 text-ink-400" />
           </div>
 
-          {/* Copy */}
           <div className="min-w-0">
             <p className="text-[13.5px] font-bold text-ink-800 leading-tight">
               {t("dashboard.map.noLocations")}
@@ -49,6 +49,18 @@ export const LiveTeamMapCard = memo(function LiveTeamMapCard({ t }: LiveTeamMapC
               <Smartphone className="w-3.5 h-3.5 shrink-0 mt-0.5 text-ink-300" />
               {t("dashboard.map.connectApp")}
             </p>
+
+            {/* The actionable half: a branch with no coordinates can never
+                produce a verified check-in, and that is fixable from here. */}
+            {gaps > 0 && (
+              <Link
+                href="/places"
+                className="mt-2.5 inline-flex items-center gap-1.5 text-[12px] font-semibold text-brand-600 hover:text-brand-700 hover:underline"
+              >
+                <Arrow className="w-3.5 h-3.5 rtl:rotate-180" />
+                {t("dashboard.map.fixCoords").replace("{n}", String(gaps))}
+              </Link>
+            )}
           </div>
         </div>
       </Card>

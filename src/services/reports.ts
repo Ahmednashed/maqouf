@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/client";
+import { tallyGps } from "@/lib/gps-status";
 import { fetchBranchLastVisits, daysSinceIso } from "@/services/places";
 import { riyadhToday } from "@/lib/utils/date";
 
@@ -649,7 +650,10 @@ export async function fetchProductReport(
 interface GpsQueryRow {
   merch_id:                string;
   checkin_verified:        boolean | null;
+  checkin_lat:             number  | null;
+  checkin_lng:             number  | null;
   checkin_distance_meters: number  | null;
+  place: { lat: number | null; lng: number | null } | null;
   merch: {
     display_name: string | null;
     user: { full_name: string } | null;
@@ -661,9 +665,16 @@ export interface GpsReportRow {
   full_name:         string;
   total_started:     number;
   gps_verified:      number;
-  gps_unverified:    number;
-  verification_rate: number;   // %
-  avg_distance:      number;   // metres, verified visits only
+  /** A position was captured that did not validate against the branch. */
+  gps_outside:       number;
+  /** No position captured. Missing data, NOT a failed check — see gps-status. */
+  gps_not_recorded:  number;
+  /** Started visits whose branch has no coordinates, so no check was possible. */
+  no_branch_coords:  number;
+  /** verified / measured, as %. null when nothing was measured. */
+  verification_rate: number | null;
+  /** Metres, verified check-ins only. null when there are none. */
+  avg_distance:      number | null;
 }
 
 export async function fetchGpsReport(
@@ -675,7 +686,8 @@ export async function fetchGpsReport(
   let query = supabase
     .from("visits")
     .select(`
-      merch_id, checkin_verified, checkin_distance_meters,
+      merch_id, checkin_verified, checkin_lat, checkin_lng, checkin_distance_meters,
+      place:places (lat, lng),
       merch:company_users (display_name, user:users!company_users_user_id_fkey (full_name))
     `)
     .gte("scheduled_date", range.from)
@@ -691,45 +703,30 @@ export async function fetchGpsReport(
 
   const rows = (data ?? []) as unknown as GpsQueryRow[];
 
-  const map = new Map<string, { row: GpsReportRow; distances: number[] }>();
-
+  // Group first, then let tallyGps() do the classifying, so this report and
+  // the visit detail page cannot drift apart about what "verified" means.
+  const byMerch = new Map<string, { name: string; rows: GpsQueryRow[] }>();
   for (const r of rows) {
-    const id = r.merch_id;
-    if (!map.has(id)) {
-      map.set(id, {
-        row: {
-          merch_id:          id,
-          full_name:         merchName(r.merch),
-          total_started:     0,
-          gps_verified:      0,
-          gps_unverified:    0,
-          verification_rate: 0,
-          avg_distance:      0,
-        },
-        distances: [],
-      });
-    }
-    const entry = map.get(id)!;
-    entry.row.total_started++;
-    if (r.checkin_verified === true) {
-      entry.row.gps_verified++;
-      if (r.checkin_distance_meters != null) {
-        entry.distances.push(r.checkin_distance_meters);
-      }
-    } else {
-      entry.row.gps_unverified++;
-    }
+    const entry = byMerch.get(r.merch_id)
+      ?? { name: merchName(r.merch), rows: [] as GpsQueryRow[] };
+    entry.rows.push(r);
+    byMerch.set(r.merch_id, entry);
   }
 
-  return Array.from(map.values())
-    .map(({ row, distances }) => ({
-      ...row,
-      verification_rate: row.total_started > 0
-        ? Math.round((row.gps_verified / row.total_started) * 100)
-        : 0,
-      avg_distance: distances.length > 0
-        ? Math.round(distances.reduce((a, b) => a + b, 0) / distances.length)
-        : 0,
-    }))
+  return Array.from(byMerch.entries())
+    .map(([merch_id, { name, rows: merchRows }]) => {
+      const tally = tallyGps(merchRows);
+      return {
+        merch_id,
+        full_name:         name,
+        total_started:     tally.started,
+        gps_verified:      tally.verified,
+        gps_outside:       tally.outside,
+        gps_not_recorded:  tally.notRecorded,
+        no_branch_coords:  tally.noBranchCoords,
+        verification_rate: tally.rate,
+        avg_distance:      tally.avgDistance,
+      };
+    })
     .sort((a, b) => b.total_started - a.total_started);
 }

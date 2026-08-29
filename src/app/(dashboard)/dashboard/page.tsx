@@ -367,7 +367,15 @@ export default function DashboardPage() {
           <LiveActivityFeed />
         </div>
         <div className="xl:col-span-5 min-w-0">
-          <LiveTeamMapCard t={t} />
+          <LiveTeamMapCard
+            t={t}
+            locale={locale}
+            branchesWithoutCoords={
+              placesQ.data
+                ? placesQ.data.filter((p) => p.is_active && (p.lat == null || p.lng == null)).length
+                : undefined
+            }
+          />
         </div>
       </div>
 

@@ -411,8 +411,8 @@ function VisitsTab({ range, locale, filters, meta }: { range: DateRange; locale:
             </tr>
           </thead>
           <tbody>
-            {isLoading && <LoadingRow cols={6} />}
-            {!isLoading && sorted.length === 0 && <EmptyRow cols={6} message={t("reports.noData")} />}
+            {isLoading && <LoadingRow cols={7} />}
+            {!isLoading && sorted.length === 0 && <EmptyRow cols={7} message={t("reports.noData")} />}
             {!isLoading && slice.map((r, i) => (
               <tr key={r.id} className={cn(i > 0 && "border-t border-ink-50")}>
                 <td className="ps-4 py-2.5 text-ink-600 font-mono text-[11.5px]">{r.scheduled_date}</td>
@@ -686,10 +686,13 @@ function GpsTab({ range, filters, meta }: { range: DateRange; filters: ReportFil
     const rows = sorted.map((r) => ({
       [t("reports.col.merch")]:       r.full_name,
       [t("reports.col.totalStarted")]:r.total_started,
-      [t("reports.col.gpsVerified")]: r.gps_verified,
-      [t("reports.col.missing")]:     r.gps_unverified,
-      [t("reports.col.gpsRate")]:     `${r.verification_rate}%`,
-      [t("reports.col.avgDistance")]: r.avg_distance || "",
+      [t("reports.col.gpsVerified")]:     r.gps_verified,
+      [t("reports.col.gpsOutside")]:      r.gps_outside,
+      [t("reports.col.gpsNotRecorded")]:  r.gps_not_recorded,
+      [t("reports.col.noBranchCoords")]:  r.no_branch_coords,
+      // Empty, not 0%: a rate of zero would assert every check failed.
+      [t("reports.col.gpsRate")]:         r.verification_rate === null ? "" : `${r.verification_rate}%`,
+      [t("reports.col.avgDistance")]:     r.avg_distance ?? "",
     }));
     await exportXlsx(rows, `gps-compliance-${range.from}-${range.to}`, meta);
   }
@@ -700,7 +703,10 @@ function GpsTab({ range, filters, meta }: { range: DateRange; filters: ReportFil
         {/* Brief description */}
         <p className="text-[11.5px] text-ink-400 flex items-center gap-1.5">
           <ShieldCheck className="w-3.5 h-3.5 text-emerald-500" />
-          {t("reports.gpsDesc")}
+          <span>
+            {t("reports.gpsDesc")}
+            <span className="block text-[10.5px] text-ink-300">{t("reports.gpsRateHint")}</span>
+          </span>
         </p>
         <button
           onClick={doExport}
@@ -718,8 +724,9 @@ function GpsTab({ range, filters, meta }: { range: DateRange; filters: ReportFil
               <SortTh<Row> col="full_name"         label={t("reports.col.merch")}        sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
               <SortTh<Row> col="total_started"     label={t("reports.col.totalStarted")} sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} align="center" />
               <SortTh<Row> col="gps_verified"      label={t("reports.col.gpsVerified")}  sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} align="center" />
-              <SortTh<Row> col="gps_unverified"    label={t("reports.col.missing")}      sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} align="center" />
-              <SortTh<Row> col="verification_rate" label={t("reports.col.gpsRate")}      sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} align="center" />
+              <SortTh<Row> col="gps_outside"       label={t("reports.col.gpsOutside")}     sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} align="center" />
+              <SortTh<Row> col="gps_not_recorded"  label={t("reports.col.gpsNotRecorded")} sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} align="center" />
+              <SortTh<Row> col="verification_rate" label={t("reports.col.gpsRate")}        sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} align="center" />
               <SortTh<Row> col="avg_distance"      label={t("reports.col.avgDistance")}  sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} align="end" />
             </tr>
           </thead>
@@ -736,10 +743,28 @@ function GpsTab({ range, filters, meta }: { range: DateRange; filters: ReportFil
                     {r.gps_verified}
                   </span>
                 </td>
-                <td className="text-center px-3 py-2.5 text-rose-500 font-semibold">{r.gps_unverified}</td>
-                <td className="text-center px-3 py-2.5"><RateBadge rate={r.verification_rate} /></td>
+                {/* A captured position that did not validate IS a failure. */}
+                <td className={cn("text-center px-3 py-2.5 font-semibold", r.gps_outside > 0 ? "text-rose-500" : "text-ink-300")}>
+                  {r.gps_outside}
+                </td>
+                {/* Nothing measured is not a failure, so it is not painted as one. */}
+                <td className="text-center px-3 py-2.5">
+                  <span className={cn("font-semibold", r.gps_not_recorded > 0 ? "text-ink-500" : "text-ink-300")}>
+                    {r.gps_not_recorded}
+                  </span>
+                  {r.no_branch_coords > 0 && (
+                    <span className="block text-[10.5px] text-amber-600 font-medium" title={t("reports.col.noBranchCoords")}>
+                      {r.no_branch_coords} {t("reports.col.noBranchCoords")}
+                    </span>
+                  )}
+                </td>
+                <td className="text-center px-3 py-2.5">
+                  {r.verification_rate === null
+                    ? <span className="text-[11px] text-ink-400">{t("reports.gpsNoMeasurement")}</span>
+                    : <RateBadge rate={r.verification_rate} />}
+                </td>
                 <td className="text-end pe-4 py-2.5 text-ink-600">
-                  {r.avg_distance > 0 ? `${r.avg_distance}m` : "—"}
+                  {r.avg_distance !== null ? `${r.avg_distance}m` : "—"}
                 </td>
               </tr>
             ))}
