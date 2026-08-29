@@ -75,6 +75,56 @@ export interface BranchLastVisit {
   last_visit_merch:  string | null;
 }
 
+// ─── Branch operations, from the database ────────────────────────────────────
+
+/**
+ * One row per branch, straight out of `public.v_branch_operations`
+ * (migration 022).
+ *
+ * WHAT CHANGED, AND WHY
+ * ─────────────────────
+ * Both functions below used to fetch EVERY visit row the caller could see and
+ * reduce them in the browser to answer one question per branch: when was it
+ * last actually visited. That is one whole-table read on the three most-loaded
+ * screens — see docs/PERFORMANCE-RISKS.md §1.
+ *
+ * The view does the same reduction in Postgres and returns one row per branch.
+ * It is declared `security_invoker = true`, so base-table RLS is still
+ * evaluated as the querying user: a merchandiser continues to see only visits
+ * assigned to them, exactly as the client-side version did.
+ *
+ * The meaning of "visited" — completed or in progress, never pending or
+ * missed — now lives in the view definition rather than here. It is stated in
+ * migration 022 and must stay in step with `matchesLastVisitBucket()` and the
+ * branch coverage report, which read these same fields.
+ *
+ * There is deliberately NO fallback to the old client-side scan. If the view
+ * is missing, these calls must fail loudly rather than quietly degrade into
+ * the whole-table read this change exists to remove.
+ */
+interface BranchOperationsRow {
+  place_id:          string;
+  last_visit_date:   string | null;
+  last_visit_status: string | null;
+  last_visit_merch:  string | null;
+  product_count:     number;
+  required_count:    number;
+}
+
+const BRANCH_OPS_COLUMNS =
+  "place_id, last_visit_date, last_visit_status, last_visit_merch, product_count, required_count";
+
+async function fetchBranchOperationRows(): Promise<BranchOperationsRow[]> {
+  const supabase = createClient();
+
+  const { data, error } = await supabase
+    .from("v_branch_operations")
+    .select(BRANCH_OPS_COLUMNS);
+
+  if (error) throw error;
+  return (data ?? []) as BranchOperationsRow[];
+}
+
 /**
  * Most recent real visit per branch, across ALL history.
  *
@@ -83,41 +133,22 @@ export interface BranchLastVisit {
  * make every stale branch look either fine or unvisited depending on where the
  * window happened to fall.
  *
- * "Real" means the visit actually happened: completed, or in progress right
- * now. Pending has not happened yet, and MISSED means nobody went — counting
- * either would report a branch as visited when no one set foot in it, which is
- * the exact opposite of what a staleness figure is for.
- *
- * Rows arrive newest-first, so the first qualifying row for a branch is its
- * answer and the rest can be skipped.
+ * The view returns a row for every visible branch, including ones that have
+ * never been visited (all three fields null). The previous version simply had
+ * no map entry for those. Both read identically at every call site, because
+ * each one goes through `ops[id]?.field ?? null`.
  */
-const VISITED_STATUSES = new Set(["completed", "inprogress"]);
-
 export async function fetchBranchLastVisits(): Promise<Record<string, BranchLastVisit>> {
-  const supabase = createClient();
-
-  const { data, error } = await supabase
-    .from("visits")
-    .select("place_id, scheduled_date, status, merch_id")
-    .order("scheduled_date", { ascending: false });
-
-  if (error) throw error;
+  const rows = await fetchBranchOperationRows();
 
   const out: Record<string, BranchLastVisit> = {};
-
-  for (const v of data ?? []) {
-    const row = (out[v.place_id] ??= {
-      last_visit_date:   null,
-      last_visit_status: null,
-      last_visit_merch:  null,
-    });
-    if (row.last_visit_date !== null) continue;
-    if (!VISITED_STATUSES.has(v.status)) continue;
-    row.last_visit_date   = v.scheduled_date;
-    row.last_visit_status = v.status;
-    row.last_visit_merch  = v.merch_id;
+  for (const r of rows) {
+    out[r.place_id] = {
+      last_visit_date:   r.last_visit_date,
+      last_visit_status: r.last_visit_status,
+      last_visit_merch:  r.last_visit_merch,
+    };
   }
-
   return out;
 }
 
@@ -133,51 +164,32 @@ export function daysSinceIso(iso: string | null, todayIso: string): number | nul
 }
 
 /**
- * Roll up per-branch operational stats in two queries rather than N+1.
+ * Per-branch operational stats — last real visit, and assortment counts.
  *
- * Both tables are read with the narrowest possible column set and reduced in
- * memory. Visits come back newest-first, so the first row seen for a branch is
- * its latest visit and every later row for that branch can be skipped.
+ * One query. This previously took two: every visit row the caller could see,
+ * plus every place_products row, both reduced in the browser. The view now
+ * answers both halves server-side and returns one row per branch.
  *
- * NOTE ON SCALE: this reads every visit row the caller can see. That is fine at
- * the current volume and keeps the change migration-free, but it is the first
- * thing to convert to a Postgres view or RPC if visit history grows large.
+ * `product_count` counts ALL place_products rows for the branch, not only
+ * active ones — that is what this function did before, so the view reproduces
+ * it. Note it differs from initVisitProducts() and lib/visit-plan.ts, which do
+ * filter on is_active. That inconsistency predates this change and is left
+ * alone here rather than corrected silently, since fixing it would move
+ * numbers on screen.
  */
 export async function fetchPlaceOperations(): Promise<Record<string, PlaceOps>> {
-  const supabase = createClient();
-
-  const [lastVisits, productsRes] = await Promise.all([
-    fetchBranchLastVisits(),
-    supabase
-      .from("place_products")
-      .select("place_id, is_mandatory"),
-  ]);
-
-  if (productsRes.error) throw productsRes.error;
+  const rows = await fetchBranchOperationRows();
 
   const ops: Record<string, PlaceOps> = {};
-
-  const blank = (): PlaceOps => ({
-    last_visit_date:   null,
-    last_visit_status: null,
-    last_visit_merch:  null,
-    product_count:     0,
-    required_count:    0,
-  });
-
-  for (const [placeId, lv] of Object.entries(lastVisits)) {
-    const row = (ops[placeId] ??= blank());
-    row.last_visit_date   = lv.last_visit_date;
-    row.last_visit_status = lv.last_visit_status;
-    row.last_visit_merch  = lv.last_visit_merch;
+  for (const r of rows) {
+    ops[r.place_id] = {
+      last_visit_date:   r.last_visit_date,
+      last_visit_status: r.last_visit_status,
+      last_visit_merch:  r.last_visit_merch,
+      product_count:     r.product_count,
+      required_count:    r.required_count,
+    };
   }
-
-  for (const p of productsRes.data ?? []) {
-    const row = (ops[p.place_id] ??= blank());
-    row.product_count += 1;
-    if (p.is_mandatory) row.required_count += 1;
-  }
-
   return ops;
 }
 
