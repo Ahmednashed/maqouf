@@ -1,15 +1,19 @@
-# Production readiness — end of Phase 2 Batch 13
+# Production readiness — end of Phase 2 Batch 15
 
 State of the deployed app, what is known to be imperfect, and the checklist each
 future batch should run before calling itself verified.
 
-**Deployed:** `main` @ `72bf61d40314e3957cfdd983340e6f3039f2a296`
+**Deployed:** `main` @ `b3caf205bb148408a6eff7cbb24abc293133a6e0`
 **Environment:** https://malgofappv1.vercel.app (Vercel, region `fra1`)
-**Captured:** Batch 14. Documentation only — no application code changed.
+**Captured:** Batch 14. **Updated:** Batch 16, after the Batch 15 service swap.
+
+> **This build requires migrations 022 and 023 to be applied.** It is the first
+> release whose correctness depends on database state the repository cannot
+> verify. See §8 before deploying it anywhere new.
 
 ---
 
-## 1. What Batches 1–13 did
+## 1. What Batches 1–15 did
 
 Each batch was merged fast-forward only and verified in production before the
 next began.
@@ -29,10 +33,17 @@ next began.
 | 11 | Completion | Readiness summary; acknowledgement gate before completing with gaps unrecorded |
 | 12 | Save safety | Unsaved edits block completion online, warn offline; draft no longer cleared when dirty |
 | 13 | Template execution | Per-field answered state; **fixed a Batch 12 false-dirty bug** that permanently blocked completion |
+| 14 | Documentation | TEST-data registry, performance risk map, and this runbook |
+| 15 | **Performance** | Branch operations moved into Postgres — `v_branch_operations`, migration 022. The largest read in the app, on its three most-loaded screens, stopped scaling with visit history |
 
 Two batches (6 and 9) removed things that were actively misleading. Batch 13
 fixed a defect introduced by Batch 12 — found only because Batch 13 finally had
-a template to type into.
+a template to type into. Batch 15 did the same to itself: swapping the service
+exposed that `/places` turned a failed query into "never visited" for every
+branch, which was fixed in the same batch.
+
+Batch 15 is also the first change whose correctness depends on database state
+the repository cannot guarantee — see §8.
 
 ---
 
@@ -63,10 +74,10 @@ decision, not an oversight, and it is not urgent for small avatars.
 
 ## 3. Dictionary invariant
 
-Arabic and English must stay in lockstep: **1114 keys each, 0 duplicates, 0
-gaps** after Batch 14 removed two dead keys (was 1116 at `72bf61d`). Every batch that touches `translations.ts` should
-re-audit. A duplicate key is a TypeScript error (`TS1117`); a *gap* is silent,
-which is why it is checked explicitly.
+Arabic and English must stay in lockstep: **1115 keys each, 0 duplicates, 0
+gaps** at `b3caf20`. Every batch that touches `translations.ts` should re-audit.
+A duplicate key is a TypeScript error (`TS1117`); a *gap* is silent, which is
+why it is checked explicitly.
 
 ---
 
@@ -114,6 +125,9 @@ produce them.
 | Two "answered" counts on one screen | The template header is **live**; the plan panel and completion dialog are **saved-based**. Intended, but they differ while edits are unsaved |
 | 12 modals not on the shared `Modal` | Including `CompleteModal`. Cosmetic inconsistency |
 | `STALE_AFTER_DAYS = 14` duplicated in spirit | `lib/attention.ts` and the reports `gt14` bucket carry the same number in two files |
+| The "visited" rule now lives in SQL | Migration 022 defines `completed`/`inprogress`. It must stay in step with `matchesLastVisitBucket()` and the coverage report, and nothing enforces that. **New in Batch 15** |
+| `product_count` counts inactive assortment rows | Reproduced in the view to preserve behaviour; still inconsistent with `initVisitProducts()` and `lib/visit-plan.ts`, which filter on `is_active` |
+| Same-date last-visit ties changed | Previously arbitrary, now deterministic (`created_at`, `id`). No branch currently has tied qualifying visits, so it is untested against real data |
 
 Performance risks are separate and larger:
 **[`PERFORMANCE-RISKS.md`](./PERFORMANCE-RISKS.md)**.
@@ -159,3 +173,135 @@ What every batch has actually run. Reproducible rather than aspirational.
 - **Verify by discrimination, not absence.** A count of zero proves nothing if
   every case reads zero. Change the data — or say plainly that the state could
   not be produced.
+- **The console buffer does not clear on reload.** Once errors appear in the
+  pane they persist across navigation, so a later "clean console" cannot be read
+  off it. Instrument `fetch` across a fresh navigation instead, and report it
+  as that rather than as a clean console.
+
+---
+
+## 8. Database-dependent releases
+
+Everything before Batch 15 was self-contained: the deployed bundle was the whole
+change. From `b3caf20` onward that is no longer true.
+
+### What this build requires
+
+| Object | From | Must be |
+|---|---|---|
+| `public.v_branch_operations` | migration 022 | exists, `security_invoker=true` |
+| `SELECT` for `anon`, `authenticated` | migration 023 | granted |
+| PostgREST schema cache | migration 023 | reloaded after the above |
+
+### Failure symptom if the view is missing
+
+The app fails **honestly but visibly** — it does not silently degrade, because
+the service has no fallback and the screens gate on `isSuccess`:
+
+| Where | What you see |
+|---|---|
+| Network | `404` with `{"code":"PGRST205","message":"Could not find the table 'public.v_branch_operations' in the schema cache"}` |
+| `/places` | every branch's Last Visit and Assortment columns read **`—`** |
+| `/dashboard` | attention panel stays in its **skeleton**, publishing no counts |
+| Create-visit modal | branch context lines are **absent** (assortment, last visit) |
+| `/reports` Branch Coverage | Last Visit column empty; buckets return nothing |
+
+**`PGRST205` does not mean "cache is stale".** PostgREST returns it for a
+relation that does not exist, one the API roles cannot `SELECT`, *and* one the
+cache has not picked up — all three are 404 and indistinguishable from outside.
+Diagnose it in the database, not over REST:
+
+```sql
+select schemaname, viewname from pg_views
+where schemaname = 'public' and viewname = 'v_branch_operations';
+```
+
+Empty result means the object is not there, and no amount of reloading or
+granting will help.
+
+### Deploy order for a database-dependent release
+
+1. Apply the SQL.
+2. Verify in the database — `pg_views`, then `pg_class.reloptions` contains
+   `security_invoker=true`.
+3. Verify over REST — the endpoint answers `200`, not `404`.
+4. **Then** deploy the code that depends on it.
+
+Never the other way round. Batch 15 shipped its migration three exchanges before
+the code precisely so this ordering held.
+
+---
+
+## 9. Migration history — an open bookkeeping gap
+
+Migrations **022 and 023 were applied by hand in the SQL Editor**, not by the
+migration runner. So `supabase_migrations.schema_migrations` most likely has no
+record of either, and the repository's `supabase/migrations/` directory is ahead
+of what the database believes it has run.
+
+Both are idempotent — `create index if not exists`, `create or replace view`,
+`grant`, `notify` — so a future `db push` re-running them should be harmless.
+The risk is confusion, not corruption.
+
+### Read-only diagnostic
+
+Run in the SQL Editor. Changes nothing.
+
+```sql
+-- What the database believes it has applied
+select version, name, inserted_at
+from supabase_migrations.schema_migrations
+order by version;
+
+-- Narrowed to the two in question
+select version
+from supabase_migrations.schema_migrations
+where version in ('022', '023');
+--   0 rows  → the gap is real
+--   2 rows  → history is already correct, nothing to do
+```
+
+The CLI equivalent, also read-only, is `supabase migration list --linked` — but
+see the warning below before linking.
+
+### If the gap is real
+
+**The official command is `supabase migration repair`,** which updates the
+history table without executing the migration:
+
+```bash
+supabase migration repair --status applied 022 023
+```
+
+**Do not run it yet.** Two things must be checked first, and one of them is
+genuinely unresolved:
+
+1. **This working copy has never been linked.** `supabase/.temp/project-ref`
+   does not exist. `repair --linked` would need a link, which needs the database
+   password — and would repair whatever project the link points at.
+
+2. **An earlier `supabase db push` reported success while the view did not
+   exist in production.** That is unexplained. Until it is, the CLI cannot be
+   assumed to be talking to this database, and `repair` would then write history
+   rows into the wrong one. That is worse than the gap it fixes: a database
+   would claim to have run migrations it never saw.
+
+So the order is: understand where that push went, *then* link, *then* verify
+with `migration list` that the remote history matches expectations, *then*
+repair.
+
+### Manual INSERT — not recommended
+
+Writing rows into `supabase_migrations.schema_migrations` directly would also
+close the gap, and it is deliberately **not** given here as the default. It
+hand-edits the ledger the tooling trusts, with no validation that the migration
+really ran, and a wrong version string or a mismatched hash silently teaches the
+runner to skip a migration that was never applied. `repair` exists for exactly
+this and should be preferred once the targeting question above is settled.
+
+### Doing nothing is also defensible
+
+The gap costs one surprise on the next `db push` — two idempotent migrations
+listed as pending. If the CLI is not being used to deploy migrations anyway, the
+honest fix may simply be to record that the SQL Editor is the deployment path
+for this project, and keep this section current.

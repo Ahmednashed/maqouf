@@ -1,14 +1,18 @@
 # Performance risk map
 
-Every aggregation added in Phase 2 Batches 1–13 is computed **in the browser**
+Every aggregation added in Phase 2 Batches 1–13 was computed **in the browser**
 from rows fetched over PostgREST. That was the right call while the database
-holds tens of rows and no migration was allowed. It will not stay right.
+held tens of rows and no migration was allowed. It did not stay right.
 
-This records what each one reads today, why it is fine now, the specific point
-at which it stops being fine, and what should replace it.
+**Batch 15 moved the largest one into Postgres** (§1, §2). The rest are still
+client-side, and this records which, why that is still acceptable, and what
+replaces each when it stops being so.
 
-**Captured:** end of Batch 14, against `main` @ `72bf61d`.
-**No migrations were added by this batch.**
+Each entry says what it reads today, why it is fine now, the specific point at
+which it stops being fine, and what should replace it.
+
+**Captured:** Batch 14. **Updated:** Batch 16, after the Batch 15 service swap.
+**Current `main`:** `b3caf20` — §1 and §2 resolved by migration 022.
 
 ---
 
@@ -16,78 +20,105 @@ at which it stops being fine, and what should replace it.
 
 Nothing here is slow because of an algorithm. Every reduction is a single pass
 over rows already in memory. The risk is entirely in **how many rows are
-fetched**, and three of these functions fetch a whole table.
+fetched**.
 
 RLS scopes each read to one company, so "the whole table" means "this company's
 whole history". A company with two years of daily visits across 200 branches
-has roughly 150,000 visit rows. Four of the screens below would fetch all of
-them to answer a question about the last one.
+has roughly 150,000 visit rows.
+
+**Batch 15 removed the worst case.** The one function that fetched all of those
+to answer a question about the most recent row per branch — and did it on the
+three most-loaded screens — is now a database aggregate. What remains unbounded
+is `fetchProductCoverage` (§3), bounded by branches × assortment rather than by
+history, and the small `places` reads in §4 and §5.
 
 ### A correctness risk hiding inside the performance risk
 
 PostgREST can be configured with a `db-max-rows` ceiling. If one is set on this
-project — or introduced later — the unbounded reads below **silently truncate**
-rather than error.
+project — or introduced later — an unbounded read **silently truncates** rather
+than erroring.
 
-- `fetchBranchLastVisits` orders by `scheduled_date DESC`, so truncation keeps
-  the newest rows. A branch not visited within the returned window would then
-  read as **"never visited"** — wrong, and indistinguishable from the truth.
 - `fetchProductCoverage` has **no ordering at all**, so truncation would drop an
-  arbitrary subset and produce silently wrong coverage counts.
+  arbitrary subset and produce silently wrong coverage counts. This is now the
+  only place that risk applies.
+- It previously applied to `fetchBranchLastVisits` too, and more insidiously:
+  ordered newest-first, truncation would have made a genuinely-visited branch
+  read as **"never visited"** — wrong, and indistinguishable from the truth.
+  Migration 022 removed that exposure by aggregating server-side.
 
-This has not been observed and the current row counts are far below any
-plausible ceiling. It is listed because the failure mode is silent, and because
-it argues for bounding these reads even before they become slow.
+This has not been observed and current row counts are far below any plausible
+ceiling. It is listed because the failure mode is silent, and because it argues
+for bounding the remaining read before it becomes slow.
 
 ---
 
-## 1. `fetchBranchLastVisits` — the biggest one
+## 1. `fetchBranchLastVisits` — RESOLVED (Batch 15)
 
-`src/services/places.ts`
+**Was** the largest read in the app:
 
 ```
 .from("visits").select("place_id, scheduled_date, status, merch_id")
                 .order("scheduled_date", { ascending: false })
 ```
 
-**No date filter. No limit.** Reads every visit the company has ever had, then
-walks the sorted list and keeps the first `completed`/`inprogress` row per
-branch.
+No date filter, no limit. It fetched every visit the company had ever had and
+walked the sorted list in the browser to keep the first `completed`/
+`inprogress` row per branch — on `/places`, the dashboard attention panel and
+the create-visit modal, the three most-loaded screens.
 
-| | |
-|---|---|
-| **Reached from** | `/places` (branch register), `/dashboard` (attention panel), the create-visit modal (Batch 10 branch context) — all via `fetchPlaceOperations` |
-| **Why acceptable now** | 16 visits. The sort is what the query is for, and one pass answers it |
-| **Becomes risky at** | roughly 10,000 visits, where payload size rather than query time starts to hurt on mobile. Sooner if a `db-max-rows` ceiling exists |
-| **Replacement** | `DISTINCT ON (place_id) … ORDER BY place_id, scheduled_date DESC` in a Postgres view, or an RPC returning one row per branch. Wants an index on `visits(company_id, place_id, scheduled_date DESC)` — the existing `idx_visits_scheduled_date` cannot serve the per-branch grouping |
+**Now** reads `public.v_branch_operations` (migration 022): one row per branch,
+aggregated in Postgres via `LEFT JOIN LATERAL … LIMIT 1`, served by
+`idx_visits_place_date` on `visits (place_id, scheduled_date desc)`. The payload
+no longer scales with visit history.
 
-An interim step that needs no migration: bound the read to the last ~90 days and
-treat anything older as "not visited recently", which is what every consumer
-actually asks. That changes displayed semantics, so it is a product decision,
-not a refactor.
+The view is `security_invoker = true`, so base-table RLS is still evaluated as
+the querying user. That matters beyond tenancy: `visits_select` is
+role-dependent, so a merchandiser's "last visit" counts only their own visits —
+exactly as the client-side reduction did.
 
----
+**Two things moved with it.** The definition of "visited" now lives in the view
+body rather than a TypeScript constant, and must stay in step with
+`matchesLastVisitBucket()` and the branch coverage report. And same-date ties,
+previously resolved arbitrarily by whatever order PostgREST returned, are now
+broken deterministically by `created_at, id`.
 
-## 2. `fetchPlaceOperations`
-
-`src/services/places.ts` — `fetchBranchLastVisits()` + all of `place_products`.
-
-Inherits §1 entirely, and adds an unbounded `place_products` read
-(`select("place_id, is_mandatory")`, no filter).
-
-| | |
-|---|---|
-| **Reached from** | Same three screens as §1 |
-| **Why acceptable now** | `place_products` is bounded by branches × assortment size, which grows far slower than visits |
-| **Becomes risky at** | 200 branches × 300 SKUs = 60,000 rows. Uncomfortable, not fatal |
-| **Replacement** | Fold the counts into the same view as §1 so one call answers the whole branch register |
-
-Note it is **cached and shared**: `/places`, the dashboard and the create-visit
-modal all use one query key, so opening the modal is usually free. That sharing
-is why the modal could add branch context in Batch 10 without a new query.
+Riyadh staleness stays in the app: the view returns `last_visit_date` only, and
+`daysSinceIso()` measures it against `riyadhToday()`, so the business day cannot
+drift to the database server's clock.
 
 ---
 
+## 2. `fetchPlaceOperations` — RESOLVED (Batch 15)
+
+**Was** `fetchBranchLastVisits()` plus an unbounded `place_products` read,
+inheriting §1 entirely. **Now** one read of the same view — two queries became
+one, and the assortment counts are a `GROUP BY` in Postgres.
+
+**Still true, and deliberately so:** `product_count` counts ALL `place_products`
+rows for a branch, not only `is_active` ones. That is what the client-side
+version did, so the view reproduces it rather than silently moving numbers on
+screen. It remains inconsistent with `initVisitProducts()` and
+`lib/visit-plan.ts`, which both filter on `is_active`. Fixing that is a visible
+product decision, not a refactor, and is still open.
+
+It is still **cached and shared**: `/places`, the dashboard and the create-visit
+modal use one query key, so opening the modal is usually free.
+
+**One behavioural nuance introduced:** the view returns a row for every visible
+branch, including never-visited ones (nulls and zeros), where the old reduction
+produced no map entry at all. Both read identically through
+`ops[id]?.field ?? null`, and the `/places` cells already treated absent and zero
+the same way.
+
+**A defect this swap exposed** (fixed in the same batch): a no-fallback service
+is only half a guarantee. `/places` destructured `data: ops = {}`, so a failed
+roll-up became an empty map and every branch rendered "never visited / no
+assortment" — a confident claim built from data that was not there. The
+dashboard gated only on `isLoading` and would publish attention counts derived
+from `undefined`. Both now gate on `isSuccess`. The create-visit modal already
+did this correctly since Batch 10.
+
+---
 ## 3. `fetchProductCoverage`
 
 `src/services/products.ts` — `.from("place_products").select("product_id, is_mandatory, is_active")`, no filter, **no ordering**.
@@ -176,13 +207,42 @@ so moving the fetching underneath them is safe.
 
 ---
 
-## 8. Priority order, if this is ever picked up
+## 8. Priority order
 
-1. **`company_attention` view** — §6. Highest traffic, removes two whole-table scans.
-2. **Last-visit-per-branch view + composite index** — §1. Removes the largest single payload.
-3. **`product_coverage` view** — §3. Easiest of the three; mind the orphan LEFT JOIN.
-4. **Reports RPC** — §5. Largest effort, least urgent while ranges stay short.
+| | Work | Status |
+|---|---|---|
+| ~~2~~ | **Last-visit-per-branch view + index** — §1, §2 | **DONE** — Batch 15, migration 022 |
+| 1 | **`company_attention` view** — §6 | open — highest traffic |
+| 3 | **`product_coverage` view** — §3 | open — easiest; mind the orphan `LEFT JOIN` |
+| 4 | **Reports RPC** — §5 | open — largest effort, least urgent |
 
-Nothing here is urgent at current volumes. All four are cheap to write and hard
-to retrofit under pressure, which is the argument for writing them before they
-are needed rather than after.
+§6 is now the highest-value remaining item. Note it got *cheaper* as a result of
+Batch 15: two of the five queries it fans out to are already answered by
+`v_branch_operations`, so a `company_attention` view would extend that work
+rather than start fresh.
+
+Nothing here is urgent at current volumes. The three remaining are cheap to
+write and hard to retrofit under pressure, which is the argument for writing
+them before they are needed rather than after.
+
+---
+
+## 9. What Batch 15 cost, beyond the code
+
+Worth recording, because the next view will hit the same things.
+
+**A view is not deployed when the migration file is committed.** The SQL has to
+reach the database by a separate act, and the repository cannot verify that it
+did. Batch 15 shipped the app change three exchanges after the migration was
+believed applied — during which the view did not actually exist in production.
+
+**PostgREST reports `PGRST205` — "not found in the schema cache" — for a
+relation the API roles cannot see, one that does not exist, and one the cache
+has not picked up.** All three are 404, and they are indistinguishable from
+outside. Diagnosing from the REST response alone produced two wrong answers
+(stale cache, then missing grant) before the direct question — *does the
+relation exist?* — settled it in one query.
+
+**The order that works:** apply the SQL → verify with `pg_views` and
+`pg_class.reloptions` → confirm the REST endpoint answers → *then* ship the code
+that depends on it. Never the other way round.
