@@ -41,6 +41,7 @@ import {
   deriveVisitProductPlan,
   deriveVisitFieldPlan,
 } from "@/lib/visit-plan";
+import { diffVisitEdits } from "@/lib/visit-dirty";
 import {
   TemplateFieldSection,
   type FieldResponses,
@@ -826,6 +827,25 @@ export default function VisitDetailPage() {
     [assortment, visitProducts],
   );
 
+  // Are we holding edits the server has not got? Compared against the loaded
+  // values rather than syncStatus, which flips on any keystroke including one
+  // that restores the original — this gates a button, so a false positive
+  // would block a legitimate completion.
+  const editsReady = prodInitialized.current && (!templateId || respInitialized.current);
+  const dirtyState = useMemo(
+    () => diffVisitEdits({
+      ready:          editsReady,
+      savedProducts:  visitProducts.map((p) => ({
+        product_id: p.product_id, qty_found: p.qty_found, notes: p.notes,
+      })),
+      entries,
+      fieldIds:       (template?.fields ?? []).filter((f) => f.type !== "section").map((f) => f.id),
+      savedResponses,
+      responses,
+    }),
+    [editsReady, visitProducts, entries, template?.fields, savedResponses, responses],
+  );
+
   const fieldPlan = useMemo(
     () => (template?.fields ? deriveVisitFieldPlan(template.fields, savedResponses) : null),
     [template?.fields, savedResponses],
@@ -1193,10 +1213,17 @@ export default function VisitDetailPage() {
           visit={visit}
           productPlan={productPlan}
           fieldPlan={fieldPlan}
+          dirty={dirtyState}
+          isOnline={isOnline}
+          saving={isSaving || syncStatus === "saving"}
+          onSaveNow={handleSave}
           notes={notes}
           onClose={() => setShowComplete(false)}
           onDone={() => {
-            clearLocalDraft();   // visit is done — draft no longer needed
+            // Only discard the local backup when the server already has
+            // everything. Completing offline with unsaved edits keeps the
+            // draft, which is the only remaining copy of that work.
+            if (!dirtyState.dirty) clearLocalDraft();
             setShowComplete(false);
             router.push("/visits");
           }}

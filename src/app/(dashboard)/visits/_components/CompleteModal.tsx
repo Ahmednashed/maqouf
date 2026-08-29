@@ -9,6 +9,7 @@ import {
   type ReadinessKind,
 } from "@/lib/visit-readiness";
 import type { VisitProductPlan, VisitFieldPlan } from "@/lib/visit-plan";
+import type { DirtyState } from "@/lib/visit-dirty";
 import type { TranslationKey } from "@/lib/i18n/translations";
 import { useTranslation } from "@/hooks/use-translation";
 import { useCompleteVisit } from "@/hooks/use-visits";
@@ -28,6 +29,12 @@ interface CompleteModalProps {
   /** Plans from the detail page — already derived there, not recomputed. */
   productPlan: VisitProductPlan;
   fieldPlan:   VisitFieldPlan | null;
+  /** Local edits the server has not got. */
+  dirty:       DirtyState;
+  isOnline:    boolean;
+  saving:      boolean;
+  /** Runs the page's existing handleSave — no new persistence path. */
+  onSaveNow:   () => void;
   /** Extra notes from the audit textarea (passed from parent) */
   notes:    string;
   onClose:  () => void;
@@ -39,6 +46,10 @@ export function CompleteModal({
   visit,
   productPlan,
   fieldPlan,
+  dirty,
+  isOnline,
+  saving,
+  onSaveNow,
   notes,
   onClose,
   onDone,
@@ -54,8 +65,14 @@ export function CompleteModal({
   // the dialog was silent precisely when nothing had been done. It also never
   // looked at the form.
   const readiness  = deriveVisitReadiness({ productPlan, fieldPlan, visit });
-  const needsAck   = hasRequiredGaps(readiness);
-  const blocked    = needsAck && !acked;
+
+  // Online, saving is one click away, so unsaved work blocks outright — that
+  // is the only way "complete" cannot quietly drop it. Offline it cannot be
+  // saved at all, and refusing would strand a field user mid-shift, so it
+  // joins the Batch 11 acknowledgement instead.
+  const mustSave   = dirty.dirty && isOnline;
+  const needsAck   = hasRequiredGaps(readiness) || (dirty.dirty && !isOnline);
+  const blocked    = mustSave || (needsAck && !acked);
 
   // From the plan, not the passed-in rows: the rows carry local edit state,
   // and completing does not save it. Counting typed-but-unsaved input here
@@ -156,6 +173,46 @@ export function CompleteModal({
             )}
           </div>
 
+          {/* ── Unsaved local edits ─────────────────────────────────────────
+              Placed above the readiness warning because saving will change
+              the very numbers that warning reports. */}
+          {dirty.dirty && (
+            <div className="rounded-xl border border-rose-300 bg-rose-50/80 p-3.5 mb-4">
+              <p className="flex items-start gap-2 text-[12.5px] font-bold text-rose-800">
+                <AlertTriangle className="w-4 h-4 shrink-0 mt-px" />
+                {t("visits.unsaved.title")}
+              </p>
+              <p className="mt-1 ms-6 text-[12px] text-rose-700">{t("visits.unsaved.desc")}</p>
+              <ul className="mt-1.5 ms-6 space-y-0.5 list-disc">
+                {dirty.changedProducts > 0 && (
+                  <li className="text-[12px] text-rose-700">
+                    {sub(t("visits.unsaved.products"), { n: dirty.changedProducts })}
+                  </li>
+                )}
+                {dirty.changedResponses > 0 && (
+                  <li className="text-[12px] text-rose-700">
+                    {sub(t("visits.unsaved.responses"), { n: dirty.changedResponses })}
+                  </li>
+                )}
+              </ul>
+
+              {isOnline ? (
+                <button
+                  type="button"
+                  onClick={onSaveNow}
+                  disabled={saving}
+                  className="mt-3 w-full h-10 rounded-xl bg-brand-500 hover:bg-brand-600 disabled:opacity-60 text-white text-[13px] font-semibold transition-all"
+                >
+                  {saving ? t("visits.unsaved.saving") : t("visits.unsaved.saveNow")}
+                </button>
+              ) : (
+                <p className="mt-2 ms-6 text-[11.5px] text-rose-600 leading-snug">
+                  {t("visits.unsaved.offline")}
+                </p>
+              )}
+            </div>
+          )}
+
           {/* ── What completing now would leave unrecorded ──────────────────
               completeVisit() imposes no rules, so this warns and asks for an
               explicit acknowledgement rather than blocking work that the
@@ -230,7 +287,7 @@ export function CompleteModal({
             <button
               onClick={handleConfirm}
               disabled={complete.isPending || blocked}
-              title={blocked ? t("visits.ready.ackRequired") : undefined}
+              title={mustSave ? t("visits.unsaved.blocked") : blocked ? t("visits.ready.ackRequired") : undefined}
               className="flex-1 h-11 rounded-xl bg-emerald-500 hover:bg-emerald-600 disabled:opacity-60 disabled:cursor-not-allowed text-white text-[13.5px] font-semibold shadow-pop transition-all flex items-center justify-center gap-2"
             >
               {complete.isPending ? (
