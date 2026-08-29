@@ -586,7 +586,6 @@ export const translations = {
     "visits.assignMerchPlaceholder":"اختر المندوب…",
     "visits.assignDate":            "تاريخ الزيارة",
     "visits.productsChecked":       "{n} منتج مُراجَع",
-    "visits.itemsMissing":          "{n} صنف ناقص",
     "visits.ready.title":           "جاهزية الإنهاء",
     "visits.ready.allDone":         "كل المطلوب مُسجَّل",
     "visits.ready.warnTitle":       "سيتم إنهاء الزيارة مع نقص في التسجيل",
@@ -644,7 +643,6 @@ export const translations = {
     "visits.recur.duplicate":        "يوجد جدول متكرر لهذا المندوب وهذا الفرع في نفس اليوم من الأسبوع. عدّل الجدول الحالي أو اختر يوماً آخر.",
     "visits.recur.createdOk":        "تم إنشاء الجدول المتكرر",
     "visits.recur.reconcileWarning": "تم حفظ الجدول، لكن تعذّر توليد الزيارات الآن. ستتم المحاولة تلقائياً لاحقاً.",
-    "visits.templateFieldsCount":       "حقل",
     "visits.responsesSaved":            "تم حفظ الإجابات",
     "visits.noOptions":                 "لا توجد خيارات",
     // Photo upload (visit execution)
@@ -1752,7 +1750,6 @@ export const translations = {
     "visits.assignMerchPlaceholder":"Select merchandiser…",
     "visits.assignDate":            "Visit Date",
     "visits.productsChecked":       "{n} product(s) checked",
-    "visits.itemsMissing":          "{n} item(s) missing",
     "visits.ready.title":           "Completion readiness",
     "visits.ready.allDone":         "Everything required is recorded",
     "visits.ready.warnTitle":       "This visit will be completed with work unrecorded",
@@ -1810,7 +1807,6 @@ export const translations = {
     "visits.recur.duplicate":        "A recurring schedule already exists for this merchandiser and branch on that weekday. Edit the existing schedule or choose another day.",
     "visits.recur.createdOk":        "Recurring schedule created",
     "visits.recur.reconcileWarning": "Schedule saved, but visits could not be generated right now. This will be retried automatically.",
-    "visits.templateFieldsCount":       "fields",
     "visits.responsesSaved":            "Responses saved",
     "visits.noOptions":                 "No options configured",
     // Photo upload (visit execution)
