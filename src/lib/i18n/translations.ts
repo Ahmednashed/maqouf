@@ -793,7 +793,10 @@ export const translations = {
     "dashboard.team.colBattery":      "البطارية",
     "dashboard.team.colSignal":       "الإشارة",
     "dashboard.team.online":          "متصل",
-    "dashboard.team.idle":            "خامل",
+    // Must read the same as users.presenceIdle: one presenceOf() state must not
+    // have two names. "خامل" (dormant) also overstated it — the state means
+    // active today, just not in the last 15 minutes.
+    "dashboard.team.idle":            "نشط اليوم",
     "dashboard.team.offline":         "غير متصل",
     "dashboard.team.noVisit":         "—",
     "dashboard.team.empty":           "لا يوجد أعضاء نشطون",
@@ -1868,7 +1871,7 @@ export const translations = {
     "dashboard.team.colBattery":      "Battery",
     "dashboard.team.colSignal":       "Signal",
     "dashboard.team.online":          "Online",
-    "dashboard.team.idle":            "Idle",
+    "dashboard.team.idle":            "Active today",
     "dashboard.team.offline":         "Offline",
     "dashboard.team.noVisit":         "—",
     "dashboard.team.empty":           "No active team members",
