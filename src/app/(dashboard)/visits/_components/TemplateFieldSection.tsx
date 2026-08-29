@@ -3,10 +3,11 @@
 import { useRef, useState, useEffect, useCallback } from "react";
 import {
   Camera, ScanLine, MapPin, X, Image as ImageIcon,
-  RefreshCw, WifiOff, Upload,
+  RefreshCw, WifiOff, Upload, CheckCircle2, CircleDashed,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils/cn";
+import { isAnswered } from "@/lib/visit-plan";
 import type { TemplateFieldFull } from "@/types";
 import type { TranslationFn } from "@/hooks/use-translation";
 import { usePhotoUpload } from "@/hooks/use-photo-upload";
@@ -580,12 +581,26 @@ function TemplateFieldInput({
     );
   }
 
+  // Same rule the completion dialog uses (isAnswered), so a field that reads
+  // answered here is one the readiness summary will also count. "false" and
+  // 0 are answers; only absence, empty text and empty lists are not.
+  const answered = isAnswered(value);
+
   return (
     <div className="space-y-1.5">
       {/* Label */}
-      <label className="block text-[12.5px] font-semibold text-ink-700" dir={dir}>
-        {label || <span className="italic text-ink-300">{t("templates.noLabel")}</span>}
-        {field.required && <span className="text-rose-500 ms-1">*</span>}
+      <label className="flex items-start gap-1.5 text-[12.5px] font-semibold text-ink-700" dir={dir}>
+        {answered
+          ? <CheckCircle2 className="w-3.5 h-3.5 shrink-0 mt-px text-emerald-500" aria-label={t("visits.tf.answered")} />
+          : <CircleDashed className="w-3.5 h-3.5 shrink-0 mt-px text-ink-300" aria-label={t("visits.tf.notAnswered")} />}
+        <span className="flex-1 min-w-0">
+          {label || <span className="italic text-ink-300">{t("templates.noLabel")}</span>}
+        </span>
+        {field.required && (
+          <span className="shrink-0 text-[10.5px] font-semibold text-violet-700 bg-violet-50 border border-violet-200 rounded-full px-1.5 py-0.5">
+            {t("visits.tf.requiredChip")}
+          </span>
+        )}
       </label>
 
       {field.type === "text" && (
@@ -838,6 +853,13 @@ export function TemplateFieldSection({
 }: TemplateFieldSectionProps) {
   if (!fields.length) return null;
 
+  // Live, not saved: this header sits above the inputs the user is filling in,
+  // so it has to move as they type. The saved view lives in the plan panel and
+  // the completion dialog.
+  const answerable    = fields.filter((f) => f.type !== "section");
+  const answeredCount = answerable.filter((f) => isAnswered(responses[f.id])).length;
+  const requiredLeft  = answerable.filter((f) => f.required && !isAnswered(responses[f.id])).length;
+
   return (
     <div className="mb-6">
       {/* Section header */}
@@ -846,9 +868,22 @@ export function TemplateFieldSection({
         <h2 className="text-[13px] font-bold text-ink-700 flex-1 truncate">
           {templateName}
         </h2>
-        <span className="text-[11px] text-ink-400 shrink-0">
-          {fields.filter((f) => f.type !== "section").length}{" "}
-          {t("visits.templateFieldsCount")}
+        <span className="flex items-center gap-1.5 shrink-0">
+          <span className={cn(
+            "text-[11px] font-semibold rounded-full px-2 py-0.5",
+            answeredCount === answerable.length
+              ? "bg-emerald-50 text-emerald-700"
+              : "bg-ink-100 text-ink-600",
+          )}>
+            {t("visits.tf.progress")
+              .replace("{done}", String(answeredCount))
+              .replace("{total}", String(answerable.length))}
+          </span>
+          {requiredLeft > 0 && (
+            <span className="text-[11px] font-semibold rounded-full px-2 py-0.5 bg-amber-50 text-amber-700 border border-amber-200">
+              {t("visits.tf.requiredLeft").replace("{n}", String(requiredLeft))}
+            </span>
+          )}
         </span>
       </div>
 

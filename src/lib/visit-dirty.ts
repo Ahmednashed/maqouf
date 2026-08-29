@@ -64,6 +64,18 @@ export function valuesEqual(a: unknown, b: unknown): boolean {
   return false;
 }
 
+/**
+ * "Nothing recorded" — the same set isAnswered() in visit-plan treats as
+ * unanswered. Deliberately NOT used inside valuesEqual: nested empties are
+ * real data, and "" inside an array is not the same as a missing element.
+ */
+function isBlank(v: unknown): boolean {
+  if (v === null || v === undefined) return true;
+  if (typeof v === "string") return v.trim() === "";
+  if (Array.isArray(v)) return v.length === 0;
+  return false;
+}
+
 /** The screen seeds a missing product row as empty strings; mirror that here. */
 function savedAsEntry(p: SavedProduct): ProductEntry {
   return {
@@ -101,7 +113,17 @@ export function diffVisitEdits({
 
   let changedResponses = 0;
   for (const id of fieldIds) {
-    if (!valuesEqual(responses[id], savedResponses[id])) changedResponses += 1;
+    const local = responses[id];
+    const saved = savedResponses[id];
+    // Both sides holding "nothing recorded" is not an edit, even when they
+    // spell it differently. saveVisitResponses drops null/undefined, so a
+    // field that was never answered has no saved row at all; typing into it
+    // and clearing it again left local "" against saved undefined, which
+    // compared unequal and pinned the visit as dirty with no way back except
+    // saving. isAnswered() already treats all three as unanswered, so this
+    // keeps dirtiness agreeing with the readiness summary.
+    if (isBlank(local) && isBlank(saved)) continue;
+    if (!valuesEqual(local, saved)) changedResponses += 1;
   }
 
   return {
