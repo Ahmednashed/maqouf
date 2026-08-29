@@ -135,6 +135,12 @@ function FreqBadge({ freq, t }: { freq: ScheduleFrequency; t: TranslationFn }) {
   );
 }
 
+/** Postgres returns TIME as "HH:mm:ss"; every other clock in the app shows
+ *  HH:mm, and the seconds here are always :00. Trim rather than restate. */
+function hhmm(t: string): string {
+  return /^\d{2}:\d{2}/.test(t) ? t.slice(0, 5) : t;
+}
+
 // ─── Table ────────────────────────────────────────────────────────────────────
 
 function TableHead({ t }: { t: TranslationFn }) {
@@ -203,9 +209,9 @@ function ScheduleRow({ schedule, locale, t, onEdit, onDelete }: RowProps) {
       <td className="px-4 py-3.5">
         <span className="inline-flex items-center gap-1 text-ink-700 text-[12.5px] font-medium">
           <Clock className="w-3 h-3 text-ink-400" />
-          {schedule.start_time}
+          {hhmm(schedule.start_time)}
           {schedule.end_time && (
-            <span className="text-ink-400"> – {schedule.end_time}</span>
+            <span className="text-ink-400"> – {hhmm(schedule.end_time)}</span>
           )}
         </span>
       </td>

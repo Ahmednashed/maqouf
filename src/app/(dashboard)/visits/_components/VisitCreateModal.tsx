@@ -12,7 +12,13 @@ import { Modal } from "@/components/ui/Modal";
 import { riyadhToday } from "@/lib/utils/date";
 import { useTranslation } from "@/hooks/use-translation";
 import { useCreateVisit } from "@/hooks/use-visits";
-import { usePlaces } from "@/hooks/use-places";
+import { usePlaces, usePlaceOperations } from "@/hooks/use-places";
+import {
+  branchContext,
+  isMerchMismatch,
+  previewOccurrences,
+} from "@/lib/visit-context";
+import { CheckCircle2, Package, MapPinOff, History, Info } from "lucide-react";
 import { useCompanyUsers } from "@/hooks/use-company-users";
 import { useTemplates } from "@/hooks/use-templates";
 import { createSchedule } from "@/services/schedules";
@@ -86,6 +92,9 @@ export function VisitCreateModal({ onClose, initialDate }: VisitCreateModalProps
   const { data: places    = [] } = usePlaces();
   const { data: members   = [] } = useCompanyUsers();
   const { data: templates = [] } = useTemplates();
+  // Same query key /places and the dashboard already use, so this is normally
+  // served from cache rather than costing the modal a round-trip.
+  const { data: placeOps, isSuccess: opsReady } = usePlaceOperations();
 
   const activePlaces     = places.filter((p) => p.is_active);
   const activeMembers    = members.filter((m) => m.status === "active");
@@ -120,6 +129,32 @@ export function VisitCreateModal({ onClose, initialDate }: VisitCreateModalProps
 
   const recurrence = watch("recurrence");
   const recurring  = isRecurring(recurrence);
+  const placeId    = watch("place_id");
+  const merchId    = watch("merch_id");
+  const chosenDate = watch("scheduled_date");
+  const startTime  = watch("start_time");
+
+  const today        = riyadhToday();
+  const chosenPlace  = activePlaces.find((p) => p.id === placeId) ?? null;
+  const ctx          = chosenPlace ? branchContext(chosenPlace, placeOps?.[chosenPlace.id], today) : null;
+  const ownerName    = ctx?.assignedUserId
+    ? merchDisplayName(activeMembers.find((m) => m.id === ctx.assignedUserId), t("users.unknown"))
+    : null;
+  const mismatch     = ctx ? isMerchMismatch(ctx.assignedUserId, merchId ?? "") : false;
+
+  // Built from the same generator the daily job runs, anchored the same way
+  // the planner anchors it, so the preview cannot promise a series the system
+  // would not create.
+  const preview = recurring && chosenDate
+    ? previewOccurrences(chosenDate, recurrence as "weekly" | "biweekly" | "monthly", 3)
+    : null;
+
+  const dateFmt = (iso: string, opts: Intl.DateTimeFormatOptions) =>
+    new Date(iso + "T12:00:00").toLocaleDateString(
+      locale === "ar" ? "ar-SA-u-ca-gregory" : "en-GB", opts,
+    );
+  const sub = (key: string, vals: Record<string, string | number>) =>
+    Object.entries(vals).reduce((acc, [k, v]) => acc.replace(`{${k}}`, String(v)), key);
 
   async function onSubmit(data: FormData) {
     setFormError(null);
@@ -228,6 +263,67 @@ export function VisitCreateModal({ onClose, initialDate }: VisitCreateModalProps
             {errors.place_id && (
               <p className="mt-1 text-[11.5px] text-rose-500">{errors.place_id.message}</p>
             )}
+
+            {/* What the app already knows about the branch just chosen. Every
+                fact here is shown on /places too — the scheduler was simply
+                the one screen working blind. */}
+            {ctx && (
+              <div className="mt-2 rounded-xl border border-ink-100 bg-ink-50/60 px-3 py-2.5 space-y-1.5">
+                <p className="flex items-center gap-1.5 text-[11px] font-bold text-ink-500 uppercase tracking-wide">
+                  <Info className="w-3 h-3" />
+                  {t("visits.ctx.title")}
+                </p>
+
+                <p className="flex items-center gap-1.5 text-[11.5px] text-ink-600">
+                  <User className="w-3 h-3 text-ink-400 shrink-0" />
+                  {ownerName
+                    ? sub(t("visits.ctx.assignedTo"), { name: ownerName })
+                    : <span className="text-amber-600">{t("visits.ctx.unassigned")}</span>}
+                </p>
+
+                {/* Held back until the roll-up resolves: zero products and
+                    "still loading" look identical, and only one is true. */}
+                {opsReady && (
+                  <p className="flex items-center gap-1.5 text-[11.5px]">
+                    <Package className="w-3 h-3 shrink-0 text-ink-400" />
+                    {ctx.hasAssortment ? (
+                      <span className="text-ink-600">
+                        {ctx.requiredCount > 0
+                          ? sub(t("visits.ctx.assortment"), { n: ctx.productCount, r: ctx.requiredCount })
+                          : sub(t("visits.ctx.assortmentNoReq"), { n: ctx.productCount })}
+                      </span>
+                    ) : (
+                      <span className="text-amber-600">{t("visits.ctx.noAssortment")}</span>
+                    )}
+                  </p>
+                )}
+
+                <p className="flex items-center gap-1.5 text-[11.5px]">
+                  {ctx.hasCoords ? (
+                    <>
+                      <CheckCircle2 className="w-3 h-3 shrink-0 text-emerald-500" />
+                      <span className="text-ink-600">{t("visits.ctx.hasCoords")}</span>
+                    </>
+                  ) : (
+                    <>
+                      <MapPinOff className="w-3 h-3 shrink-0 text-amber-500" />
+                      <span className="text-amber-600">{t("visits.ctx.noCoords")}</span>
+                    </>
+                  )}
+                </p>
+
+                {opsReady && (
+                  <p className="flex items-center gap-1.5 text-[11.5px] text-ink-600">
+                    <History className="w-3 h-3 text-ink-400 shrink-0" />
+                    {ctx.daysSinceVisit === null
+                      ? <span className="text-ink-400">{t("visits.ctx.neverVisited")}</span>
+                      : ctx.daysSinceVisit === 0
+                        ? t("visits.ctx.lastVisitToday")
+                        : sub(t("visits.ctx.lastVisit"), { n: ctx.daysSinceVisit })}
+                  </p>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Merchandiser */}
@@ -248,6 +344,15 @@ export function VisitCreateModal({ onClose, initialDate }: VisitCreateModalProps
             </div>
             {errors.merch_id && (
               <p className="mt-1 text-[11.5px] text-rose-500">{errors.merch_id.message}</p>
+            )}
+            {/* Covering for a colleague is ordinary, so this informs and does
+                not block — but assigning past the branch owner by accident is
+                worth noticing before saving. */}
+            {mismatch && ownerName && (
+              <p className="mt-1.5 flex items-start gap-1.5 text-[11.5px] text-amber-700">
+                <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-px" />
+                {sub(t("visits.ctx.mismatch"), { name: ownerName })}
+              </p>
             )}
           </div>
 
@@ -286,6 +391,36 @@ export function VisitCreateModal({ onClose, initialDate }: VisitCreateModalProps
             <p className="mt-1.5 text-[11px] text-ink-400 leading-relaxed">
               {recurring ? t("visits.recur.hintRecurring") : t("visits.recur.hintOnce")}
             </p>
+
+            {/* The dates this choice would actually produce, from the same
+                generator the daily job uses. A schedule described in words
+                alone is a promise nobody can check before saving. */}
+            {preview && preview.dates.length > 0 && (
+              <div className="mt-2 rounded-xl border border-brand-100 bg-brand-50/50 px-3 py-2.5">
+                <p className="text-[11.5px] font-semibold text-brand-800">
+                  {startTime
+                    ? sub(t("visits.recur.previewDayTime"), {
+                        day:  dateFmt(preview.dates[0], { weekday: "long" }),
+                        time: startTime,
+                      })
+                    : sub(t("visits.recur.previewDay"), {
+                        day: dateFmt(preview.dates[0], { weekday: "long" }),
+                      })}
+                </p>
+                <p className="mt-1 text-[11px] text-brand-700/80">
+                  {sub(t("visits.recur.previewNext"), {
+                    dates: preview.dates
+                      .map((d) => dateFmt(d, { day: "numeric", month: "long" }))
+                      .join(" · "),
+                  })}
+                </p>
+                {recurrence === "monthly" && (
+                  <p className="mt-1 text-[10.5px] text-brand-700/70 leading-relaxed">
+                    {t("visits.recur.previewMonthly")}
+                  </p>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Time — recurring only. `visits` has no planned-time column, so for
