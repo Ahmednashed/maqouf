@@ -1,16 +1,33 @@
 "use client";
 
 import { useState } from "react";
-import { CheckCircle, X, Loader2, Package, AlertTriangle } from "lucide-react";
+import { CheckCircle, X, Loader2, Package, AlertTriangle, FileText, MapPin } from "lucide-react";
+import { cn } from "@/lib/utils/cn";
+import {
+  deriveVisitReadiness,
+  hasRequiredGaps,
+  type ReadinessKind,
+} from "@/lib/visit-readiness";
+import type { VisitProductPlan, VisitFieldPlan } from "@/lib/visit-plan";
+import type { TranslationKey } from "@/lib/i18n/translations";
 import { useTranslation } from "@/hooks/use-translation";
 import { useCompleteVisit } from "@/hooks/use-visits";
 import type { VisitWithDetails } from "@/services/visits";
-import type { VisitProductWithDetails } from "@/services/visit-products";
 import { merchDisplayName } from "@/lib/utils/member-name";
+
+/** One line per outstanding thing. Order comes from the readiness deriver. */
+const GAP_KEY: Record<ReadinessKind, TranslationKey> = {
+  required_fields:    "visits.ready.fields",
+  required_products:  "visits.ready.reqProducts",
+  unchecked_products: "visits.ready.unchecked",
+  gps_missing:        "visits.ready.gpsMissing",
+};
 
 interface CompleteModalProps {
   visit:    VisitWithDetails;
-  products: VisitProductWithDetails[];
+  /** Plans from the detail page — already derived there, not recomputed. */
+  productPlan: VisitProductPlan;
+  fieldPlan:   VisitFieldPlan | null;
   /** Extra notes from the audit textarea (passed from parent) */
   notes:    string;
   onClose:  () => void;
@@ -20,7 +37,8 @@ interface CompleteModalProps {
 
 export function CompleteModal({
   visit,
-  products,
+  productPlan,
+  fieldPlan,
   notes,
   onClose,
   onDone,
@@ -28,13 +46,24 @@ export function CompleteModal({
   const { t, locale }  = useTranslation();
   const complete        = useCompleteVisit();
   const [extraNotes, setExtraNotes] = useState(notes);
+  const [acked, setAcked]           = useState(false);
 
-  // ── Summary stats ───────────────────────────────────────────────────────────
-  const checked  = products.filter((p) => p.qty_found !== null).length;
-  const missing  = products.filter(
-    (p) => p.qty_found !== null && p.qty_found < p.min_stock
-  ).length;
-  const totalProducts = products.length;
+  // ── Readiness ───────────────────────────────────────────────────────────────
+  // The previous summary counted only quantities below the branch minimum,
+  // which can only be non-zero once something has actually been counted — so
+  // the dialog was silent precisely when nothing had been done. It also never
+  // looked at the form.
+  const readiness  = deriveVisitReadiness({ productPlan, fieldPlan, visit });
+  const needsAck   = hasRequiredGaps(readiness);
+  const blocked    = needsAck && !acked;
+
+  // From the plan, not the passed-in rows: the rows carry local edit state,
+  // and completing does not save it. Counting typed-but-unsaved input here
+  // would contradict the warning directly below it.
+  const checked       = productPlan.checkedCount;
+  const totalProducts = productPlan.expectedCount;
+  const sub = (key: string, vals: Record<string, string | number>) =>
+    Object.entries(vals).reduce((acc, [k, v]) => acc.replace(`{${k}}`, String(v)), key);
 
   const branchName =
     locale === "ar" ? visit.place.branch_ar : visit.place.branch_en;
@@ -42,6 +71,9 @@ export function CompleteModal({
   const merchName  = merchDisplayName(visit.merch, "—");
 
   async function handleConfirm() {
+    // Guarded here as well as on the button: the acknowledgement is the whole
+    // point of the dialog, so it must not be bypassable by a stray call.
+    if (blocked) return;
     await complete.mutateAsync({ id: visit.id, notes: extraNotes || undefined });
     onDone();
   }
@@ -84,6 +116,17 @@ export function CompleteModal({
               {branchName} · {merchName}
             </p>
 
+            {fieldPlan && fieldPlan.requiredCount > 0 && (
+              <div className="flex items-center justify-between text-[13px]">
+                <span className="flex items-center gap-1.5 text-ink-600">
+                  <FileText className="w-3.5 h-3.5" />
+                  {sub(t("visits.ready.fieldsDone"), {
+                    done: fieldPlan.requiredAnsweredCount, total: fieldPlan.requiredCount,
+                  })}
+                </span>
+              </div>
+            )}
+
             <div className="flex items-center justify-between text-[13px]">
               <span className="flex items-center gap-1.5 text-ink-600">
                 <Package className="w-3.5 h-3.5" />
@@ -92,13 +135,75 @@ export function CompleteModal({
               <span className="text-ink-400 text-[12px]">/ {totalProducts}</span>
             </div>
 
-            {missing > 0 && (
+            {/* Location: stated for every visit, including the case where the
+                branch has no coordinates and no check could have applied. */}
+            <div className="flex items-center gap-1.5 text-[12.5px]">
+              <MapPin className="w-3.5 h-3.5 shrink-0 text-ink-400" />
+              <span className={cn(
+                readiness.gps === "verified" ? "text-emerald-600" : "text-ink-500",
+              )}>
+                {readiness.gps === "verified"       ? t("visits.ready.gpsVerified")
+                 : readiness.gps === "not_applicable" ? t("visits.ready.gpsNotApplicable")
+                 : t("visits.ready.gpsMissing")}
+              </span>
+            </div>
+
+            {readiness.belowMinCount > 0 && (
               <div className="flex items-center gap-1.5 text-[13px] text-amber-600">
                 <AlertTriangle className="w-3.5 h-3.5" />
-                {t("visits.itemsMissing").replace("{n}", String(missing))}
+                {sub(t("visits.ready.belowMin"), { n: readiness.belowMinCount })}
               </div>
             )}
           </div>
+
+          {/* ── What completing now would leave unrecorded ──────────────────
+              completeVisit() imposes no rules, so this warns and asks for an
+              explicit acknowledgement rather than blocking work that the
+              business model permits. */}
+          {readiness.gaps.length > 0 && (
+            <div className={cn(
+              "rounded-xl border p-3.5 mb-4",
+              needsAck ? "border-amber-300 bg-amber-50/70" : "border-ink-200 bg-ink-50",
+            )}>
+              <p className={cn(
+                "flex items-start gap-2 text-[12.5px] font-bold",
+                needsAck ? "text-amber-800" : "text-ink-600",
+              )}>
+                <AlertTriangle className="w-4 h-4 shrink-0 mt-px" />
+                {t("visits.ready.warnTitle")}
+              </p>
+              <ul className="mt-2 ms-6 space-y-1 list-disc">
+                {readiness.gaps.map((g) => (
+                  <li key={g.kind} className="text-[12px] text-ink-700">
+                    {g.kind === "gps_missing"
+                      ? t(GAP_KEY[g.kind])
+                      : sub(t(GAP_KEY[g.kind]), { n: g.count })}
+                  </li>
+                ))}
+              </ul>
+
+              {needsAck && (
+                <label className="mt-3 flex items-start gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={acked}
+                    onChange={(e) => setAcked(e.target.checked)}
+                    className="mt-0.5 w-4 h-4 rounded border-amber-400 accent-amber-600 shrink-0"
+                  />
+                  <span className="text-[12px] text-amber-900 leading-snug">
+                    {t("visits.ready.ack")}
+                  </span>
+                </label>
+              )}
+            </div>
+          )}
+
+          {readiness.gaps.length === 0 && (
+            <p className="flex items-center gap-2 text-[12.5px] text-emerald-700 font-medium mb-4">
+              <CheckCircle className="w-4 h-4" />
+              {t("visits.ready.allDone")}
+            </p>
+          )}
 
           {/* Notes */}
           <div className="mb-5">
@@ -124,8 +229,9 @@ export function CompleteModal({
             </button>
             <button
               onClick={handleConfirm}
-              disabled={complete.isPending}
-              className="flex-1 h-11 rounded-xl bg-emerald-500 hover:bg-emerald-600 disabled:opacity-60 text-white text-[13.5px] font-semibold shadow-pop transition-all flex items-center justify-center gap-2"
+              disabled={complete.isPending || blocked}
+              title={blocked ? t("visits.ready.ackRequired") : undefined}
+              className="flex-1 h-11 rounded-xl bg-emerald-500 hover:bg-emerald-600 disabled:opacity-60 disabled:cursor-not-allowed text-white text-[13.5px] font-semibold shadow-pop transition-all flex items-center justify-center gap-2"
             >
               {complete.isPending ? (
                 <Loader2 className="w-4 h-4 animate-spin" />

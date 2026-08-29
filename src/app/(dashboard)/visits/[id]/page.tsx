@@ -1185,16 +1185,14 @@ export default function VisitDetailPage() {
 
       {/* ── Complete modal ───────────────────────────────────────────────── */}
       {showComplete && (
+        /* Both plans are derived from SAVED rows, not the local edit state.
+           Completing does not persist the audit — handleSave does — so a
+           warning built on unsaved input would reassure the user about data
+           that is about to be discarded. */
         <CompleteModal
           visit={visit}
-          products={visitProducts.map((p) => {
-            const e = entries[p.product_id] ?? { qty_found: "", notes: "" };
-            return {
-              ...p,
-              qty_found:   e.qty_found !== "" ? parseInt(e.qty_found) : null,
-              qty_missing: null,
-            };
-          })}
+          productPlan={productPlan}
+          fieldPlan={fieldPlan}
           notes={notes}
           onClose={() => setShowComplete(false)}
           onDone={() => {
