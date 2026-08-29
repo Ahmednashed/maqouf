@@ -21,10 +21,13 @@ import { useTranslation } from "@/hooks/use-translation";
 import { inviteErrorKey } from "@/lib/i18n/invite-errors";
 import { COMPANY_USERS_QUERY_KEY } from "@/hooks/use-company-users";
 import { CURRENT_MEMBER_KEY } from "@/hooks/use-current-member";
+import { fetchTeamWorkload, type TeamWorkload } from "@/services/team-workload";
+import { riyadhToday } from "@/lib/utils/date";
 
 // ─── Query keys ───────────────────────────────────────────────────────────────
 export const USERS_QUERY_KEY = ["users"] as const;
 export const PENDING_INVITATIONS_KEY = ["pending-invitations"] as const;
+export const TEAM_WORKLOAD_KEY = (date: string) => ["team-workload", date] as const;
 
 // ─── Read ─────────────────────────────────────────────────────────────────────
 
@@ -44,6 +47,19 @@ export function usePendingInvitations() {
   return useQuery<PendingInvitation[]>({
     queryKey: PENDING_INVITATIONS_KEY,
     queryFn:  fetchPendingInvitations,
+  });
+}
+
+/**
+ * Visits-today and assigned-branch counts per member, keyed by company_users.id.
+ *
+ * Held on its own query key so the member table paints immediately and these
+ * two roll-up columns fill in after, rather than the whole page waiting on them.
+ */
+export function useTeamWorkload(date: string = riyadhToday()) {
+  return useQuery<Record<string, TeamWorkload>>({
+    queryKey: TEAM_WORKLOAD_KEY(date),
+    queryFn:  () => fetchTeamWorkload(date),
   });
 }
 

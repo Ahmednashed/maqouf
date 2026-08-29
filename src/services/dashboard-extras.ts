@@ -67,7 +67,7 @@ export const SYNC_STALE_MS    = 24 * 60 * 60 * 1000;   // 24 hours
 export type PresenceState = "online" | "idle" | "offline";
 
 /** online = active in the last 15 min; idle = active today; else offline. */
-export function presenceOf(lastActivityAt: string | null): PresenceState {
+export function presenceOf(lastActivityAt: string | null | undefined): PresenceState {
   if (!lastActivityAt) return "offline";
   const ts = new Date(lastActivityAt).getTime();
   if (Date.now() - ts <= ONLINE_WINDOW_MS) return "online";
@@ -80,7 +80,7 @@ export function presenceOf(lastActivityAt: string | null): PresenceState {
   return sameDay ? "idle" : "offline";
 }
 
-export function hasSyncIssue(lastMobileSync: string | null): boolean {
+export function hasSyncIssue(lastMobileSync: string | null | undefined): boolean {
   if (!lastMobileSync) return true;
   return Date.now() - new Date(lastMobileSync).getTime() > SYNC_STALE_MS;
 }

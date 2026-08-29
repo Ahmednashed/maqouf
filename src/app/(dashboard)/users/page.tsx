@@ -18,10 +18,17 @@ import {
   UserMinus,
   UserPlus2,
   History,
+  X,
 } from "lucide-react";
 import { cn }                  from "@/lib/utils/cn";
 import { useTranslation, type TranslationFn } from "@/hooks/use-translation";
-import { useUsers, usePendingInvitations, useInviteUser } from "@/hooks/use-users";
+import { useUsers, usePendingInvitations, useInviteUser, useTeamWorkload } from "@/hooks/use-users";
+import { blankWorkload, type TeamWorkload } from "@/services/team-workload";
+import {
+  presenceOf,
+  hasSyncIssue,
+  type PresenceState,
+} from "@/services/dashboard-extras";
 import type { PendingInvitation } from "@/services/invitations";
 import {
   memberDisplayName,
@@ -37,15 +44,23 @@ import { StatusModal }         from "./_components/StatusModal";
 import { InvitationLinkModal } from "./_components/InvitationLinkModal";
 import { UserActivityModal }   from "./_components/UserActivityModal";
 
-// ─── Today boundary ───────────────────────────────────────────────────────────
-function isToday(dateStr: string | null | undefined): boolean {
-  if (!dateStr) return false;
-  const d = new Date(dateStr);
-  const n = new Date();
-  return d.getFullYear() === n.getFullYear() &&
-         d.getMonth()    === n.getMonth()    &&
-         d.getDate()     === n.getDate();
-}
+// ─── Presence ─────────────────────────────────────────────────────────────────
+// This screen used to carry its own same-day check. presenceOf() already
+// encodes that rule for the dashboard, insights and the assistant, so a second
+// copy here could only ever drift out of agreement with them about who counts
+// as active. There is one definition now, and this screen reads it.
+
+const PRESENCE_DOT: Record<PresenceState, string> = {
+  online:  "bg-emerald-500",
+  idle:    "bg-amber-400",
+  offline: "bg-ink-300",
+};
+
+const PRESENCE_LABEL: Record<PresenceState, "users.presenceOnline" | "users.presenceIdle" | "users.presenceOffline"> = {
+  online:  "users.presenceOnline",
+  idle:    "users.presenceIdle",
+  offline: "users.presenceOffline",
+};
 
 // ─── Summary cards ────────────────────────────────────────────────────────────
 interface SummaryCardsProps {
@@ -57,7 +72,7 @@ function SummaryCards({ users, t }: SummaryCardsProps) {
   const total    = users.length;
   const active   = users.filter((u) => u.status === "active").length;
   const inactive = users.filter((u) => u.status === "inactive").length;
-  const online   = users.filter((u) => isToday(u.last_activity_at)).length;
+  const online   = users.filter((u) => presenceOf(u.last_activity_at) !== "offline").length;
 
   const cards = [
     { label: t("users.cardTotal"),     value: total,    icon: Users,     color: "bg-brand-50 text-brand-600" },
@@ -83,11 +98,11 @@ function SummaryCards({ users, t }: SummaryCardsProps) {
   );
 }
 
-// ─── Skeleton row (9 cells) ───────────────────────────────────────────────────
+// ─── Skeleton row (8 cells) ───────────────────────────────────────────────────
 function SkeletonRow() {
   return (
     <tr className="border-b border-ink-100">
-      {[...Array(9)].map((_, i) => (
+      {[...Array(8)].map((_, i) => (
         <td key={i} className="px-4 py-3.5">
           <div className="h-4 rounded-md bg-ink-100 animate-pulse" style={{ width: `${55 + (i * 11) % 40}%` }} />
         </td>
@@ -157,19 +172,21 @@ function RoleBadge({ role, t }: { role: UserRole; t: TranslationFn }) {
   );
 }
 
-// ─── Table head (9 columns) ───────────────────────────────────────────────────
+// ─── Table head (8 columns) ───────────────────────────────────────────────────
+// Identity (name + email + employee id) is one cell rather than three, and the
+// two timestamps are one cell rather than two, which buys room for the columns
+// a manager actually acts on: what this person is doing today.
 function TableHead({ t }: { t: TranslationFn }) {
   const th = "px-4 py-3 text-start text-[11.5px] font-semibold text-ink-400 uppercase tracking-wide";
   return (
     <tr className="border-b border-ink-100 bg-ink-50/60">
       <th className={th}>{t("users.colName")}</th>
-      <th className={th}>{t("users.colEmail")}</th>
       <th className={th}>{t("users.colRole")}</th>
       <th className={th}>{t("users.colStatus")}</th>
-      <th className={th}>{t("users.colColor")}</th>
+      <th className={th}>{t("users.colWorkToday")}</th>
+      <th className={th}>{t("users.colBranches")}</th>
+      <th className={th}>{t("users.colActivity")}</th>
       <th className={th}>{t("users.colJoined")}</th>
-      <th className={th}>{t("users.colLastActivity")}</th>
-      <th className={th}>{t("users.colLastSync")}</th>
       <th className="px-4 py-3 text-end text-[11.5px] font-semibold text-ink-400 uppercase tracking-wide">
         {t("users.colActions")}
       </th>
@@ -180,6 +197,7 @@ function TableHead({ t }: { t: TranslationFn }) {
 // ─── Table row ────────────────────────────────────────────────────────────────
 interface UserRowProps {
   member:     CompanyUserWithProfile;
+  work:       TeamWorkload;
   t:          TranslationFn;
   locale:     string;
   onEdit:     () => void;
@@ -188,7 +206,7 @@ interface UserRowProps {
   onActivity: () => void;
 }
 
-function UserRow({ member, t, locale, onEdit, onToggle, onInvite, onActivity }: UserRowProps) {
+function UserRow({ member, work, t, locale, onEdit, onToggle, onInvite, onActivity }: UserRowProps) {
   const displayName = memberDisplayName(member, t("users.unknown"));
   const email       = memberEmail(member);
   const initials    = memberInitials(member);
@@ -210,6 +228,9 @@ function UserRow({ member, t, locale, onEdit, onToggle, onInvite, onActivity }: 
     ? formatRelativeTime(member.last_mobile_sync, locale as "ar" | "en")
     : t("users.neverSynced");
 
+  const presence = presenceOf(member.last_activity_at);
+  const syncBad  = hasSyncIssue(member.last_mobile_sync);
+
   return (
     <tr className={cn(
       "border-b border-ink-100 hover:bg-ink-50/50 transition-colors group",
@@ -218,10 +239,14 @@ function UserRow({ member, t, locale, onEdit, onToggle, onInvite, onActivity }: 
       {/* Name + avatar */}
       <td className="px-4 py-3.5">
         <div className="flex items-center gap-3">
+          <span className="relative shrink-0">
           {avatarUrl ? (
+            // The colour column is gone; the ring keeps the member colour (which
+            // is what identifies them on the calendar) visible behind a photo.
             <img
               src={avatarUrl}
               alt=""
+              style={{ boxShadow: `0 0 0 2px ${member.color ?? "#6366F1"}` }}
               className={cn("w-9 h-9 rounded-xl object-cover shrink-0", !isActive && "grayscale-[30%]")}
               onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
             />
@@ -236,7 +261,16 @@ function UserRow({ member, t, locale, onEdit, onToggle, onInvite, onActivity }: 
               {initials}
             </div>
           )}
-          <div>
+            <span
+              title={t(PRESENCE_LABEL[presence])}
+              aria-label={t(PRESENCE_LABEL[presence])}
+              className={cn(
+                "absolute -bottom-0.5 -end-0.5 w-3 h-3 rounded-full border-2 border-white",
+                PRESENCE_DOT[presence],
+              )}
+            />
+          </span>
+          <div className="min-w-0">
             <p className="font-semibold text-ink-800 text-[13px] leading-tight flex flex-wrap items-center gap-1">
               {displayName}
               {!isActive && !isOrphan && (
@@ -250,16 +284,12 @@ function UserRow({ member, t, locale, onEdit, onToggle, onInvite, onActivity }: 
                 </span>
               )}
             </p>
+            <p className="text-[11.5px] text-ink-400 leading-tight truncate" dir="ltr">{email}</p>
             {member.emp_id && (
               <p className="text-[11px] text-ink-400 leading-tight font-mono">{member.emp_id}</p>
             )}
           </div>
         </div>
-      </td>
-
-      {/* Email */}
-      <td className="px-4 py-3.5">
-        <span className="text-[13px] text-ink-600" dir="ltr">{email}</span>
       </td>
 
       {/* Role */}
@@ -268,20 +298,36 @@ function UserRow({ member, t, locale, onEdit, onToggle, onInvite, onActivity }: 
       {/* Status */}
       <td className="px-4 py-3.5"><StatusBadge status={member.status} t={t} /></td>
 
-      {/* Color */}
+      {/* Visits today */}
       <td className="px-4 py-3.5">
-        <div className="flex items-center gap-2">
-          <span className="w-5 h-5 rounded-md border border-ink-200" style={{ backgroundColor: member.color ?? "#6366F1" }} />
-          <span className="text-[11.5px] text-ink-400 font-mono">{member.color ?? "#6366F1"}</span>
-        </div>
+        {work.visits_today === 0 ? (
+          <span className="text-[12.5px] text-ink-300">{t("users.workNone")}</span>
+        ) : (
+          <div className="leading-tight">
+            <span className="text-[15px] font-bold text-ink-800">{work.visits_today}</span>
+            <p className="text-[11px] text-ink-400">
+              {t("users.workDone").replace("{done}", String(work.completed_today))}
+              {work.open_today > 0 && (
+                <> · {t("users.workOpen").replace("{open}", String(work.open_today))}</>
+              )}
+            </p>
+          </div>
+        )}
       </td>
 
-      {/* Joined */}
+      {/* Assigned branches */}
       <td className="px-4 py-3.5">
-        <span className="text-[13px] text-ink-500">{joinedDate}</span>
+        {work.assigned_branches === 0 ? (
+          <span className="text-[12.5px] text-ink-300">{t("users.branchesNone")}</span>
+        ) : (
+          <span className="text-[13px] text-ink-700 font-semibold">
+            {t("users.branchesCount").replace("{n}", String(work.assigned_branches))}
+          </span>
+        )}
       </td>
 
-      {/* Last Activity */}
+      {/* Activity — last seen over last sync, the two questions a manager
+          asks together when someone looks quiet. */}
       <td className="px-4 py-3.5">
         <div className="flex items-center gap-1.5">
           <Activity className="w-3.5 h-3.5 text-ink-300 shrink-0" />
@@ -289,16 +335,20 @@ function UserRow({ member, t, locale, onEdit, onToggle, onInvite, onActivity }: 
             {lastActivity}
           </span>
         </div>
-      </td>
-
-      {/* Last Mobile Sync */}
-      <td className="px-4 py-3.5">
-        <div className="flex items-center gap-1.5">
-          <Smartphone className="w-3.5 h-3.5 text-ink-300 shrink-0" />
-          <span className={cn("text-[12.5px]", member.last_mobile_sync ? "text-ink-600" : "text-ink-300")}>
+        <div className="flex items-center gap-1.5 mt-0.5" title={syncBad ? t("users.syncIssue") : undefined}>
+          <Smartphone className={cn("w-3.5 h-3.5 shrink-0", syncBad ? "text-amber-500" : "text-ink-300")} />
+          <span className={cn(
+            "text-[11.5px]",
+            syncBad ? "text-amber-600 font-medium" : member.last_mobile_sync ? "text-ink-500" : "text-ink-300",
+          )}>
             {lastSync}
           </span>
         </div>
+      </td>
+
+      {/* Joined */}
+      <td className="px-4 py-3.5">
+        <span className="text-[13px] text-ink-500">{joinedDate}</span>
       </td>
 
       {/* Actions */}
@@ -349,11 +399,36 @@ function UserRow({ member, t, locale, onEdit, onToggle, onInvite, onActivity }: 
   );
 }
 
+// ─── Filtered-empty state ─────────────────────────────────────────────────────
+// Distinct from EmptyState: "nobody on the team yet" and "nobody matches these
+// filters" need different words and a different way out.
+function NoMatchState({ onClear, t }: { onClear: () => void; t: TranslationFn }) {
+  return (
+    <div className="flex flex-col items-center justify-center py-16 text-center">
+      <div className="w-14 h-14 rounded-2xl bg-ink-100 flex items-center justify-center mb-3">
+        <Search className="w-6 h-6 text-ink-300" />
+      </div>
+      <h3 className="text-[14px] font-semibold text-ink-700 mb-1">{t("users.noMatchTitle")}</h3>
+      <p className="text-[12.5px] text-ink-400 mb-4 max-w-xs">{t("users.noMatchDesc")}</p>
+      <button
+        onClick={onClear}
+        className="inline-flex items-center gap-1.5 h-9 px-4 rounded-lg border border-ink-200 bg-white text-[12.5px] font-semibold text-ink-600 hover:bg-ink-50 transition-all"
+      >
+        <X className="w-3.5 h-3.5" />
+        {t("users.clearFilters")}
+      </button>
+    </div>
+  );
+}
+
 // ─── Main page ────────────────────────────────────────────────────────────────
+
+type WorkFilter = "all" | "hasVisits" | "noVisits" | "noBranches";
 export default function UsersPage() {
   const { t, locale } = useTranslation();
   const { data: users = [], isLoading, isError, error } = useUsers();
   const { data: pendingInvites = [] } = usePendingInvitations();
+  const { data: workload, isSuccess: workloadReady } = useTeamWorkload();
   const invite = useInviteUser();
 
   /** Re-sends the Supabase invite email using the original invite details. */
@@ -375,6 +450,7 @@ export default function UsersPage() {
   const [search,       setSearch]       = useState("");
   const [roleFilter,   setRoleFilter]   = useState<UserRole | "all">("all");
   const [statusFilter, setStatusFilter] = useState<"all" | "active" | "inactive">("active");
+  const [workFilter,   setWorkFilter]   = useState<WorkFilter>("all");
 
   const ROLES: Array<{ value: UserRole | "all"; label: string }> = [
     { value: "all",          label: t("users.allRoles") },
@@ -389,18 +465,48 @@ export default function UsersPage() {
     { value: "inactive", label: t("users.filterStatusInactive") },
   ];
 
+  const WORK_OPTS: Array<{ value: WorkFilter; label: string }> = [
+    { value: "all",         label: t("users.workAll") },
+    { value: "hasVisits",   label: t("users.workHasVisits") },
+    { value: "noVisits",    label: t("users.workNoVisits") },
+    { value: "noBranches",  label: t("users.workNoBranches") },
+  ];
+
+  const filtersActive =
+    search.trim() !== "" || roleFilter !== "all" || statusFilter !== "active" || workFilter !== "all";
+
+  function clearFilters() {
+    setSearch("");
+    setRoleFilter("all");
+    setStatusFilter("active");
+    setWorkFilter("all");
+  }
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return users.filter((u) => {
       const matchesRole   = roleFilter === "all" || u.role === roleFilter;
       const matchesStatus = statusFilter === "all" || u.status === statusFilter;
+      // Fall back to the display name rather than "—" so a dash typed into the
+      // search box cannot silently match every unnamed member.
       const matchesSearch = !q ||
-        memberDisplayName(u).toLowerCase().includes(q) ||
+        memberDisplayName(u, "").toLowerCase().includes(q) ||
         memberEmail(u).toLowerCase().includes(q) ||
         u.emp_id?.toLowerCase().includes(q);
-      return matchesRole && matchesStatus && matchesSearch;
+
+      // Until the roll-up resolves every member would look like they have no
+      // work, so the filter stays inert rather than hiding people wrongly.
+      let matchesWork = true;
+      if (workFilter !== "all" && workloadReady) {
+        const w = workload?.[u.id] ?? blankWorkload();
+        if (workFilter === "hasVisits")  matchesWork = w.visits_today > 0;
+        if (workFilter === "noVisits")   matchesWork = w.visits_today === 0;
+        if (workFilter === "noBranches") matchesWork = w.assigned_branches === 0;
+      }
+
+      return matchesRole && matchesStatus && matchesSearch && matchesWork;
     });
-  }, [users, search, roleFilter, statusFilter]);
+  }, [users, search, roleFilter, statusFilter, workFilter, workload, workloadReady]);
 
   return (
     <>
@@ -519,6 +625,30 @@ export default function UsersPage() {
               </select>
               <ChevronDown className="absolute end-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-ink-400 pointer-events-none" />
             </div>
+
+            <div className="relative">
+              <select
+                value={workFilter}
+                onChange={(e) => setWorkFilter(e.target.value as WorkFilter)}
+                title={t("users.workHint")}
+                className="h-9 ps-3 pe-8 rounded-lg border border-ink-200 bg-ink-50 text-[13px] text-ink-700 outline-none focus:border-brand-400 focus:ring-1 focus:ring-brand-100 transition-all appearance-none"
+              >
+                {WORK_OPTS.map((w) => (
+                  <option key={w.value} value={w.value}>{w.label}</option>
+                ))}
+              </select>
+              <ChevronDown className="absolute end-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-ink-400 pointer-events-none" />
+            </div>
+
+            {filtersActive && (
+              <button
+                onClick={clearFilters}
+                className="inline-flex items-center gap-1.5 h-9 px-3 rounded-lg border border-ink-200 bg-white text-[12.5px] font-semibold text-ink-500 hover:bg-ink-50 hover:text-ink-700 transition-all"
+              >
+                <X className="w-3.5 h-3.5" />
+                {t("users.clearFilters")}
+              </button>
+            )}
           </div>
         )}
 
@@ -548,8 +678,8 @@ export default function UsersPage() {
               <tbody>
                 {filtered.length === 0 ? (
                   <tr>
-                    <td colSpan={9} className="py-12 text-center text-ink-400 text-[13px]">
-                      {t("common.noData")}
+                    <td colSpan={8} className="p-0">
+                      <NoMatchState onClear={clearFilters} t={t} />
                     </td>
                   </tr>
                 ) : (
@@ -557,6 +687,7 @@ export default function UsersPage() {
                     <UserRow
                       key={member.id}
                       member={member}
+                      work={workload?.[member.id] ?? blankWorkload()}
                       t={t}
                       locale={locale}
                       onEdit={()     => setEditTarget(member)}

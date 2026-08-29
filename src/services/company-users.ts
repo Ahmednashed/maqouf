@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/client";
 import type { CompanyUser, User, UserRole } from "@/types";
 import { getMyCompanyId } from "@/lib/supabase/helpers";
+import { merchDisplayName } from "@/lib/utils/member-name";
 
 // ─── Extended type ────────────────────────────────────────────────────────────
 
@@ -34,11 +35,11 @@ export function memberDisplayName(
   member: CompanyUserWithProfile,
   fallback = "—",
 ): string {
-  return (
-    member.display_name?.trim()    ||
-    member.user?.full_name?.trim() ||
-    fallback
-  );
+  // Delegates rather than restating the precedence. This helper and
+  // merchDisplayName had drifted into two copies of one rule, which is how
+  // the same person could read differently on /users and on the calendar.
+  // One rule, one place to change it.
+  return merchDisplayName(member, fallback);
 }
 
 /**
