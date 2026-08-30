@@ -44,33 +44,63 @@ export interface ProductCoverage {
   required_count: number;
 }
 
+/** One row per product, straight out of `public.v_product_coverage` (024). */
+interface ProductCoverageRow {
+  product_id:     string;
+  branch_count:   number;
+  required_count: number;
+}
+
+const PRODUCT_COVERAGE_COLUMNS = "product_id, branch_count, required_count";
+
 /**
  * Roll up assortment coverage per product in one query.
  *
- * Reads the narrowest possible column set from place_products and reduces in
- * memory rather than issuing a count per product. Inactive assortment rows are
- * excluded: a product parked on a branch is not being tracked there.
+ * WHAT CHANGED, AND WHY
+ * ─────────────────────
+ * This used to fetch EVERY place_products row the caller could see and reduce
+ * them in the browser — no filter, no limit and, worse, no ordering, so a
+ * PostgREST db-max-rows ceiling would have truncated it silently and produced
+ * coverage counts that were wrong with no error anywhere. See
+ * docs/PERFORMANCE-RISKS.md §3. It was the last unbounded read feeding the
+ * dashboard attention panel; migration 022 had already dealt with the others.
  *
- * NOTE ON SCALE: this reads every visible place_products row. Fine at current
- * volume and keeps the change migration-free; convert to a view or RPC if
- * assortments grow into the tens of thousands.
+ * The view does the same reduction in Postgres. It is `security_invoker = true`,
+ * so `products_select` and `place_products_select` are still evaluated as the
+ * querying user.
+ *
+ * The meaning of "covered" now lives in the view definition: only `is_active`
+ * assortment rows count, because a product parked on a branch is not being
+ * tracked there. Note this deliberately differs from
+ * `v_branch_operations.product_count`, which counts all rows to match what the
+ * branch register showed before 022. The two disagree on purpose.
+ *
+ * The view LEFT JOINs from `products`, so a product no branch carries returns
+ * `branch_count: 0` where this function previously produced no map entry at
+ * all. Both readers already go through `coverage[id]?.field ?? 0`:
+ * `deriveAttention()` iterates products and looks each one up, and
+ * `CoverageCell` treats 0 and undefined identically. Pinned by tests.
+ *
+ * There is deliberately NO fallback to the old scan. If the view is missing,
+ * this must fail loudly rather than quietly reinstate the whole-table read it
+ * exists to remove.
  */
 export async function fetchProductCoverage(): Promise<Record<string, ProductCoverage>> {
   const supabase = createClient();
 
   const { data, error } = await supabase
-    .from("place_products")
-    .select("product_id, is_mandatory, is_active");
+    .from("v_product_coverage")
+    .select(PRODUCT_COVERAGE_COLUMNS);
 
   if (error) throw error;
 
   const out: Record<string, ProductCoverage> = {};
 
-  for (const row of data ?? []) {
-    if (!row.is_active) continue;
-    const entry = (out[row.product_id] ??= { branch_count: 0, required_count: 0 });
-    entry.branch_count += 1;
-    if (row.is_mandatory) entry.required_count += 1;
+  for (const row of (data ?? []) as ProductCoverageRow[]) {
+    out[row.product_id] = {
+      branch_count:   row.branch_count,
+      required_count: row.required_count,
+    };
   }
 
   return out;

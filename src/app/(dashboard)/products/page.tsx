@@ -136,7 +136,11 @@ export default function ProductsPage() {
   const [filterCategory,   setFilterCategory]   = useState<string>("");
   const [filterStatus,     setFilterStatus]     = useState<"" | "active" | "inactive">("");
 
-  const { data: coverage = {} } = useProductCoverage();
+  // isSuccess, not isLoading: a failed roll-up resolves to undefined, and the
+  // `= {}` default would turn that into "no branch carries any of these" —
+  // every product wearing the orphan badge on the strength of data that never
+  // arrived. Same gate /places uses for its operations roll-up.
+  const { data: coverage = {}, isSuccess: coverageReady } = useProductCoverage();
 
   const filtersApplied = Boolean(search.trim() || filterCategory || filterStatus);
 
@@ -324,6 +328,7 @@ export default function ProductsPage() {
                       key={product.id}
                       product={product}
                       coverage={coverage[product.id]}
+                      coverageReady={coverageReady}
                       locale={locale}
                       t={t}
                       onEdit={() => openEdit(product)}
@@ -391,8 +396,15 @@ function TableHead({ t }: { t: TranslationFn }) {
  * being tracked there.
  */
 function CoverageCell({
-  coverage, t,
-}: { coverage?: ProductCoverage; t: TranslationFn }) {
+  coverage, coverageReady, t,
+}: { coverage?: ProductCoverage; coverageReady: boolean; t: TranslationFn }) {
+  // Until the roll-up has actually arrived, say nothing. Rendering the orphan
+  // badge here would state as fact that no branch carries this product, which
+  // is indistinguishable on screen from having failed to ask.
+  if (!coverageReady) {
+    return <span className="text-[12px] text-ink-300" title={t("common.dataUnavailable")}>—</span>;
+  }
+
   const branches = coverage?.branch_count ?? 0;
 
   if (branches === 0) {
@@ -422,13 +434,15 @@ interface ProductRowProps {
   product:  Product;
   /** Undefined while the coverage roll-up is still loading. */
   coverage?: ProductCoverage;
+  /** False until the roll-up has actually succeeded — see CoverageCell. */
+  coverageReady: boolean;
   locale:   string;
   t:        TranslationFn;
   onEdit:   () => void;
   onDelete: () => void;
 }
 
-function ProductRow({ product, coverage, locale, t, onEdit, onDelete }: ProductRowProps) {
+function ProductRow({ product, coverage, coverageReady, locale, t, onEdit, onDelete }: ProductRowProps) {
   const primaryName   = locale === "ar" ? product.name_ar : product.name_en;
   const secondaryName = locale === "ar" ? product.name_en : product.name_ar;
   const catLabel      = t(`products.cat.${product.category}` as Parameters<typeof t>[0]);
@@ -503,7 +517,7 @@ function ProductRow({ product, coverage, locale, t, onEdit, onDelete }: ProductR
 
       {/* Status */}
       <td className="px-4 py-3.5">
-        <CoverageCell coverage={coverage} t={t} />
+        <CoverageCell coverage={coverage} coverageReady={coverageReady} t={t} />
       </td>
 
       <td className="px-4 py-3.5">
