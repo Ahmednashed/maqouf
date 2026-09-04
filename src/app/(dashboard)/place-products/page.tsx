@@ -19,6 +19,8 @@ import {
   EyeOff,
 } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
+import { pluralKey } from "@/lib/i18n/plural";
+import type { TranslationKey } from "@/lib/i18n/translations";
 import { useTranslation, type TranslationFn } from "@/hooks/use-translation";
 import { usePlaces } from "@/hooks/use-places";
 import { usePlaceProducts } from "@/hooks/use-place-products";
@@ -303,7 +305,8 @@ export default function PlaceProductsPage() {
             <div className="flex flex-wrap gap-2 mb-5">
               <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-ink-100 text-ink-600 text-[12px] font-semibold">
                 <Package className="w-3.5 h-3.5" />
-                {t("placeProducts.total").replace("{count}", String(totalCount))}
+                {t(pluralKey("placeProducts.total", totalCount, locale) as TranslationKey)
+                .replace("{count}", String(totalCount))}
               </span>
               {mandatoryCount > 0 && (
                 <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-50 text-amber-700 text-[12px] font-semibold">

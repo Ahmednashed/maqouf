@@ -32,6 +32,11 @@ const PLURAL_SETS: Array<{ base: string; token: string; converted: boolean }> = 
   { base: "dashboard.attn.orphanProducts", token: "{count}", converted: true },
   { base: "dashboard.attn.emptyTemplate",  token: "{count}", converted: true },
   { base: "dashboard.map.fixCoords",       token: "{n}",     converted: true },
+  { base: "chains.total",                  token: "{count}", converted: true },
+  { base: "places.total",                  token: "{count}", converted: true },
+  { base: "products.total",                token: "{count}", converted: true },
+  { base: "placeProducts.total",           token: "{count}", converted: true },
+  { base: "schedule.total",                token: "{count}", converted: true },
   { base: "templates.fieldCount",          token: "{count}", converted: false },
 ];
 
@@ -131,10 +136,11 @@ eq("two branches without coordinates reads as the Arabic dual",
    "فرعان بلا إحداثيات — أضفهما");
 // "branch(es)" is the tell of a string that cannot agree with its count.
 //
-// Every dashboard label now has plural forms, so none of them may use it. The
-// rest of the app still has 18, listed in the Batch 25 report and awaiting the
-// wider triage — the ceiling below lets that number fall but never rise, so a
-// new counted label cannot quietly join them.
+// Every dashboard label and every list-footer total now has plural forms, so
+// neither may use it. The rest of the app still has 11 — the visit-completion
+// labels, two visit-detail ones, and two in reports — awaiting the rest of the
+// triage. The ceiling below lets that number fall but never rise, so a new
+// counted label cannot quietly join them.
 {
   const PARENTHESISED = /\((?:e?s)\)/;
   const all = Object.entries(en).filter(([, v]) => PARENTHESISED.test(v)).map(([k]) => k);
@@ -142,7 +148,7 @@ eq("two branches without coordinates reads as the Arabic dual",
   eq("no dashboard label falls back to a parenthesised plural",
      all.filter((k) => k.startsWith("dashboard.")), []);
 
-  const KNOWN_BACKLOG = 18;
+  const KNOWN_BACKLOG = 11;
   ok(`parenthesised plurals outside the dashboard do not increase (${all.length} <= ${KNOWN_BACKLOG})`,
      all.length <= KNOWN_BACKLOG,
      all.join(", "));
@@ -174,6 +180,34 @@ for (const [family, token] of [
        offenders, []);
   }
 }
+
+// ── No list-footer total may interpolate a count without plural forms ────────
+// `.total` is a suffix rather than a prefix, so this cannot ride the family
+// loop above. A new `foo.total` carrying {count} fails here instead of shipping
+// as "1 branch" in a language that wants "branch one".
+{
+  for (const [dictName, dict] of [["ar", ar], ["en", en]] as const) {
+    const offenders = Object.keys(dict).filter(
+      (k) => k.endsWith(".total") && dict[k].includes("{count}"),
+    );
+    eq(`${dictName}: no *.total label interpolates {count} without plural forms`,
+       offenders, []);
+  }
+}
+
+// ── The dead keys Group A removed stay removed ───────────────────────────────
+for (const dead of ["users.total", "visits.total"]) {
+  ok(`${dead} is gone from ar`, ar[dead] === undefined, ar[dead]);
+  ok(`${dead} is gone from en`, en[dead] === undefined, en[dead]);
+}
+
+// ── The production case that prompted Group A ────────────────────────────────
+eq("a single branch in a filtered list reads as a singular in Arabic",
+   ar[pluralKey("places.total", 1, "ar")], "فرع واحد");
+eq("and as a singular in English",
+   en[pluralKey("places.total", 1, "en")], "1 branch");
+eq("two branches take the Arabic dual",
+   ar[pluralKey("places.total", 2, "ar")], "فرعان");
 
 // ── Dictionary parity ────────────────────────────────────────────────────────
 {

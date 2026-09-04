@@ -7,6 +7,8 @@ import {
   ChevronDown, LayoutGrid, List, Clock, RefreshCw,
 } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
+import { pluralKey } from "@/lib/i18n/plural";
+import type { TranslationKey } from "@/lib/i18n/translations";
 import { useTranslation, type TranslationFn } from "@/hooks/use-translation";
 import { useSchedules } from "@/hooks/use-schedules";
 import { useMerchandisers } from "@/hooks/use-company-users";
@@ -322,7 +324,8 @@ export function RecurringSchedulesPanel() {
             <>
               <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-ink-100 text-ink-600 text-[12px] font-semibold">
                 <CalendarDays className="w-3.5 h-3.5" />
-                {t("schedule.total").replace("{count}", String(totalCount))}
+                {t(pluralKey("schedule.total", totalCount, locale) as TranslationKey)
+                .replace("{count}", String(totalCount))}
               </span>
               <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 text-emerald-700 text-[12px] font-semibold">
                 <ToggleRight className="w-3.5 h-3.5" />

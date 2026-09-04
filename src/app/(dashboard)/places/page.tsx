@@ -15,6 +15,8 @@ import {
   ChevronDown,
 } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
+import { pluralKey } from "@/lib/i18n/plural";
+import type { TranslationKey } from "@/lib/i18n/translations";
 import { useTranslation, type TranslationFn } from "@/hooks/use-translation";
 import { usePlaces, usePlaceOperations } from "@/hooks/use-places";
 import { useChains } from "@/hooks/use-chains";
@@ -228,7 +230,8 @@ export default function PlacesPage() {
         <div className="flex flex-wrap gap-2 mb-5">
           <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-ink-100 text-ink-600 text-[12px] font-semibold">
             <MapPin className="w-3.5 h-3.5" />
-            {t("places.total").replace("{count}", String(totalCount))}
+            {t(pluralKey("places.total", totalCount, locale) as TranslationKey)
+                .replace("{count}", String(totalCount))}
           </span>
           <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 text-emerald-700 text-[12px] font-semibold">
             <ToggleRight className="w-3.5 h-3.5" />
