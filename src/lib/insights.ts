@@ -80,6 +80,7 @@ export function deriveInsights(
     priorities.push({
       key: "sync", severity: "amber",
       msgKey: "dashboard.prio.syncMany", msgVars: { n: syncOffenders.length },
+      pluralCount: syncOffenders.length,
       href: "/users", actionKey: "dashboard.prio.actRemind",
     });
   }
@@ -97,6 +98,7 @@ export function deriveInsights(
     priorities.push({
       key: "oos", severity: "amber",
       msgKey: "dashboard.prio.oos", msgVars: { n: oos },
+      pluralCount: oos,
       href: "/reports", actionKey: "dashboard.prio.actReview",
     });
   }
