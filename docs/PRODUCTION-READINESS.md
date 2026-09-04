@@ -1,20 +1,20 @@
-# Production readiness — end of Phase 2 Batch 15
+# Production readiness — end of Phase 2 Batch 18
 
 State of the deployed app, what is known to be imperfect, and the checklist each
 future batch should run before calling itself verified.
 
-**Deployed:** `main` @ `b3caf205bb148408a6eff7cbb24abc293133a6e0`
+**Deployed:** `main` @ `b973dcb7ad5f80c2ab43c1418987c0bff3d8cb63`
 **Environment:** https://malgofappv1.vercel.app (Vercel, region `fra1`)
-**Captured:** Batch 14. **Updated:** Batch 17, after the production drift check.
+**Captured:** Batch 14. **Updated:** Batch 19, after the Batch 18 service swap.
 
-> **This build requires migrations 022 and 023 to be applied.** Both were
-> applied by hand in the SQL Editor and **verified against production on
-> 2026-08-29** — see §10. Read §8 before deploying to any new
-> environment, and re-run the §10 check once you have.
+> **This build requires migrations 022, 023 and 024 to be applied.** All three
+> were applied by hand in the SQL Editor and verified against production —
+> 022/023 on 2026-08-29, 024 on 2026-09-04. See §10. Read §8 before deploying
+> to any new environment, and re-run the §10 checks once you have.
 
 ---
 
-## 1. What Batches 1–15 did
+## 1. What Batches 1–18 did
 
 Each batch was merged fast-forward only and verified in production before the
 next began.
@@ -36,6 +36,9 @@ next began.
 | 13 | Template execution | Per-field answered state; **fixed a Batch 12 false-dirty bug** that permanently blocked completion |
 | 14 | Documentation | TEST-data registry, performance risk map, and this runbook |
 | 15 | **Performance** | Branch operations moved into Postgres — `v_branch_operations`, migration 022. The largest read in the app, on its three most-loaded screens, stopped scaling with visit history |
+| 16 | Documentation | Migration-history investigation; corrected what Batch 15 had recorded about it |
+| 17 | Documentation | Read-only production drift check — proved the repository matches the database for migrations 020, 021 and 022 |
+| 18 | **Performance** | Product coverage moved into Postgres — `v_product_coverage`, migration 024. The **last** unbounded read, plus an honest-unknown state on `/products` when the roll-up fails |
 
 Two batches (6 and 9) removed things that were actively misleading. Batch 13
 fixed a defect introduced by Batch 12 — found only because Batch 13 finally had
@@ -43,8 +46,12 @@ a template to type into. Batch 15 did the same to itself: swapping the service
 exposed that `/places` turned a failed query into "never visited" for every
 branch, which was fixed in the same batch.
 
-Batch 15 is also the first change whose correctness depends on database state
-the repository cannot guarantee — see §8.
+Batch 18 repeated that pattern deliberately: swapping the service exposed that
+`/products` turned a failed roll-up into 'no branch carries this' for every
+product, which was fixed in the same batch.
+
+Batch 15 is the first change whose correctness depends on database state the
+repository cannot guarantee, and Batch 18 is the second — see §8.
 
 ---
 
@@ -84,16 +91,26 @@ why it is checked explicitly.
 
 ## 4. TEST data currently live
 
-Three TEST visits, one modified TEST template field, and a set of TEST
-reference rows are live in production. They are correct data producing correct
-readings — not bugs — and every effect reverts on cleanup.
+Five TEST visits, one modified TEST template field, and a set of TEST reference
+rows are live in production. They are correct data producing correct readings —
+not bugs — and every effect reverts on cleanup.
 
 Full inventory, dependency order and revert instructions:
-**[`TEST-DATA-REGISTRY.md`](./TEST-DATA-REGISTRY.md)**.
+**[`TEST-DATA-REGISTRY.md`](./TEST-DATA-REGISTRY.md)**. Re-verified live on
+2026-09-04: all five visits, the required-field change and every reference row
+are still present and unchanged.
 
-Expect these figures while it exists: dashboard timeline **3**, attention **4
-items** (not 5), `/users` Ahmed **3 مفتوحة**, `/reports` **9 visits / GPS
-started 6**, `/places` خريص last visit **اليوم**.
+**The figures that follow were read on 2026-08-29 and have since drifted**, not
+because anything is wrong but because real visits happened afterwards. Treat
+them as an example of the shape of the effect, not as a current expectation:
+dashboard timeline **3**, attention **4 items** (not 5), `/users` Ahmed
+**3 مفتوحة**, `/reports` **9 visits / GPS started 6**, `/places` خريص last
+visit **اليوم**. Anything derived from dates moves on its own.
+
+One effect that does **not** drift: `TEST-CLAUDE-B5-UNASSIGNED` is the only
+orphan product, so the dashboard attention item reads **1 product unassigned**.
+Deleting it takes that count to zero and removes the live example of both Batch
+6 orphan detection and the Batch 18 `LEFT JOIN` behaviour.
 
 ---
 
@@ -184,18 +201,25 @@ What every batch has actually run. Reproducible rather than aspirational.
 ## 8. Database-dependent releases
 
 Everything before Batch 15 was self-contained: the deployed bundle was the whole
-change. From `b3caf20` onward that is no longer true.
+change. From `b3caf20` onward that is no longer true, and Batch 18 added a
+second such dependency.
 
 ### What this build requires
 
 | Object | From | Must be |
 |---|---|---|
 | `public.v_branch_operations` | migration 022 | exists, `security_invoker=true` |
-| `SELECT` for `anon`, `authenticated` | migration 023 | granted |
-| PostgREST schema cache | migration 023 | reloaded after the above |
+| `public.v_product_coverage` | migration 024 | exists, `security_invoker=true` |
+| `SELECT` for `anon`, `authenticated` on both | 023 (branch ops), 024 (coverage) | granted |
+| PostgREST schema cache | 023 and 024 | reloaded after each |
 
-All three were confirmed present and correct in production on 2026-08-29 —
-see §10 for the evidence and the queries that produced it.
+All of it was confirmed present and correct in production — 022/023 on
+2026-08-29, 024 on 2026-09-04. See §10 for the evidence and the queries that
+produced it.
+
+**Every one of these migrations was applied by hand in the SQL Editor**, 024
+included, like all 24 before it. The repository cannot tell you whether they
+ran — see §9.
 
 ### Failure symptom if the view is missing
 
@@ -209,6 +233,14 @@ the service has no fallback and the screens gate on `isSuccess`:
 | `/dashboard` | attention panel stays in its **skeleton**, publishing no counts |
 | Create-visit modal | branch context lines are **absent** (assortment, last visit) |
 | `/reports` Branch Coverage | Last Visit column empty; buckets return nothing |
+
+And if **`v_product_coverage`** (024) is the one missing:
+
+| Where | What you see |
+|---|---|
+| Network | the same `PGRST205` 404, naming `public.v_product_coverage` |
+| `/products` | every Coverage cell reads **`—`** with a "could not load" tooltip — **not** the orphan badge, which would have claimed no branch carries anything |
+| `/dashboard` | attention panel stays in its **skeleton** (it gates on all five queries) |
 
 **`PGRST205` does not mean "cache is stale".** PostgREST returns it for a
 relation that does not exist, one the API roles cannot `SELECT`, *and* one the
@@ -342,7 +374,7 @@ goes, it belongs in this file.
 
 ---
 
-## 10. Production drift check — verified 2026-08-29
+## 10. Production drift checks
 
 Read-only verification that production matches the committed migration files
 for the objects that matter. Eight `pg_catalog` queries, no mutations.
@@ -352,7 +384,7 @@ migration 022 was applied using a manual SQL Editor variant written to be safe
 to paste, not one guaranteed identical to the committed file. Nobody had checked
 whether the two agreed.
 
-### Result: no drift
+### Batch 17 — migrations 020, 021, 022 (2026-08-29): no drift
 
 | Checked | Expected | Found |
 |---|---|---|
@@ -411,3 +443,49 @@ when written and is discharged for `b3caf20`.
 
 It says nothing about the next database-dependent release. Re-run this check
 whenever one ships, before trusting the code that depends on it.
+
+---
+
+### Batch 18 — `v_product_coverage`, verified 2026-09-04
+
+The same order was followed for migration 024, and this time before the code
+shipped rather than after: applied by hand, verified in the database, confirmed
+over REST, then the service swap was pushed.
+
+**Deployed SHA:** `b973dcb7ad5f80c2ab43c1418987c0bff3d8cb63`.
+
+**How the deployment was confirmed, and a caveat worth keeping.** The SHA could
+not be established from asset hashes: the `webpack` chunk was unchanged, and
+`/login`'s chunk set was byte-identical because login imports nothing this batch
+touched. App Router HTML carries no build id either. A cache reset proved *a*
+deployment landed, not which one.
+
+What settled it was a **functional fingerprint**: production `/products` issues
+`GET /rest/v1/v_product_coverage`, a string that exists in no earlier build.
+Prefer that over hash comparison for any release whose changed routes are
+auth-gated.
+
+| Checked in production, logged in | Result |
+|---|---|
+| `/products` reads `v_product_coverage` | 200, no `PGRST205` |
+| Four coverage values vs pre-swap | identical |
+| Dashboard orphan-product count | **1**, unchanged |
+| `place_products` coverage scan | **absent** from `/products`, `/dashboard`, `/places`, `/reports` |
+| `/places`, `/reports` | intact, real data, no skeletons |
+| Live request failures | **0** on all four pages |
+
+**Equivalence was proved against live data before the swap shipped**, not
+inferred: the old reduction and the view were run side by side in the page
+context with a real session and the two maps diffed. Zero mismatches. The view
+additionally returned the one orphan product with `branch_count 0` where the old
+map had no entry — the documented shape difference.
+
+**On reading the console during this check.** The buffer does not clear across
+navigations and still held 404s from a deliberate failure test. Per-document
+`PerformanceResourceTiming.responseStatus` resets on every navigation, so it
+separates live failures from stale ones; that is what the zero above rests on.
+
+A `window.fetch` override captures **nothing** from Supabase calls —
+`/supabase-js` binds `fetch` when the client is constructed, before any
+later override. It fails silently, which is worse than failing loudly. Use
+performance entries for this app.

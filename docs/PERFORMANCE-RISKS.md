@@ -4,16 +4,18 @@ Every aggregation added in Phase 2 Batches 1–13 was computed **in the browser*
 from rows fetched over PostgREST. That was the right call while the database
 held tens of rows and no migration was allowed. It did not stay right.
 
-**Batch 15 moved the largest one into Postgres** (§1, §2). The rest are still
-client-side, and this records which, why that is still acceptable, and what
-replaces each when it stops being so.
+**Batch 15 moved the largest one into Postgres** (§1, §2), and **Batch 18 the
+last unbounded one** (§3). What remains client-side is bounded by branch,
+product or template count, and this records which, why that is acceptable, and
+what replaces each when it stops being so.
 
 Each entry says what it reads today, why it is fine now, the specific point at
 which it stops being fine, and what should replace it.
 
-**Captured:** Batch 14. **Updated:** Batch 17, after the production drift check.
-**Current `main`:** `b3caf20` — §1 and §2 resolved by migration 022, and
-both verified present and correct in production on 2026-08-29.
+**Captured:** Batch 14. **Updated:** Batch 19, after the Batch 18 service swap.
+**Deployed `main`:** `b973dcb7ad5f80c2ab43c1418987c0bff3d8cb63` — §1 and §2
+resolved by migration 022, §3 by migration 024. Both views verified live in
+production (022 on 2026-08-29, 024 on 2026-09-04).
 
 ---
 
@@ -27,11 +29,14 @@ RLS scopes each read to one company, so "the whole table" means "this company's
 whole history". A company with two years of daily visits across 200 branches
 has roughly 150,000 visit rows.
 
-**Batch 15 removed the worst case.** The one function that fetched all of those
-to answer a question about the most recent row per branch — and did it on the
-three most-loaded screens — is now a database aggregate. What remains unbounded
-is `fetchProductCoverage` (§3), bounded by branches × assortment rather than by
-history, and the small `places` reads in §4 and §5.
+**Batch 15 removed the worst case** — the function that fetched every visit row
+to answer a question about the most recent one per branch, on the three
+most-loaded screens. **Batch 18 removed the last one**, `fetchProductCoverage`
+(§3).
+
+No read in the app is now unbounded by table size. What is left is bounded by
+branch, product or template count — the small `places` reads in §4 and §5 — or
+by an explicit date range, as in §5.
 
 ### A correctness risk hiding inside the performance risk
 
@@ -39,9 +44,9 @@ PostgREST can be configured with a `db-max-rows` ceiling. If one is set on this
 project — or introduced later — an unbounded read **silently truncates** rather
 than erroring.
 
-- `fetchProductCoverage` has **no ordering at all**, so truncation would drop an
-  arbitrary subset and produce silently wrong coverage counts. This is now the
-  only place that risk applies.
+- `fetchProductCoverage` had **no ordering at all**, so truncation would have
+  dropped an arbitrary subset and produced silently wrong coverage counts.
+  Migration 024 removed that exposure. **No read in the app now carries it.**
 - It previously applied to `fetchBranchLastVisits` too, and more insidiously:
   ordered newest-first, truncation would have made a genuinely-visited branch
   read as **"never visited"** — wrong, and indistinguishable from the truth.
@@ -127,23 +132,54 @@ from `undefined`. Both now gate on `isSuccess`. The create-visit modal already
 did this correctly since Batch 10.
 
 ---
-## 3. `fetchProductCoverage`
+## 3. `fetchProductCoverage` — RESOLVED (Batch 18)
 
-`src/services/products.ts` — `.from("place_products").select("product_id, is_mandatory, is_active")`, no filter, **no ordering**.
+**Was** the last unbounded read in the app:
 
-| | |
-|---|---|
-| **Reached from** | `/products` (coverage column), `/dashboard` (orphan-product attention item) |
-| **Why acceptable now** | Same bound as §2, and the reduction skips inactive rows in one pass |
-| **Becomes risky at** | the same 60,000-row scale |
-| **Replacement** | `SELECT product_id, count(*) FILTER (WHERE is_active), count(*) FILTER (WHERE is_active AND is_mandatory) FROM place_products GROUP BY product_id` as a view. Trivial to write; only migration policy has kept it out |
+```
+.from("place_products").select("product_id, is_mandatory, is_active")
+```
 
-**Note the orphan-product subtlety:** coverage is keyed off `place_products`, so
-a product assigned to *no* branch has no entry at all. Batch 6 got this wrong
-once — it scanned the coverage map and found zero orphans. The consumer must
-iterate **products** and look each one up. A GROUP BY view would have the same
-trap; the view should be a `LEFT JOIN` from `products` if it is ever written.
+No filter, no limit, and — the part that mattered most — **no ordering**. It
+read every assortment row the caller could see and reduced them in the browser,
+on `/products` and on the dashboard attention panel.
 
+**Now** reads `public.v_product_coverage` (migration 024): one row per product,
+aggregated in Postgres. The payload no longer scales with assortment size.
+
+The view is `security_invoker = true`, so `products_select` and
+`place_products_select` are still evaluated as the querying user.
+
+**The orphan trap, handled.** Coverage keyed off `place_products` has no entry
+for a product no branch carries, so scanning that map for orphans finds every
+orphan except the real ones — the mistake Batch 6 made. The view is a
+`LEFT JOIN` **from `products`**, exactly as this section recommended before it
+was written, so an orphan is an honest `branch_count = 0` rather than an
+absence. That is the same shape choice 022 made for never-visited branches.
+
+The one behavioural difference: products with no active assortment row now have
+a map entry holding zeros where before they had none. Inert at both readers —
+`deriveAttention()` iterates products and looks each up, and `CoverageCell`
+renders `coverage?.branch_count ?? 0` and treats 0 and undefined identically.
+Both paths are pinned by tests.
+
+**Still true, and deliberately so:** this view counts **only `is_active`** rows,
+matching what `fetchProductCoverage` did. `v_branch_operations.product_count`
+counts **all** rows, matching what the branch register showed before 022. The
+two disagree on purpose. Reconciling them moves numbers on screen and is a
+product decision, not a refactor — still open.
+
+**A defect the swap exposed** (fixed in the same batch, as Batch 15's swap did):
+`/products` destructured `data: coverage = {}` with no `isSuccess` gate, so a
+failed roll-up became an empty map and every product rendered the orphan badge —
+asserting that nothing is stocked anywhere, on data that never arrived. It
+pre-dated the swap but the swap made it more reachable, because the query now
+depends on a view that must exist rather than a table that always does.
+`CoverageCell` now shows an em dash with `common.dataUnavailable` until the
+roll-up succeeds, matching `AssortmentCell` on `/places`.
+
+No new index was needed: `idx_place_products_product` from migration 002 already
+serves the join.
 ---
 
 ## 4. `fetchTeamWorkload`
@@ -192,8 +228,12 @@ means the GPS report's cost tracks visit count, not branch count.
 | | |
 |---|---|
 | **Why acceptable now** | All five are shared query keys already populated by other screens, and the panel has its own loading state so the page paints first |
-| **Becomes risky at** | inherits §1 and §3 — the dashboard is the **most-loaded page**, so it is where the whole-table scan hurts first |
-| **Replacement** | one `company_attention` view returning the five counts. This is the single highest-value view to write |
+| **Becomes risky at** | **no longer inherits an unbounded read** — §1 and §3 are both resolved, so all five queries are bounded by branch, product or template count |
+| **Replacement** | one `company_attention` view or RPC returning the counts. Still open, but now an efficiency win rather than a risk fix |
+
+Four of the five queries are now answered by a database aggregate:
+`usePlaceOperations` by `v_branch_operations` (022) and `useProductCoverage` by
+`v_product_coverage` (024). `usePlaces` and `useTemplates` remain small reads.
 
 ---
 
@@ -220,16 +260,26 @@ so moving the fetching underneath them is safe.
 | | Work | Status |
 |---|---|---|
 | ~~2~~ | **Last-visit-per-branch view + index** — §1, §2 | **DONE** — Batch 15, migration 022 |
-| 1 | **`company_attention` view** — §6 | open — highest traffic |
-| 3 | **`product_coverage` view** — §3 | open — easiest; mind the orphan `LEFT JOIN` |
+| ~~3~~ | **`product_coverage` view** — §3 | **DONE** — Batch 18, migration 024 |
+| 1 | **`company_attention` view or RPC** — §6 | open — highest traffic |
 | 4 | **Reports RPC** — §5 | open — largest effort, least urgent |
 
-§6 is now the highest-value remaining item. Note it got *cheaper* as a result of
-Batch 15: two of the five queries it fans out to are already answered by
-`v_branch_operations`, so a `company_attention` view would extend that work
-rather than start fresh.
+§6 remains the highest-value item, and it got cheaper twice: **four** of its
+five queries are now answered by `v_branch_operations` and `v_product_coverage`,
+so a `company_attention` view would extend that work rather than start fresh.
 
-Nothing here is urgent at current volumes. The three remaining are cheap to
+It has also changed character. With §1 and §3 resolved, collapsing the fan-out
+is about round-trips, not about a scan that grows with the data. The case for it
+is weaker than this document argued before, and it should be justified on its
+own terms rather than inherited from the earlier framing.
+
+**One trap if it is written:** `stale` measures against the **Riyadh** business
+day, and `current_date` in SQL is the database server's UTC day — a different
+business day for three hours every night. A plain view cannot do that date maths
+correctly. An RPC taking `today` as a parameter can, which is why §8 now says
+"view or RPC".
+
+Nothing here is urgent at current volumes. Both remaining items are cheap to
 write and hard to retrofit under pressure, which is the argument for writing
 them before they are needed rather than after.
 
@@ -259,3 +309,10 @@ that depends on it. Never the other way round.
 the file it came from, and nothing in the repository detects that. A read-only
 drift check against `pg_catalog` settled it here in one pass, and found no
 drift; it is cheap enough to repeat on every database-dependent release.
+
+**Batch 18 followed this order, and it cost nothing.** Migration 024 was
+committed first, applied by hand in the SQL Editor, verified for existence,
+`security_invoker` and grants, and only then did the service swap ship. No
+`PGRST205`, no wrong diagnosis, nothing to unwind — in contrast to Batch 15,
+which shipped the code three exchanges before the view existed. 024 is
+hand-applied like the other 24; see PRODUCTION-READINESS.md §9.

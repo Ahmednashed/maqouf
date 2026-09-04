@@ -8,6 +8,9 @@ Nothing in this file has been deleted or modified by the batch that wrote it.
 It is a record, not an action.
 
 **Captured:** end of Phase 2 Batch 14, against `main` @ `72bf61d`.
+**Re-verified live:** 2026-09-04 (Batch 19). Every row below is still present
+and unchanged; nothing has been deleted. The five visits, the required-field
+change and all reference rows were read back from the database, not assumed.
 
 > Ids below were read from the running app (select option values and route
 > params), not from memory. Where an id is not listed, the row is identified by
@@ -87,6 +90,9 @@ Its field **`TEST حالة الرف`** was switched from optional to **required*
 Batch 13, because no template in the database had a required field and the
 required-field completion warning could not otherwise be seen with real data.
 
+Field id `8e350a2b-bf17-4877-8496-e5f3feaac462`. Confirmed still `required: true`
+on 2026-09-04.
+
 **To revert:** /templates → open the template → field 1 → pencil → toggle
 `مطلوب` off → حفظ.
 
@@ -105,9 +111,9 @@ visit `39d65db1`.
 | Place | code `TESTP1` (TEST فرع تحليل الرياض) | `b45ece62-1090-4723-bd32-e2645d894c84` | **Has coordinates** `24.7136, 46.6753`; 2 products, 1 mandatory |
 | Template | `TEST Claude Verify Template AR` | `2f38d3e9-d5c9-44cc-bbce-fb2e486ee866` | Published, 2 fields — see §4 |
 | Template | `TEST قالب تحليل` | `98020d3b-10ab-41c5-a96f-0223cea964ef` | **Draft, 0 fields** — the only row proving the draft/empty disabled options |
-| Product | SKU `TEST-CLAUDE-VERIFY-SKU` | — | Assorted to TESTP1, mandatory |
-| Product | SKU `TESTSKU1` | — | Assorted to TESTP1, optional, min stock 3 |
-| Product | SKU `TEST-CLAUDE-B5-UNASSIGNED` | — | **Assorted to nothing** — the only row proving Batch 5's orphan-product detection and Batch 6's attention item |
+| Product | SKU `TEST-CLAUDE-VERIFY-SKU` | `5693db0c-9362-4565-909c-95d93d7b54ab` | Assorted to TESTP1, mandatory |
+| Product | SKU `TESTSKU1` | `aa1c0dcd-4b40-4d09-91f7-0e723dfb58f1` | Assorted to TESTP1, optional, min stock 3 |
+| Product | SKU `TEST-CLAUDE-B5-UNASSIGNED` | `77fb276d-ff51-4285-b4a9-1adb803a504f` | **Assorted to nothing** — the only row proving Batch 5's orphan-product detection, Batch 6's attention item, and Batch 18's `LEFT JOIN` behaviour in `v_product_coverage` (it returns `branch_count 0` rather than no row) |
 | Member | `ahmednashed1991` | `af548bf7-d0c4-4504-bd6f-a19a87262300` | Carries `emp_id = TEST-EMP-001` and `region = TEST Region` |
 
 `TESTP1` is the **only branch in the database with coordinates**. Deleting it
