@@ -221,12 +221,55 @@ second such dependency.
 |---|---|---|
 | `public.v_branch_operations` | migration 022 | exists, `security_invoker=true` |
 | `public.v_product_coverage` | migration 024 | exists, `security_invoker=true` |
-| `SELECT` for `anon`, `authenticated` on both | 023 (branch ops), 024 (coverage) | granted |
-| PostgREST schema cache | 023 and 024 | reloaded after each |
+| `public.company_attention(date)` | migration 025 | exists, `prosecdef = false` |
+| `SELECT` for `anon`, `authenticated` on both views | 023 (branch ops), 024 (coverage) | granted |
+| `EXECUTE` on the function | 025 | granted (it also defaults to PUBLIC) |
+| PostgREST schema cache | 023, 024 and 025 | reloaded after each |
 
 All of it was confirmed present and correct in production — 022/023 on
-2026-08-29, 024 on 2026-09-04. See §10 for the evidence and the queries that
-produced it.
+2026-08-29, 024 on 2026-09-04, 025 on 2026-09-05. See §10 for the evidence
+and the queries that produced it.
+
+#### The one check no test can make
+
+`company_attention` takes the Riyadh business day as a parameter precisely so it
+never reaches for `current_date`, which is the database server’s UTC day and
+differs from Riyadh for three hours every night. **Nothing in `npm test` can
+verify that**, because the tests never reach a database. The 34 attention tests
+pin `daysSinceIso` at the 14/15 boundary on the app side only.
+
+So a future edit to the function that broke the boundary would pass the whole
+suite. Run this after any change to 025, and after applying it anywhere new:
+
+```sql
+-- 1. the boundary itself: 14 is not stale, 15 is
+select (DATE '2026-09-05' - DATE '2026-08-22') as days_14_not_stale,
+       (DATE '2026-09-05' - DATE '2026-08-21') as days_15_stale;
+-- expect 14 and 15 — only the second exceeds the threshold
+
+-- 2. the function still agrees with the same logic written out longhand
+select
+  (select count(*) from places p
+     left join v_branch_operations b on b.place_id = p.id
+    where p.is_active and b.last_visit_date is null)        as never_visited_direct,
+  (select count(*) from places p
+     join v_branch_operations b on b.place_id = p.id
+    where p.is_active and b.last_visit_date is not null
+      and (DATE '2026-09-05' - b.last_visit_date) > 14)     as stale_direct,
+  a.never_visited, a.stale
+from public.company_attention(DATE '2026-09-05') a;
+-- expect the pairs to match
+
+-- 3. INVOKER, not DEFINER — the tenant boundary rests on this
+select p.prosecdef as is_security_definer,
+       pg_get_function_arguments(p.oid) as args
+from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+where n.nspname = 'public' and p.proname = 'company_attention';
+-- expect false, and p_today date
+```
+
+Substitute the current Riyadh day for the dates above. Reaching for
+`current_date` in the check would reintroduce the very bug it exists to catch.
 
 **Every one of these migrations was applied by hand in the SQL Editor**, 024
 included, like all 24 before it. The repository cannot tell you whether they
