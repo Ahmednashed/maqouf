@@ -1,157 +1,167 @@
-# TEST data registry
+# TEST data registry — CLEANED UP 2026-09-04
 
-Every row created in the **live production database** to verify a feature.
-None of it is customer data; all of it is safe to delete once the feature it
-demonstrates no longer needs a live example.
+Every row created in the **live production database** to verify a feature, and
+the record of removing them.
 
-Nothing in this file has been deleted or modified by the batch that wrote it.
-It is a record, not an action.
+**Status: complete.** The cleanup ran on 2026-09-04. Nothing on the original
+list remains, with two deliberate exceptions recorded in §4 and §5 below.
 
-**Captured:** end of Phase 2 Batch 14, against `main` @ `72bf61d`.
-**Re-verified live:** 2026-09-04 (Batch 19). Every row below is still present
-and unchanged; nothing has been deleted. The five visits, the required-field
-change and all reference rows were read back from the database, not assumed.
-
-> Ids below were read from the running app (select option values and route
-> params), not from memory. Where an id is not listed, the row is identified by
-> a unique business key — code, SKU or name — which is what you would search on
-> in the Supabase table editor anyway.
+This file is kept rather than deleted because the exceptions still matter, and
+because §6 records what the cleanup cost — which is the part worth reading
+before creating TEST data in production again.
 
 ---
 
-## 1. Why this exists
+## 1. What was removed
 
-Verification kept hitting the same wall: a feature could only be proven against
-data that did not exist yet. Rather than fake it in the UI, real rows were
-created and prefixed so they can be found and removed. The cost of that choice
-is this document — without it the prefixes are the only trace, and nobody
-remembers which visit demonstrated which guardrail.
+All ids were read from the database immediately before deletion, and every
+delete returned the rows it removed as confirmation.
 
----
+| # | What | Count | Detail |
+|---|---|---|---|
+| 1 | Visits | 5 | `4a59b69d` `467bcbdd` `ab4e7a0d` `68259b7c` `39d65db1` |
+| 2 | Assortment rows | 2 | both on `TESTP1`; the خريص row was left alone |
+| 3 | Templates | 2 | `TEST Claude Verify Template AR`, `TEST قالب تحليل` |
+| 4 | Products | 3 | `TESTSKU1`, `TEST-CLAUDE-VERIFY-SKU`, `TEST-CLAUDE-B5-UNASSIGNED` |
+| 5 | Branches | 2 | `TESTP1`, `TCVPLACE1` |
+| 6 | Chains | 1 | `TESTCH` |
 
-## 2. Deletion order
+Cascades removed 2 `visit_products` and 2 `visit_template_responses` with the
+visits, and 2 `template_fields` with their template. The 13 `visit_products` and
+16 responses belonging to real visits were untouched.
 
-Foreign keys make the order matter. Work top to bottom.
+### Counts, before and after
 
-| # | What | Why it must go first |
+| Table | Before | After |
 |---|---|---|
-| 1 | Visits (`visits`) | `visit_products` and `visit_template_responses` cascade from them |
-| 2 | The template field revert (see §4) | Not a delete — a setting to put back |
-| 3 | Branch assortment rows (`place_products`) | Reference both places and products |
-| 4 | Templates + their fields | Referenced by `visits.template_id`; delete visits first |
-| 5 | Products | Referenced by `place_products` |
-| 6 | Places | Referenced by visits, schedules, `place_products` |
-| 7 | Chain | Referenced by places |
-| 8 | Recurring schedule | Independent, but generates visits — deactivate before deleting visits or it may regenerate them |
-
-**Do the schedule (§6) before the visits** if you want the deletion to stick.
-The generator materialises a rolling 30-day window, so deleting a generated
-visit while its schedule is still active can simply bring it back.
+| `visits` | 19 | 14 |
+| `places` | 4 | 2 |
+| `products` | 4 | 1 |
+| `templates` | 3 | 1 |
+| `chains` | 3 | 2 |
+| `place_products` | 3 | 1 |
+| `visit_products` | 15 | 13 |
+| `visit_template_responses` | 18 | 16 |
 
 ---
 
-## 3. Visits
+## 2. What was reverted rather than deleted
 
-All three are on branch خريص or TEST فرع تحليل الرياض, all assigned to `Ahmed`
-(`company_users.id` = `1fa6f4fe-ee13-4c28-b612-f8f2bd81c807`).
+**`TEST حالة الرف`** (`8e350a2b-bf17-4877-8496-e5f3feaac462`) was set back to
+optional before its template was deleted, so the revert is recorded even though
+the row no longer exists.
 
-| Id | Date | Branch | Status | Notes marker | Demonstrates |
-|---|---|---|---|---|---|
-| `4a59b69d-9e63-4efc-971f-50db9a558707` | 2026-08-29 | خريص | **in progress** | `TEST-CLAUDE-B13` | Batch 13 — template answer state, response dirty-detection, the Batch 12 blank-revert fix |
-| `467bcbdd-1a74-49d8-b12a-ca1bba6deffc` | 2026-08-29 | خريص | **in progress** | `TEST-CLAUDE-B11` | Batch 11 — completion readiness, acknowledgement gate; Batch 12 — product dirty/save-safety |
-| `ab4e7a0d-3f18-4ddf-b459-45d5c22e0474` | 2026-08-29 | TEST فرع تحليل الرياض | pending | `TEST-CLAUDE-VERIFY batch7` | Batch 7 — the "visits today" column on /users; Batch 8 — the planned-visit panel |
-
-### Attached rows that cascade
-
-- `4a59b69d` holds **saved template responses**: `TEST حالة الرف = "جيد"`, and
-  `TEST ملاحظات = ""` (an empty string, written while restoring a test value —
-  functionally identical to no row, since both read as unanswered).
-- `4a59b69d` and `467bcbdd` each hold one seeded `visit_products` row with
-  `qty_found = NULL`, written by `initVisitProducts()` at start-of-visit.
-
-### Two older TEST visits, not created for a specific batch
-
-| Id | Date | Template | Used by |
-|---|---|---|---|
-| `39d65db1-b3cb-4dcb-9dab-10da70fcb312` | 2026-08-26 | TEST Claude Verify Template AR | Batch 8 — visit **with** a template |
-| `68259b7c-e2ad-4e02-a6b9-2a155d8140d8` | 2026-08-26 | none | Batch 8 — visit **without** a template (the contrast case) |
-
-These two are the only pair that discriminates the "no template attached"
-empty state. Deleting one without the other loses that.
+**The recurring schedule** `4c4591a2-eadc-4050-9aff-1d157bcee4bf` (Ahmed →
+خريص, Wednesdays) was **deactivated, not deleted**. It points at a real branch,
+so it may be a genuine planning rule rather than test scaffolding. It had
+generated nothing — every visit in the database has `schedule_id = null`.
 
 ---
 
-## 4. Template change to revert — not a delete
-
-**Template** `2f38d3e9-d5c9-44cc-bbce-fb2e486ee866` — *TEST Claude Verify
-Template AR*.
-
-Its field **`TEST حالة الرف`** was switched from optional to **required** during
-Batch 13, because no template in the database had a required field and the
-required-field completion warning could not otherwise be seen with real data.
-
-Field id `8e350a2b-bf17-4877-8496-e5f3feaac462`. Confirmed still `required: true`
-on 2026-09-04.
-
-**To revert:** /templates → open the template → field 1 → pencil → toggle
-`مطلوب` off → حفظ.
-
-Reverting also removes the required-field gap that currently shows on pending
-visit `39d65db1`.
-
----
-
-## 5. Reference data
-
-| Kind | Identify by | Id | Notes |
-|---|---|---|---|
-| Chain | `TEST Claude Verify Chain AR` | — | Parent of the two TCV branches |
-| Place | code `TCVASSIGN1` | `3908bfc7-f93c-439a-a0b0-a53535d97396` | Assigned to Ahmed; no coordinates; no assortment |
-| Place | code `TCVPLACE1` | `5f93fca8-2257-41ac-b180-98945e10e4c9` | Unassigned; no coordinates; no assortment |
-| Place | code `TESTP1` (TEST فرع تحليل الرياض) | `b45ece62-1090-4723-bd32-e2645d894c84` | **Has coordinates** `24.7136, 46.6753`; 2 products, 1 mandatory |
-| Template | `TEST Claude Verify Template AR` | `2f38d3e9-d5c9-44cc-bbce-fb2e486ee866` | Published, 2 fields — see §4 |
-| Template | `TEST قالب تحليل` | `98020d3b-10ab-41c5-a96f-0223cea964ef` | **Draft, 0 fields** — the only row proving the draft/empty disabled options |
-| Product | SKU `TEST-CLAUDE-VERIFY-SKU` | `5693db0c-9362-4565-909c-95d93d7b54ab` | Assorted to TESTP1, mandatory |
-| Product | SKU `TESTSKU1` | `aa1c0dcd-4b40-4d09-91f7-0e723dfb58f1` | Assorted to TESTP1, optional, min stock 3 |
-| Product | SKU `TEST-CLAUDE-B5-UNASSIGNED` | `77fb276d-ff51-4285-b4a9-1adb803a504f` | **Assorted to nothing** — the only row proving Batch 5's orphan-product detection, Batch 6's attention item, and Batch 18's `LEFT JOIN` behaviour in `v_product_coverage` (it returns `branch_count 0` rather than no row) |
-| Member | `ahmednashed1991` | `af548bf7-d0c4-4504-bd6f-a19a87262300` | Carries `emp_id = TEST-EMP-001` and `region = TEST Region` |
-
-`TESTP1` is the **only branch in the database with coordinates**. Deleting it
-makes every GPS surface uniformly empty and removes the discriminating case for
-Batch 9.
-
----
-
-## 6. Recurring schedule
-
-One active weekly schedule: **Ahmed → خريص, Wednesday 01:00, weekly, no
-template**. Visible at `/visits?tab=recurring`.
-
-It generates visits on a rolling 30-day window. **Deactivate it before deleting
-TEST visits**, or generated occurrences may reappear.
-
----
-
-## 7. What is *not* TEST data
+## 3. What was never TEST data
 
 `خريص` (code `523689`, chain كارفور) and its product
-`جونيور ميني كرواسان شوكولا` are **real records**. Several TEST visits were
-created against خريص because it is the only branch that has both an assortment
-and no coordinates — the combination Batch 11's no-GPS start path needs.
-
-Delete the visits. **Do not delete the branch or its product.**
+`جونيور ميني كرواسان شوكولا` (SKU `05236`) are real. Several TEST visits were
+created against خريص because it was the only branch with both an assortment and
+no coordinates. The visits went; the branch and product stayed.
 
 ---
 
-## 8. Side effects while this data exists
+## 4. The exception: a real visit on a TEST branch
 
-These are correct readings of real rows, not bugs, and they revert on cleanup.
+**This is why the cleanup was planned before it was executed.**
 
-| Surface | Shows | Because |
+Visit `9e8b6438-3a8a-4ac1-a4f6-4810f3d97574` — created 2026-09-02, in progress,
+using the real template `مراجعة الستورات`, no TEST marker — sits on what was
+then the TEST branch `TCVASSIGN1`. Somebody created it in normal use after the
+registry was written.
+
+`visits.place_id` is `ON DELETE CASCADE`. Deleting that branch would have
+silently destroyed a real in-progress visit.
+
+**Resolution:** the branch was kept and renamed, and its parent chain with it.
+
+| Was | Now |
+|---|---|
+| place `TCVASSIGN1` / TEST Claude Verify Assigned AR | **`BR-001` / فرع ١ / Branch 1** |
+| chain `TCVCHAIN` / TEST Claude Verify Chain AR | **`CH-001` / سلسلة ١ / Chain 1** |
+
+> **These names are placeholders.** They were chosen to remove the TEST label
+> from production, not because they describe anything. Whoever knows what this
+> branch actually is should rename it properly.
+
+---
+
+## 5. The other exception: TEST values on a real member
+
+Member `af548bf7-d0c4-4504-bd6f-a19a87262300` (`ahmednashed1991`, active
+merchandiser) still carries:
+
+- `emp_id = "TEST-EMP-001"`
+- `region = "TEST Region"`
+
+The member is real, so deleting the row was never an option, and the correct
+replacement values are not knowable from here — clearing them to `NULL` is a
+guess, and inventing an employee id would be worse. **Left as-is, deliberately,
+for someone who knows the real values.** `TEST-EMP-001` is visible on `/users`
+until then.
+
+### Activity log entries
+
+The dashboard activity feed shows two entries naming
+`TEST Claude Verify Assigned EN` — the branch's name at the time the real
+2026-09-02 visit was created and started. These are audit records of real
+events. Rewriting them to match the new name would falsify history, so they were
+left alone; they age out of the feed on their own.
+
+---
+
+## 6. What this cost, and what to do differently
+
+The data was cheap to create and expensive to remove, and almost all of the
+expense was in one thing: **a real record attached itself to test scaffolding
+while nobody was looking.** The registry said `TCVASSIGN1` was disposable. Six
+days later it was not, and nothing in the repository would have caught that —
+only reading the live rows before deleting did.
+
+Practical conclusions, in order of usefulness:
+
+1. **Re-read live state immediately before deleting.** The registry was accurate
+   when written and wrong when used. Plan from the database, not the document.
+2. **Prefer a branch nobody would use.** The TEST branches that stayed clean
+   were the ones that looked obviously fake. `TCVASSIGN1` had an assignee, so it
+   showed up in normal workflows and eventually got used.
+3. **Delete sooner.** Every day TEST data survives is another chance for
+   something real to reference it.
+4. **Cascades are the hazard, not the rows themselves.** `ON DELETE CASCADE` on
+   `visits.place_id` is what turned "delete a test branch" into "destroy a real
+   visit". Check what cascades before deleting a parent row.
+
+---
+
+## 7. Verification after cleanup
+
+Checked in production while logged in, 2026-09-04. Zero failed requests on every
+page, measured per-document with `PerformanceResourceTiming` rather than the
+console, which does not clear between navigations.
+
+| Surface | Before | After |
 |---|---|---|
-| Dashboard timeline | 3 visits today | the three TEST visits dated 2026-08-29 |
-| Dashboard attention | 4 items, not 5 | خريص has an in-progress visit today, so it is no longer >14 days stale |
-| /users | Ahmed: `3 · 0 مكتملة · 3 مفتوحة` | Batch 7 workload counts them |
-| /reports | 9 visits total, GPS started 6 | includes the TEST visits |
-| /places | خريص last visit `اليوم` | an in-progress visit counts as a visit |
-| GPS report | `5–6 زيارة إلى فرع بلا إحداثيات` | خريص has no coordinates |
+| Dashboard overdue visits | 6 | **1** — the real 2026-09-02 visit |
+| Dashboard "بدون تشكيلة منتجات" | 2 فرع | **1 فرع** — `BR-001` |
+| Dashboard orphan product | 1 منتج | **item gone** |
+| `/places` | 4 rows | **2** — خريص, فرع ١ |
+| `/products` | 4 rows | **1** — جونيور ميني كرواسان شوكولا |
+| `/templates` | 3 | **1** — مراجعة الستورات |
+| `/visits` | TEST visits listed | none; day view reads لا توجد زيارات |
+| `/reports` | TEST branches in filters | only خريص and فرع ١ |
+| `/users` | 3 members | 3 members, unchanged |
+
+No TEST string remains in `places`, `products`, `templates`, `chains`,
+`template_fields`, or any visit's notes. The two exceptions in §4 and §5 are the
+only traces left.
+
+**A note on one number:** the dashboard now reads `1 زيارات متأخرة`, which is the
+wrong Arabic plural for one — it should be a singular form. That wording was
+always there; it was invisible while the count was 6. It is a display bug in the
+overdue-visits label, not a counting error, and it is unrelated to this cleanup.

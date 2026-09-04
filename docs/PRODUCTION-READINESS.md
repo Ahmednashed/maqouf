@@ -89,28 +89,33 @@ why it is checked explicitly.
 
 ---
 
-## 4. TEST data currently live
+## 4. TEST data — removed 2026-09-04
 
-Five TEST visits, one modified TEST template field, and a set of TEST reference
-rows are live in production. They are correct data producing correct readings —
-not bugs — and every effect reverts on cleanup.
+The TEST rows created across Batches 1–18 to verify features against real data
+were deleted on 2026-09-04. Full record, including counts before and after:
+**[`TEST-DATA-REGISTRY.md`](./TEST-DATA-REGISTRY.md)**.
 
-Full inventory, dependency order and revert instructions:
-**[`TEST-DATA-REGISTRY.md`](./TEST-DATA-REGISTRY.md)**. Re-verified live on
-2026-09-04: all five visits, the required-field change and every reference row
-are still present and unchanged.
+Removed: 5 visits, 2 assortment rows, 2 templates, 3 products, 2 branches, 1
+chain, plus the rows that cascaded with them. Real data was untouched — خريص,
+its product, and the 13 `visit_products` and 16 template responses belonging to
+real visits all survive.
 
-**The figures that follow were read on 2026-08-29 and have since drifted**, not
-because anything is wrong but because real visits happened afterwards. Treat
-them as an example of the shape of the effect, not as a current expectation:
-dashboard timeline **3**, attention **4 items** (not 5), `/users` Ahmed
-**3 مفتوحة**, `/reports` **9 visits / GPS started 6**, `/places` خريص last
-visit **اليوم**. Anything derived from dates moves on its own.
+**Two traces remain on purpose, both attached to real records:**
 
-One effect that does **not** drift: `TEST-CLAUDE-B5-UNASSIGNED` is the only
-orphan product, so the dashboard attention item reads **1 product unassigned**.
-Deleting it takes that count to zero and removes the live example of both Batch
-6 orphan detection and the Batch 18 `LEFT JOIN` behaviour.
+1. A branch that had to be kept. A real in-progress visit
+   (`9e8b6438`, 2026-09-02) had been created on the TEST branch `TCVASSIGN1`
+   after the registry was written, and `visits.place_id` cascades on delete.
+   The branch was renamed to `BR-001` / فرع ١ and its chain to `CH-001` /
+   سلسلة ١ instead. **Those names are placeholders and want replacing.**
+
+2. Member `af548bf7` (`ahmednashed1991`) still carries `emp_id =
+   "TEST-EMP-001"` and `region = "TEST Region"`. The member is real and the
+   correct values are not knowable from here, so they were left rather than
+   guessed. `TEST-EMP-001` shows on `/users` until someone sets them.
+
+The dashboard activity feed also shows two entries naming the branch by its old
+TEST name. They are audit records of real events; rewriting them would falsify
+history.
 
 ---
 
