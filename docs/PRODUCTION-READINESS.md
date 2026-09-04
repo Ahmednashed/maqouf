@@ -151,6 +151,8 @@ produce them.
 | The "visited" rule now lives in SQL | Migration 022 defines `completed`/`inprogress`. It must stay in step with `matchesLastVisitBucket()` and the coverage report, and nothing enforces that. **New in Batch 15** |
 | `product_count` counts inactive assortment rows | Reproduced in the view to preserve behaviour; still inconsistent with `initVisitProducts()` and `lib/visit-plan.ts`, which filter on `is_active` |
 | Same-date last-visit ties changed | Previously arbitrary, now deterministic (`created_at`, `id`). No branch currently has tied qualifying visits, so it is untested against real data |
+| Arabic plural on the overdue-visits label | The dashboard renders `1 زيارات متأخرة` — plural form for a count of one. Pre-existing and invisible while the count was 6; surfaced by the 2026-09-04 TEST-data cleanup. Batch 4 solved this properly for template field counts with `Intl.PluralRules`; this label never got the same treatment. **Display only — the count itself is correct** |
+| Two branches carry placeholder names | `BR-001` / فرع ١ and `CH-001` / سلسلة ١ were named during the TEST-data cleanup to strip the TEST label from a branch that had acquired a real visit. They describe nothing and want real business names — see §4 |
 
 Performance risks are separate and larger:
 **[`PERFORMANCE-RISKS.md`](./PERFORMANCE-RISKS.md)**.
