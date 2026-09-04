@@ -7,8 +7,9 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "type-check": "tsc --noEmit",
-    "db:generate": "supabase gen types typescript --local > src/types/supabase.ts"
+    "type-check": "tsc --noEmit && tsc -p tsconfig.tests.json",
+    "db:generate": "supabase gen types typescript --local > src/types/supabase.ts",
+    "test": "node --import ./tests/register.mjs --test \"tests/*.test.ts\""
   },
   "dependencies": {
     "@hookform/resolvers": "^3.9.0",

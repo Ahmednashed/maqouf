@@ -1,0 +1,14 @@
+{
+  // Tests run on Node's built-in runner, which strips types and therefore
+  // requires explicit `.ts` specifiers on relative imports. The app's tsconfig
+  // targets a bundler and rejects those, so the two are checked separately
+  // rather than loosening the app's rules to suit the tests.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "types": ["node"]
+  },
+  "include": ["tests/**/*.ts"],
+  "exclude": ["node_modules"]
+}
