@@ -31,6 +31,7 @@ const PLURAL_SETS: Array<{ base: string; token: string; converted: boolean }> = 
   { base: "dashboard.attn.unassigned",     token: "{count}", converted: true },
   { base: "dashboard.attn.orphanProducts", token: "{count}", converted: true },
   { base: "dashboard.attn.emptyTemplate",  token: "{count}", converted: true },
+  { base: "dashboard.map.fixCoords",       token: "{n}",     converted: true },
   { base: "templates.fieldCount",          token: "{count}", converted: false },
 ];
 
@@ -125,6 +126,28 @@ eq("a single branch with no assortment reads as a singular in Arabic",
    ar[pluralKey("dashboard.attn.noAssortment", 1, "ar")],
    "فرع واحد بدون تشكيلة منتجات");
 
+eq("two branches without coordinates reads as the Arabic dual",
+   ar[pluralKey("dashboard.map.fixCoords", 2, "ar")],
+   "فرعان بلا إحداثيات — أضفهما");
+// "branch(es)" is the tell of a string that cannot agree with its count.
+//
+// Every dashboard label now has plural forms, so none of them may use it. The
+// rest of the app still has 18, listed in the Batch 25 report and awaiting the
+// wider triage — the ceiling below lets that number fall but never rise, so a
+// new counted label cannot quietly join them.
+{
+  const PARENTHESISED = /\((?:e?s)\)/;
+  const all = Object.entries(en).filter(([, v]) => PARENTHESISED.test(v)).map(([k]) => k);
+
+  eq("no dashboard label falls back to a parenthesised plural",
+     all.filter((k) => k.startsWith("dashboard.")), []);
+
+  const KNOWN_BACKLOG = 18;
+  ok(`parenthesised plurals outside the dashboard do not increase (${all.length} <= ${KNOWN_BACKLOG})`,
+     all.length <= KNOWN_BACKLOG,
+     all.join(", "));
+}
+
 // ── The old un-suffixed keys are gone ────────────────────────────────────────
 for (const { base } of PLURAL_SETS.filter((s) => s.converted)) {
   ok(`${base}: no un-suffixed key remains in ar`, ar[base] === undefined, ar[base]);
@@ -135,7 +158,11 @@ for (const { base } of PLURAL_SETS.filter((s) => s.converted)) {
 // Any dashboard.prio.* or dashboard.attn.* key that still contains a numeral
 // token must be a plural variant. A counted label added later without a key set
 // fails here rather than shipping.
-for (const [family, token] of [["dashboard.prio.", "{n}"], ["dashboard.attn.", "{count}"]]) {
+for (const [family, token] of [
+  ["dashboard.prio.", "{n}"],
+  ["dashboard.attn.", "{count}"],
+  ["dashboard.map.",  "{n}"],
+]) {
   for (const [dictName, dict] of [["ar", ar], ["en", en]] as const) {
     const offenders = Object.keys(dict).filter(
       (k) =>

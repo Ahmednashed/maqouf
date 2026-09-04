@@ -4,6 +4,8 @@ import { memo } from "react";
 import Link from "next/link";
 import { Map, MapPinOff, Smartphone, ArrowLeft } from "lucide-react";
 import type { TranslationFn } from "@/hooks/use-translation";
+import type { TranslationKey } from "@/lib/i18n/translations";
+import { pluralKey } from "@/lib/i18n/plural";
 import { DashboardSection, Card } from "./shared";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -58,7 +60,8 @@ export const LiveTeamMapCard = memo(function LiveTeamMapCard({
                 className="mt-2.5 inline-flex items-center gap-1.5 text-[12px] font-semibold text-brand-600 hover:text-brand-700 hover:underline"
               >
                 <Arrow className="w-3.5 h-3.5 rtl:rotate-180" />
-                {t("dashboard.map.fixCoords").replace("{n}", String(gaps))}
+                {t(pluralKey("dashboard.map.fixCoords", gaps, locale) as TranslationKey)
+                  .replace("{n}", String(gaps))}
               </Link>
             )}
           </div>

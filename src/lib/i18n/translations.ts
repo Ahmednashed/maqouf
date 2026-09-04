@@ -943,7 +943,12 @@ export const translations = {
     // Map empty state
     "dashboard.map.noLocations":      "لا توجد مواقع مباشرة بعد",
     "dashboard.map.connectApp":       "اربط تطبيق الجوال لعرض مواقع الفريق لحظياً",
-    "dashboard.map.fixCoords":       "{n} فرع بلا إحداثيات — أضفها",
+    "dashboard.map.fixCoords.zero":       "كل الفروع لديها إحداثيات",
+    "dashboard.map.fixCoords.one":        "فرع واحد بلا إحداثيات — أضفها",
+    "dashboard.map.fixCoords.two":        "فرعان بلا إحداثيات — أضفهما",
+    "dashboard.map.fixCoords.few":        "{n} فروع بلا إحداثيات — أضفها",
+    "dashboard.map.fixCoords.many":       "{n} فرعاً بلا إحداثيات — أضفها",
+    "dashboard.map.fixCoords.other":      "{n} فرع بلا إحداثيات — أضفها",
     // Chart empty CTA
     "dashboard.chart.emptyCta":       "ابدأ بإنشاء الزيارات",
     // Command Center — priorities
@@ -2150,7 +2155,12 @@ export const translations = {
     // Map empty state
     "dashboard.map.noLocations":      "No live locations yet",
     "dashboard.map.connectApp":       "Connect the mobile app to see live team positions",
-    "dashboard.map.fixCoords":       "{n} branch(es) have no coordinates — add them",
+    "dashboard.map.fixCoords.zero":       "All branches have coordinates",
+    "dashboard.map.fixCoords.one":        "1 branch has no coordinates — add them",
+    "dashboard.map.fixCoords.two":        "2 branches have no coordinates — add them",
+    "dashboard.map.fixCoords.few":        "{n} branches have no coordinates — add them",
+    "dashboard.map.fixCoords.many":       "{n} branches have no coordinates — add them",
+    "dashboard.map.fixCoords.other":      "{n} branches have no coordinates — add them",
     // Chart empty CTA
     "dashboard.chart.emptyCta":       "Start creating visits",
     // Command Center — priorities
