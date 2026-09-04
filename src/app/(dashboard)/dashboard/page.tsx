@@ -345,7 +345,7 @@ export default function DashboardPage() {
       {/* ── ROW 6 · Setup attention + suggested actions ──────────────────── */}
       <div className="grid grid-cols-1 xl:grid-cols-12 gap-4 items-stretch">
         <div className="xl:col-span-7 min-w-0">
-          <AttentionPanel items={attention} loading={attentionLoading} t={t} />
+          <AttentionPanel items={attention} loading={attentionLoading} t={t} locale={locale} />
         </div>
         <div className="xl:col-span-5 min-w-0">
           <RecommendedActions

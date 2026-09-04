@@ -10,6 +10,7 @@ import { cn } from "@/lib/utils/cn";
 import type { TranslationFn } from "@/hooks/use-translation";
 import type { TranslationKey } from "@/lib/i18n/translations";
 import type { AttentionItem } from "@/lib/attention";
+import { pluralKey } from "@/lib/i18n/plural";
 import { DashboardSection, Card, Skeleton } from "./shared";
 
 /**
@@ -34,9 +35,11 @@ interface Props {
   items:   AttentionItem[];
   loading: boolean;
   t:       TranslationFn;
+  /** Needed to choose the plural form of each counted label. */
+  locale:  string;
 }
 
-export const AttentionPanel = memo(function AttentionPanel({ items, loading, t }: Props) {
+export const AttentionPanel = memo(function AttentionPanel({ items, loading, t, locale }: Props) {
   return (
     <DashboardSection title={t("dashboard.attn.title")} icon={ShieldAlert} fill>
       <Card className="h-full">
@@ -76,7 +79,8 @@ export const AttentionPanel = memo(function AttentionPanel({ items, loading, t }
                     </span>
 
                     <span className="flex-1 min-w-0 text-[13px] text-ink-700">
-                      {t(item.msgKey as TranslationKey).replace("{count}", String(item.count))}
+                      {t(pluralKey(item.msgKey, item.count, locale) as TranslationKey)
+                        .replace("{count}", String(item.count))}
                     </span>
 
                     <span className="hidden sm:inline text-[11.5px] font-semibold text-ink-400 group-hover:text-brand-600 transition-colors shrink-0">
