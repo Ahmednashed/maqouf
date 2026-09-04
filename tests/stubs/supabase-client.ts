@@ -41,6 +41,7 @@ export function setDefaultResult(result: StubResult): void {
 /** Clear recorded calls and queued results. Call at the top of each test. */
 export function resetStub(): void {
   calls.length = 0;
+  rpcs.length = 0;
   queue = [];
   fallback = { data: [], error: null };
 }
@@ -86,6 +87,25 @@ function chain(table: string): Chain {
   return self;
 }
 
+/** An `rpc(fn, args)` call, recorded the same way a table read is. */
+export interface RecordedRpc {
+  fn:   string;
+  args: unknown;
+}
+
+const rpcs: RecordedRpc[] = [];
+
+/** Every `rpc(...)` issued since the last reset, in order. */
+export function recordedRpcs(): readonly RecordedRpc[] {
+  return rpcs;
+}
+
 export function createClient() {
-  return { from: (table: string) => chain(table) };
+  return {
+    from: (table: string) => chain(table),
+    rpc(fn: string, args?: unknown) {
+      rpcs.push({ fn, args });
+      return Promise.resolve(nextResult());
+    },
+  };
 }

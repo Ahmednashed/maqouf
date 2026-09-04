@@ -38,10 +38,9 @@ import { SmartAlerts }        from "./_components/SmartAlerts";
 import { PerformersPanel }    from "./_components/PerformersPanel";
 import { CommandPalette, useCommandPalette } from "./_components/CommandPalette";
 import { deriveInsights }     from "@/lib/insights";
-import { deriveAttention }    from "@/lib/attention";
-import { usePlaces, usePlaceOperations } from "@/hooks/use-places";
-import { useProductCoverage, useProducts } from "@/hooks/use-products";
-import { useTemplates }       from "@/hooks/use-templates";
+import { attentionItems }     from "@/lib/attention";
+import { usePlaces }          from "@/hooks/use-places";
+import { useCompanyAttention } from "@/hooks/use-attention";
 
 // Recharts is the heaviest client dependency on this page — defer it so the
 // KPI row and feed paint first.
@@ -123,31 +122,21 @@ export default function DashboardPage() {
    * Structural attention data. Each rides its own query so a slow roll-up never
    * holds up the dashboard paint — the panel shows its own skeleton instead.
    */
+  // `places` is still fetched because the map card counts branches without
+  // coordinates from it. The other four reads this panel used to make are now
+  // a single RPC — migration 025.
   const placesQ    = usePlaces();
-  const placeOpsQ  = usePlaceOperations();
-  const productsQ  = useProducts();
-  const coverageQ  = useProductCoverage();
-  const templatesQ = useTemplates();
+  const attentionQ = useCompanyAttention(date);
 
   const attention = useMemo(
-    () => deriveAttention({
-      places:    placesQ.data,
-      placeOps:  placeOpsQ.data,
-      products:  productsQ.data,
-      coverage:  coverageQ.data,
-      templates: templatesQ.data,
-      today:     date,
-    }),
-    [placesQ.data, placeOpsQ.data, productsQ.data, coverageQ.data, templatesQ.data, date],
+    () => (attentionQ.data ? attentionItems(attentionQ.data) : []),
+    [attentionQ.data],
   );
 
-  // A failed query resolves to undefined, and deriveAttention would then count
-  // over nothing and report "3 branches never visited" as though it had looked.
-  // Until every input has actually arrived, the panel shows its skeleton rather
-  // than a figure derived from data it does not have.
-  const attentionLoading =
-    !(placesQ.isSuccess && placeOpsQ.isSuccess && productsQ.isSuccess &&
-      coverageQ.isSuccess && templatesQ.isSuccess);
+  // isSuccess, not isLoading: a failed call resolves to undefined, and an empty
+  // item list renders as "nothing needs setting up" — a claim about data we
+  // never received. Until the counts arrive, the panel shows its skeleton.
+  const attentionLoading = !attentionQ.isSuccess;
 
   const insights = useMemo(
     () => deriveInsights(dashboard.data, extras.data),
