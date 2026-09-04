@@ -4,18 +4,18 @@ Every aggregation added in Phase 2 Batches 1–13 was computed **in the browser*
 from rows fetched over PostgREST. That was the right call while the database
 held tens of rows and no migration was allowed. It did not stay right.
 
-**Batch 15 moved the largest one into Postgres** (§1, §2), and **Batch 18 the
-last unbounded one** (§3). What remains client-side is bounded by branch,
-product or template count, and this records which, why that is acceptable, and
-what replaces each when it stops being so.
+**Batch 15 moved the largest one into Postgres** (§1, §2), **Batch 18 the last
+unbounded one** (§3), and **Batch 26 the dashboard fan-out** (§6). What remains
+client-side is bounded by branch, product or template count, and this records
+which, why that is acceptable, and what replaces each when it stops being so.
 
 Each entry says what it reads today, why it is fine now, the specific point at
 which it stops being fine, and what should replace it.
 
-**Captured:** Batch 14. **Updated:** Batch 19, after the Batch 18 service swap.
-**Deployed `main`:** `b973dcb7ad5f80c2ab43c1418987c0bff3d8cb63` — §1 and §2
-resolved by migration 022, §3 by migration 024. Both views verified live in
-production (022 on 2026-08-29, 024 on 2026-09-04).
+**Captured:** Batch 14. **Updated:** Batch 27, after the Batch 26 service swap.
+**Deployed `main`:** `319f6125104f5b37db8698db37ca11a5bfe48ac9` — §1 and §2
+resolved by migration 022, §3 by 024, §6 by 025. All three verified live in
+production (022 on 2026-08-29, 024 on 2026-09-04, 025 on 2026-09-05).
 
 ---
 
@@ -53,8 +53,9 @@ than erroring.
   Migration 022 removed that exposure by aggregating server-side.
 
 This has not been observed and current row counts are far below any plausible
-ceiling. It is listed because the failure mode is silent, and because it argues
-for bounding the remaining read before it becomes slow.
+ceiling. It stays here because the failure mode is silent, and because it is the
+reason the three aggregates were worth writing before anything got slow rather
+than after.
 
 ---
 
@@ -219,21 +220,62 @@ means the GPS report's cost tracks visit count, not branch count.
 
 ---
 
-## 6. Dashboard attention panel
+## 6. Dashboard attention panel — RESOLVED (Batch 26)
 
-`src/app/(dashboard)/dashboard/page.tsx` fans out to **five** cached queries:
-`usePlaces`, `usePlaceOperations`, `useProducts`, `useProductCoverage`,
-`useTemplates`, then derives everything in `lib/attention.ts`.
+**Was** five cached queries on the most-loaded page — every branch, every
+product, every template, plus both aggregate views — reduced in the browser by
+`deriveAttention()` into six integers.
 
-| | |
-|---|---|
-| **Why acceptable now** | All five are shared query keys already populated by other screens, and the panel has its own loading state so the page paints first |
-| **Becomes risky at** | **no longer inherits an unbounded read** — §1 and §3 are both resolved, so all five queries are bounded by branch, product or template count |
-| **Replacement** | one `company_attention` view or RPC returning the counts. Still open, but now an efficiency win rather than a risk fix |
+**Now** one call to `public.company_attention(p_today)` (migration 025), which
+returns those six integers directly.
 
-Four of the five queries are now answered by a database aggregate:
-`usePlaceOperations` by `v_branch_operations` (022) and `useProductCoverage` by
-`v_product_coverage` (024). `usePlaces` and `useTemplates` remain small reads.
+### Why a function rather than a view
+
+`stale` is measured against the **Riyadh** business day. A view would have to
+reach for `current_date`, which is the database server's UTC day, and between
+21:00 and 24:00 UTC Riyadh is already on the next calendar day — so for three
+hours out of every twenty-four a view would count one day fewer than the app,
+and a branch at exactly fifteen days would silently stop being stale.
+
+Taking the day as a parameter makes the answer identical by construction. The
+caller passes `riyadhToday()`, the same value `deriveAttention()` used.
+
+**That property is not covered by any automated test**, because the tests never
+reach a database. The manual check lives in
+PRODUCTION-READINESS.md §8, under "The one check no test can make" — run it
+after any change to 025.
+
+### What moved, and what deliberately did not
+
+`lib/attention.ts` was split rather than replaced. `deriveAttention()` still
+computes counts from raw rows and hands them to `attentionItems(counts)`, which
+the dashboard now calls directly with the RPC result. Severity, ordering and the
+"a zero count produces no item" rule have one definition rather than two, and
+the 34 existing attention tests still exercise it unchanged.
+
+`usePlaces` stays. The map card counts branches without coordinates from it, so
+the dashboard went from five queries to **two**, not to one. The other four are
+gone from this page; each hook is still used by the screen it belongs to.
+
+### Measured
+
+| | Before | After |
+|---|---|---|
+| REST calls on `/dashboard` | 18 | **15** |
+| `/dashboard` route bundle | 19.8 kB | **18.8 kB** |
+| Shared First Load JS | 259 kB | **256 kB** |
+
+The five inputs measured 2,683 bytes over seven rows on live data — at current
+volume this bought nothing. Projected at 200 branches and 500 products they come
+to roughly 421 KB, of which about 301 KB is removable once `places` is excluded.
+The honest framing is payload at scale, not round trips today.
+
+### Verified against three paths, not two
+
+Before the swap, on production: the RPC, a faithful copy of the old five-query
+derivation, and the counts the panel was actually rendering. All three returned
+`0, 1, 1, 1, 0, 0`. The third leg is the one that matters — without it, the
+comparison only proves a re-implementation agrees with itself.
 
 ---
 
@@ -261,27 +303,22 @@ so moving the fetching underneath them is safe.
 |---|---|---|
 | ~~2~~ | **Last-visit-per-branch view + index** — §1, §2 | **DONE** — Batch 15, migration 022 |
 | ~~3~~ | **`product_coverage` view** — §3 | **DONE** — Batch 18, migration 024 |
-| 1 | **`company_attention` view or RPC** — §6 | open — highest traffic |
-| 4 | **Reports RPC** — §5 | open — largest effort, least urgent |
+| ~~1~~ | **`company_attention` RPC** — §6 | **DONE** — Batch 26, migration 025 |
+| 4 | **Reports RPC** — §5 | open — the only one left |
 
-§6 remains the highest-value item, and it got cheaper twice: **four** of its
-five queries are now answered by `v_branch_operations` and `v_product_coverage`,
-so a `company_attention` view would extend that work rather than start fresh.
+**§5 is the only performance item left.** §4 and §7 need no replacement at all
+— both are already correctly shaped — so the reports aggregation is the last
+thing on this list with work attached to it.
 
-It has also changed character. With §1 and §3 resolved, collapsing the fan-out
-is about round-trips, not about a scan that grows with the data. The case for it
-is weaker than this document argued before, and it should be justified on its
-own terms rather than inherited from the earlier framing.
+It is also the least urgent. Every visit read there is date-bounded and served
+by `idx_visits_company_date`; the bound only stops helping when the requested
+range approaches the whole table. And it is the largest of the three by some way
+— five tabs, five different GROUP BYs — which is why it was ranked last from the
+start rather than as an afterthought.
 
-**One trap if it is written:** `stale` measures against the **Riyadh** business
-day, and `current_date` in SQL is the database server's UTC day — a different
-business day for three hours every night. A plain view cannot do that date maths
-correctly. An RPC taking `today` as a parameter can, which is why §8 now says
-"view or RPC".
-
-Nothing here is urgent at current volumes. Both remaining items are cheap to
-write and hard to retrofit under pressure, which is the argument for writing
-them before they are needed rather than after.
+Nothing here is urgent at current volumes. The argument for writing these before
+they were needed rather than after held for the first three, and holds for this
+one too.
 
 ---
 
