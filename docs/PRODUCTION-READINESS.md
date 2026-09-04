@@ -153,6 +153,7 @@ produce them.
 | Same-date last-visit ties changed | Previously arbitrary, now deterministic (`created_at`, `id`). No branch currently has tied qualifying visits, so it is untested against real data |
 | Arabic plural on the overdue-visits label | The dashboard renders `1 زيارات متأخرة` — plural form for a count of one. Pre-existing and invisible while the count was 6; surfaced by the 2026-09-04 TEST-data cleanup. Batch 4 solved this properly for template field counts with `Intl.PluralRules`; this label never got the same treatment. **Display only — the count itself is correct** |
 | Two branches carry placeholder names | `BR-001` / فرع ١ and `CH-001` / سلسلة ١ were named during the TEST-data cleanup to strip the TEST label from a branch that had acquired a real visit. They describe nothing and want real business names — see §4 |
+| TEST values on a real member | Member `af548bf7` (`ahmednashed1991`, active) carries `emp_id = "TEST-EMP-001"` and `region = "TEST Region"`, left behind by the TEST-data cleanup. The member is real, so the row was never deletable. **Needs the owner’s real values — do not guess them, and do not blank them automatically:** an invented employee id is worse than a visibly wrong one, and `NULL` would quietly discard information someone may still hold. `TEST-EMP-001` shows on `/users` until it is set. Recorded in TEST-DATA-REGISTRY.md §5 |
 
 Performance risks are separate and larger:
 **[`PERFORMANCE-RISKS.md`](./PERFORMANCE-RISKS.md)**.
