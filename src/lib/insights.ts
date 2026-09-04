@@ -19,6 +19,12 @@ export interface PriorityItem {
   /** Translation key + vars, resolved by the component. */
   msgKey:   string;
   msgVars?: Record<string, string | number>;
+  /**
+   * When set, the component resolves `msgKey` to its plural variant for this
+   * count. Arabic needs six agreement forms, so the KEY has to vary, not just
+   * the interpolated number — see lib/i18n/plural.ts.
+   */
+  pluralCount?: number;
   href:     string;
   actionKey: string;   // translation key for the CTA label
 }
@@ -59,6 +65,7 @@ export function deriveInsights(
     priorities.push({
       key: "overdue", severity: "red",
       msgKey: "dashboard.prio.overdue", msgVars: { n: overdue },
+      pluralCount: overdue,
       href: "/visits", actionKey: "dashboard.prio.actReview",
     });
   }

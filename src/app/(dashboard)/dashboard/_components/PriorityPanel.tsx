@@ -10,6 +10,7 @@ import { cn } from "@/lib/utils/cn";
 import type { TranslationFn } from "@/hooks/use-translation";
 import type { TranslationKey } from "@/lib/i18n/translations";
 import type { PriorityItem, Severity } from "@/lib/insights";
+import { pluralKey } from "@/lib/i18n/plural";
 import { SectionHeader, Skeleton } from "./shared";
 
 // ─── Severity presentation ────────────────────────────────────────────────────
@@ -34,12 +35,15 @@ interface PriorityPanelProps {
   priorities: PriorityItem[];
   loading:    boolean;
   t:          TranslationFn;
+  /** Needed to choose the plural form of counted labels. */
+  locale:     string;
 }
 
 export const PriorityPanel = memo(function PriorityPanel({
   priorities,
   loading,
   t,
+  locale,
 }: PriorityPanelProps) {
   if (loading) {
     return (
@@ -94,7 +98,12 @@ export const PriorityPanel = memo(function PriorityPanel({
               <span className={cn("w-1.5 h-1.5 rounded-full shrink-0", sev.dot)} />
               <Icon className={cn("w-3.5 h-3.5 shrink-0", sev.icon)} />
               <p className="flex-1 min-w-0 text-[12.5px] font-semibold text-ink-800 truncate">
-                {t(p.msgKey as TranslationKey, p.msgVars)}
+                {t(
+                  (p.pluralCount === undefined
+                    ? p.msgKey
+                    : pluralKey(p.msgKey, p.pluralCount, locale)) as TranslationKey,
+                  p.msgVars,
+                )}
               </p>
               <Link
                 href={p.href}

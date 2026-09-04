@@ -55,3 +55,18 @@ const FIELD_COUNT_KEY: Record<PluralCategory, TranslationKey> = {
 export function fieldCountLabel(count: number, locale: string, t: TranslationFn): string {
   return t(FIELD_COUNT_KEY[pluralCategory(count, locale)]).replace("{count}", String(count));
 }
+
+/**
+ * The translation key for `base` in the form that agrees with `count`.
+ *
+ * Use this wherever a label interpolates a number into a noun. Arabic needs six
+ * forms and English two, so the *key* has to vary, not just the substituted
+ * value — `"{n} زيارات"` is only ever right for 3–10.
+ *
+ * The caller supplies the six keyed strings as `base.zero` … `base.other`, and
+ * passes `count` through `msgVars` as usual so the numeral still lands inside
+ * whichever form is chosen.
+ */
+export function pluralKey(base: string, count: number, locale: string): string {
+  return `${base}.${pluralCategory(count, locale)}`;
+}

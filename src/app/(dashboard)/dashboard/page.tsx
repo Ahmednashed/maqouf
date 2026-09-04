@@ -281,6 +281,7 @@ export default function DashboardPage() {
         priorities={insights.priorities}
         loading={ccLoading}
         t={t}
+        locale={locale}
       />
 
       {/* ── ROW 3 · Core KPI strip ───────────────────────────────────────── */}

@@ -14,7 +14,7 @@ future batch should run before calling itself verified.
 
 ---
 
-## 1. What Batches 1–18 did
+## 1. What Batches 1–22 did
 
 Each batch was merged fast-forward only and verified in production before the
 next began.
@@ -39,6 +39,10 @@ next began.
 | 16 | Documentation | Migration-history investigation; corrected what Batch 15 had recorded about it |
 | 17 | Documentation | Read-only production drift check — proved the repository matches the database for migrations 020, 021 and 022 |
 | 18 | **Performance** | Product coverage moved into Postgres — `v_product_coverage`, migration 024. The **last** unbounded read, plus an honest-unknown state on `/products` when the roll-up fails |
+| 19 | Documentation | Recorded that the last unbounded read was gone, and corrected what this file had claimed about `company_attention` |
+| 20 | Testing | The focused harnesses moved into the repo — 362 tests, `npm test`, zero new dependencies |
+| 21 | Data | TEST rows removed from production. A real visit had attached itself to a TEST branch, so that branch was renamed rather than deleted |
+| 22 | i18n | **Fixed `1 زيارات متأخرة`** — the overdue label now agrees with its count in all six Arabic forms, reusing the Batch 4 `Intl.PluralRules` helper |
 
 Two batches (6 and 9) removed things that were actively misleading. Batch 13
 fixed a defect introduced by Batch 12 — found only because Batch 13 finally had
@@ -151,7 +155,6 @@ produce them.
 | The "visited" rule now lives in SQL | Migration 022 defines `completed`/`inprogress`. It must stay in step with `matchesLastVisitBucket()` and the coverage report, and nothing enforces that. **New in Batch 15** |
 | `product_count` counts inactive assortment rows | Reproduced in the view to preserve behaviour; still inconsistent with `initVisitProducts()` and `lib/visit-plan.ts`, which filter on `is_active` |
 | Same-date last-visit ties changed | Previously arbitrary, now deterministic (`created_at`, `id`). No branch currently has tied qualifying visits, so it is untested against real data |
-| Arabic plural on the overdue-visits label | The dashboard renders `1 زيارات متأخرة` — plural form for a count of one. Pre-existing and invisible while the count was 6; surfaced by the 2026-09-04 TEST-data cleanup. Batch 4 solved this properly for template field counts with `Intl.PluralRules`; this label never got the same treatment. **Display only — the count itself is correct** |
 | Two branches carry placeholder names | `BR-001` / فرع ١ and `CH-001` / سلسلة ١ were named during the TEST-data cleanup to strip the TEST label from a branch that had acquired a real visit. They describe nothing and want real business names — see §4 |
 | TEST values on a real member | Member `af548bf7` (`ahmednashed1991`, active) carries `emp_id = "TEST-EMP-001"` and `region = "TEST Region"`, left behind by the TEST-data cleanup. The member is real, so the row was never deletable. **Needs the owner’s real values — do not guess them, and do not blank them automatically:** an invented employee id is worse than a visibly wrong one, and `NULL` would quietly discard information someone may still hold. `TEST-EMP-001` shows on `/users` until it is set. Recorded in TEST-DATA-REGISTRY.md §5 |
 
