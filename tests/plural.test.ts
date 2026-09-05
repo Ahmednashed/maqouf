@@ -45,6 +45,7 @@ const PLURAL_SETS: Array<{ base: string; token: string; converted: boolean }> = 
   { base: "visits.unsaved.products",       token: "{n}",     converted: true },
   { base: "visits.unsaved.responses",      token: "{n}",     converted: true },
   { base: "visits.plan.missingRequired",   token: "{n}",     converted: true },
+  { base: "visits.tf.requiredLeft",        token: "{n}",     converted: true },
   { base: "templates.fieldCount",          token: "{count}", converted: false },
 ];
 
@@ -160,6 +161,36 @@ eq("two branches without coordinates reads as the Arabic dual",
   ok(`parenthesised plurals outside the dashboard do not increase (${all.length} <= ${KNOWN_BACKLOG})`,
      all.length <= KNOWN_BACKLOG,
      all.join(", "));
+}
+
+// ── The counted labels the (s) ratchet structurally cannot see ───────────────
+// visits.tf.requiredLeft read `3 إلزامي متبقٍ` in production for weeks and no
+// test caught it, because the guard above looks for `(s)` in the English and
+// the English here was `3 required left` — no parenthesis, nothing to match.
+//
+// The tell that generalises is a count token in a value whose key carries no
+// plural forms. Not all of those are bugs: `{n} م`, `الحد الأدنى {n}` and
+// `Qty: {n}` have no noun to agree with. So this is a ceiling, not a zero —
+// it lets the number fall as labels get converted and fails if one is added.
+{
+  const COUNTED = /\{n\}|\{count\}/;
+  const unpluralised = (dict: Record<string, string>) =>
+    Object.keys(dict).filter(
+      (k) => COUNTED.test(dict[k]) && !CATEGORIES.some((c) => k.endsWith(`.${c}`)),
+    );
+
+  const CEILING = 27;
+  for (const [dictName, dict] of [["ar", ar], ["en", en]] as const) {
+    const left = unpluralised(dict);
+    ok(`${dictName}: counted labels without plural forms do not increase (${left.length} <= ${CEILING})`,
+       left.length <= CEILING,
+       left.join(", "));
+  }
+
+  // The two dictionaries have to stay in step: a label converted in one and
+  // not the other would render a raw key for half the users.
+  eq("the same labels are un-pluralised in both dictionaries",
+     unpluralised(ar).sort(), unpluralised(en).sort());
 }
 
 // ── The old un-suffixed keys are gone ────────────────────────────────────────
@@ -295,6 +326,87 @@ eq("two edited products take the Arabic dual",
     ok(`visits.ready.fields.${c} still has its own entry`,
        typeof ar[`visits.ready.fields.${c}`] === "string");
   }
+}
+
+// ── visits.tf.requiredLeft — Group D ─────────────────────────────────────────
+// The badge in the template-form section header, one panel below the Group C
+// label. Production verification of Group C found this one rendering
+// `3 إلزامي متبقٍ` on the same screen, at the same count, as the label that had
+// just been fixed. Arabic cannot agree without naming what is counted, so the
+// forms below say حقل rather than leaving the noun elided.
+{
+  const BASE = "visits.tf.requiredLeft";
+
+  // every category, both dictionaries
+  for (const c of CATEGORIES) {
+    ok(`ar has ${BASE}.${c}`, typeof ar[`${BASE}.${c}`] === "string" && ar[`${BASE}.${c}`].length > 0);
+    ok(`en has ${BASE}.${c}`, typeof en[`${BASE}.${c}`] === "string" && en[`${BASE}.${c}`].length > 0);
+  }
+
+  // exact output at the representative counts
+  eq("0 required left, Arabic",   ar[pluralKey(BASE, 0, "ar")],   "لا حقول إلزامية متبقية");
+  eq("1 required left, Arabic",   ar[pluralKey(BASE, 1, "ar")],   "حقل إلزامي واحد متبقٍ");
+  eq("2 required left, Arabic",   ar[pluralKey(BASE, 2, "ar")],   "حقلان إلزاميان متبقيان");
+  eq("3 required left, Arabic",   ar[pluralKey(BASE, 3, "ar")],   "{n} حقول إلزامية متبقية");
+  eq("11 required left, Arabic",  ar[pluralKey(BASE, 11, "ar")],  "{n} حقلاً إلزامياً متبقياً");
+  eq("100 required left, Arabic", ar[pluralKey(BASE, 100, "ar")], "{n} حقل إلزامي متبقٍ");
+  // English has only `one` and `other`, so 0 and 2 resolve to `other` — the
+  // `.zero` and `.two` entries exist for symmetry but are unreachable here.
+  eq("0 required left, English",   en[pluralKey(BASE, 0, "en")],   "{n} required fields left");
+  eq("1 required left, English",   en[pluralKey(BASE, 1, "en")],   "1 required field left");
+  eq("2 required left, English",   en[pluralKey(BASE, 2, "en")],   "{n} required fields left");
+  eq("3 required left, English",   en[pluralKey(BASE, 3, "en")],   "{n} required fields left");
+  eq("the unreachable English zero form is still sane",
+     en[`${BASE}.zero`], "No required fields left");
+  eq("and the unreachable English dual",
+     en[`${BASE}.two`], "2 required fields left");
+  eq("11 required left, English",  en[pluralKey(BASE, 11, "en")],  "{n} required fields left");
+  eq("100 required left, English", en[pluralKey(BASE, 100, "en")], "{n} required fields left");
+
+  // Arabic singular, dual, few, many and other must actually be distinct — a
+  // key set copied six times would pass every presence check above.
+  const arForms = CATEGORIES.map((c) => ar[`${BASE}.${c}`]);
+  eq("the six Arabic forms are all different", new Set(arForms).size, 6);
+  ok("the Arabic singular carries no numeral", !ar[`${BASE}.one`].includes("{n}"), ar[`${BASE}.one`]);
+  ok("the Arabic dual carries no numeral",     !ar[`${BASE}.two`].includes("{n}"), ar[`${BASE}.two`]);
+  ok("the Arabic zero carries no numeral",     !ar[`${BASE}.zero`].includes("{n}"), ar[`${BASE}.zero`]);
+
+  // English agreement: the singular takes `field`, everything countable above
+  // one takes `fields`.
+  ok("English singular says field, not fields",
+     /\b1 required field\b/.test(en[`${BASE}.one`]) && !/fields/.test(en[`${BASE}.one`]),
+     en[`${BASE}.one`]);
+  for (const c of ["two", "few", "many", "other"] as const) {
+    ok(`English ${c} says fields`, /\bfields\b/.test(en[`${BASE}.${c}`]), en[`${BASE}.${c}`]);
+  }
+
+  // 0..120 sweep in both languages: raw keys, missing forms, parenthesised
+  // fallbacks and a numeral stranded in a form that should not carry one.
+  const problems: Array<{ n: number; lang: string; why: string; got: string }> = [];
+  for (let i = 0; i <= 120; i++) {
+    for (const [lang, dict] of [["ar", ar], ["en", en]] as const) {
+      const key = pluralKey(BASE, i, lang);
+      const val = dict[key];
+      if (typeof val !== "string") { problems.push({ n: i, lang, why: "missing", got: key }); continue; }
+      if (val === key) problems.push({ n: i, lang, why: "raw key", got: val });
+      if (/\((?:e?s)\)/.test(val)) problems.push({ n: i, lang, why: "parenthesised", got: val });
+      if (lang === "en" && i === 1 && /\bfields\b/.test(val))
+        problems.push({ n: i, lang, why: "plural noun on a singular count", got: val });
+      if (lang === "ar" && (i === 0 || i === 1 || i === 2) && val.includes("{n}"))
+        problems.push({ n: i, lang, why: "numeral token in zero/singular/dual", got: val });
+      // the substituted string is what the badge actually shows
+      if (val.replace("{n}", String(i)).includes("{n}"))
+        problems.push({ n: i, lang, why: "unresolved token after substitution", got: val });
+    }
+  }
+  eq(`${BASE}: counts 0-120 clean in both languages`, problems, []);
+
+  // Group C's label is a different key with different wording. They mean the
+  // same thing today, which is exactly why they must not share a key set.
+  ok("Group C's label is untouched and still distinct",
+     ar["visits.plan.missingRequired.few"] === "{n} حقول إلزامية بلا إجابة" &&
+     ar[`${BASE}.few`] !== ar["visits.plan.missingRequired.few"],
+     ar[`${BASE}.few`]);
 }
 
 // ── No list-footer total may interpolate a count without plural forms ────────

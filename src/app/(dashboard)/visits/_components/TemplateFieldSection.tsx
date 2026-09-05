@@ -10,6 +10,8 @@ import { cn } from "@/lib/utils/cn";
 import { isAnswered } from "@/lib/visit-plan";
 import type { TemplateFieldFull } from "@/types";
 import type { TranslationFn } from "@/hooks/use-translation";
+import type { TranslationKey } from "@/lib/i18n/translations";
+import { pluralKey } from "@/lib/i18n/plural";
 import { usePhotoUpload } from "@/hooks/use-photo-upload";
 import { isPhotoMeta, type PhotoMeta, MAX_PHOTO_SIZE_BYTES } from "@/services/storage";
 import {
@@ -881,7 +883,8 @@ export function TemplateFieldSection({
           </span>
           {requiredLeft > 0 && (
             <span className="text-[11px] font-semibold rounded-full px-2 py-0.5 bg-amber-50 text-amber-700 border border-amber-200">
-              {t("visits.tf.requiredLeft").replace("{n}", String(requiredLeft))}
+              {t(pluralKey("visits.tf.requiredLeft", requiredLeft, locale) as TranslationKey)
+                .replace("{n}", String(requiredLeft))}
             </span>
           )}
         </span>
