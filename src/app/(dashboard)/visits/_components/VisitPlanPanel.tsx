@@ -5,6 +5,8 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
 import type { TranslationFn } from "@/hooks/use-translation";
+import type { TranslationKey } from "@/lib/i18n/translations";
+import { pluralKey } from "@/lib/i18n/plural";
 import type {
   VisitProductPlan,
   VisitFieldPlan,
@@ -201,7 +203,17 @@ export function VisitPlanPanel({
                 />
                 {fieldPlan.requiredCount > 0 && (
                   fieldPlan.missingRequired.length > 0
-                    ? <Stat tone="warn" label={sub(t("visits.plan.missingRequired"), { n: fieldPlan.missingRequired.length })} />
+                    ? <Stat
+                        tone="warn"
+                        label={sub(
+                          t(pluralKey(
+                            "visits.plan.missingRequired",
+                            fieldPlan.missingRequired.length,
+                            locale,
+                          ) as TranslationKey),
+                          { n: fieldPlan.missingRequired.length },
+                        )}
+                      />
                     : <Stat tone="good" label={t("visits.plan.allRequiredDone")} />
                 )}
               </>

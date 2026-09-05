@@ -44,6 +44,7 @@ const PLURAL_SETS: Array<{ base: string; token: string; converted: boolean }> = 
   { base: "visits.ready.belowMin",         token: "{n}",     converted: true },
   { base: "visits.unsaved.products",       token: "{n}",     converted: true },
   { base: "visits.unsaved.responses",      token: "{n}",     converted: true },
+  { base: "visits.plan.missingRequired",   token: "{n}",     converted: true },
   { base: "templates.fieldCount",          token: "{count}", converted: false },
 ];
 
@@ -143,11 +144,11 @@ eq("two branches without coordinates reads as the Arabic dual",
    "فرعان بلا إحداثيات — أضفهما");
 // "branch(es)" is the tell of a string that cannot agree with its count.
 //
-// The dashboard, the list footers and the visit-completion flow all have plural
-// forms now, so none of them may use it. Four are left: two visit-detail labels,
-// one reports label that needs splitting because it doubles as an export column
-// header, and one dead key. The ceiling below lets that number fall but never
-// rise, so a new counted label cannot quietly join them.
+// The dashboard, the list footers, the visit-completion flow and the visit plan
+// panel all have plural forms now, so none of them may use it. Three are left:
+// visits.ctx.lastVisit, one reports label that needs splitting because it doubles
+// as an export column header, and one dead key. The ceiling below lets that
+// number fall but never rise, so a new counted label cannot quietly join them.
 {
   const PARENTHESISED = /\((?:e?s)\)/;
   const all = Object.entries(en).filter(([, v]) => PARENTHESISED.test(v)).map(([k]) => k);
@@ -155,7 +156,7 @@ eq("two branches without coordinates reads as the Arabic dual",
   eq("no dashboard label falls back to a parenthesised plural",
      all.filter((k) => k.startsWith("dashboard.")), []);
 
-  const KNOWN_BACKLOG = 4;
+  const KNOWN_BACKLOG = 3;
   ok(`parenthesised plurals outside the dashboard do not increase (${all.length} <= ${KNOWN_BACKLOG})`,
      all.length <= KNOWN_BACKLOG,
      all.join(", "));
@@ -236,6 +237,65 @@ eq("one edited answer takes the Arabic feminine singular",
    ar[pluralKey("visits.unsaved.responses", 1, "ar")], "إجابة واحدة معدَّلة");
 eq("two edited products take the Arabic dual",
    ar[pluralKey("visits.unsaved.products", 2, "ar")], "منتجان معدَّلان");
+
+// ── visits.plan.missingRequired — Group C ────────────────────────────────────
+// One call site, in VisitPlanPanel. It previously read "3 حقل إلزامي بلا إجابة"
+// on the visit detail page while the completion modal, already converted in
+// Group B, read "3 حقول إلزامية" for the same count on the same screen.
+{
+  const BASE = "visits.plan.missingRequired";
+
+  // every category, both dictionaries
+  for (const c of CATEGORIES) {
+    ok(`ar has ${BASE}.${c}`, typeof ar[`${BASE}.${c}`] === "string" && ar[`${BASE}.${c}`].length > 0);
+    ok(`en has ${BASE}.${c}`, typeof en[`${BASE}.${c}`] === "string" && en[`${BASE}.${c}`].length > 0);
+  }
+
+  // representative categories resolve to the right key
+  eq(`${BASE} 0 -> zero (ar)`,  pluralKey(BASE, 0, "ar"),   `${BASE}.zero`);
+  eq(`${BASE} 1 -> one (ar)`,   pluralKey(BASE, 1, "ar"),   `${BASE}.one`);
+  eq(`${BASE} 2 -> two (ar)`,   pluralKey(BASE, 2, "ar"),   `${BASE}.two`);
+  eq(`${BASE} 3 -> few (ar)`,   pluralKey(BASE, 3, "ar"),   `${BASE}.few`);
+  eq(`${BASE} 11 -> many (ar)`, pluralKey(BASE, 11, "ar"),  `${BASE}.many`);
+  eq(`${BASE} 100 -> other (ar)`, pluralKey(BASE, 100, "ar"), `${BASE}.other`);
+  eq(`${BASE} 1 -> one (en)`,   pluralKey(BASE, 1, "en"),   `${BASE}.one`);
+  eq(`${BASE} 3 -> other (en)`, pluralKey(BASE, 3, "en"),   `${BASE}.other`);
+
+  // the exact strings the panel renders at the counts seen in production
+  eq("three outstanding required fields, Arabic",
+     ar[pluralKey(BASE, 3, "ar")], "{n} حقول إلزامية بلا إجابة");
+  eq("one outstanding required field, Arabic",
+     ar[pluralKey(BASE, 1, "ar")], "حقل إلزامي واحد بلا إجابة");
+  eq("one outstanding required field, English",
+     en[pluralKey(BASE, 1, "en")], "1 required field unanswered");
+
+  // 0..120 sweep: raw keys, missing translations, parenthesised text, and a
+  // singular that still says "fields" would all surface here.
+  const problems: Array<{ n: number; lang: string; why: string; got: string }> = [];
+  for (let i = 0; i <= 120; i++) {
+    for (const [lang, dict] of [["ar", ar], ["en", en]] as const) {
+      const key = pluralKey(BASE, i, lang);
+      const val = dict[key];
+      if (typeof val !== "string") { problems.push({ n: i, lang, why: "missing", got: key }); continue; }
+      if (val === key) problems.push({ n: i, lang, why: "raw key", got: val });
+      if (/\((?:e?s)\)/.test(val)) problems.push({ n: i, lang, why: "parenthesised", got: val });
+      if (lang === "en" && i === 1 && /\bfields\b/.test(val))
+        problems.push({ n: i, lang, why: "plural noun on a singular count", got: val });
+      if (lang === "ar" && (i === 1 || i === 2) && val.includes("{n}"))
+        problems.push({ n: i, lang, why: "numeral token in singular/dual", got: val });
+    }
+  }
+  eq(`${BASE}: counts 0-120 clean in both languages`, problems, []);
+
+  // The un-suffixed key is covered by the shared PLURAL_SETS guard above. What
+  // that guard cannot see is whether this label was pointed at Group B's twin
+  // instead of getting its own set — the two read identically today, so a
+  // future wording change to one would silently move the other.
+  for (const c of CATEGORIES) {
+    ok(`visits.ready.fields.${c} still has its own entry`,
+       typeof ar[`visits.ready.fields.${c}`] === "string");
+  }
+}
 
 // ── No list-footer total may interpolate a count without plural forms ────────
 // `.total` is a suffix rather than a prefix, so this cannot ride the family
