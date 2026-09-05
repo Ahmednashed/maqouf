@@ -46,6 +46,7 @@ const PLURAL_SETS: Array<{ base: string; token: string; converted: boolean }> = 
   { base: "visits.unsaved.responses",      token: "{n}",     converted: true },
   { base: "visits.plan.missingRequired",   token: "{n}",     converted: true },
   { base: "visits.tf.requiredLeft",        token: "{n}",     converted: true },
+  { base: "visits.ctx.lastVisit",          token: "{n}",     converted: true },
   { base: "templates.fieldCount",          token: "{count}", converted: false },
 ];
 
@@ -125,8 +126,12 @@ for (const { base, token } of PLURAL_SETS.filter((s) => s.converted)) {
      `${en[`${base}.one`]} vs ${en[`${base}.other`]}`);
   ok(`${base}: english singular carries no numeral token`,
      !en[`${base}.one`].includes(token), en[`${base}.one`]);
-  ok(`${base}: english singular says "1 "`,
-     en[`${base}.one`].startsWith("1 "), en[`${base}.one`]);
+  // The count has to be spelled out as a literal 1, not dropped and not left as
+  // the token. It does NOT have to lead: every label up to Group D happened to
+  // be count-first ("1 product edited"), but "Last visited 1 day ago" puts the
+  // numeral mid-sentence, which is the natural English for an elapsed period.
+  ok(`${base}: english singular states a literal 1`,
+     /(^|\s)1\s/.test(en[`${base}.one`]), en[`${base}.one`]);
 }
 ok("english oos singular agrees its verb",
    /report needs review/.test(en["dashboard.prio.oos.one"]),
@@ -145,11 +150,11 @@ eq("two branches without coordinates reads as the Arabic dual",
    "فرعان بلا إحداثيات — أضفهما");
 // "branch(es)" is the tell of a string that cannot agree with its count.
 //
-// The dashboard, the list footers, the visit-completion flow and the visit plan
-// panel all have plural forms now, so none of them may use it. Three are left:
-// visits.ctx.lastVisit, one reports label that needs splitting because it doubles
-// as an export column header, and one dead key. The ceiling below lets that
-// number fall but never rise, so a new counted label cannot quietly join them.
+// Every counted label the visit flow renders now has plural forms, so none of
+// them may use it. Two are left, both in reports: one that needs splitting
+// because it doubles as an Excel export column header, and one dead key. The
+// ceiling below lets that number fall but never rise, so a new counted label
+// cannot quietly join them.
 {
   const PARENTHESISED = /\((?:e?s)\)/;
   const all = Object.entries(en).filter(([, v]) => PARENTHESISED.test(v)).map(([k]) => k);
@@ -157,7 +162,7 @@ eq("two branches without coordinates reads as the Arabic dual",
   eq("no dashboard label falls back to a parenthesised plural",
      all.filter((k) => k.startsWith("dashboard.")), []);
 
-  const KNOWN_BACKLOG = 3;
+  const KNOWN_BACKLOG = 2;
   ok(`parenthesised plurals outside the dashboard do not increase (${all.length} <= ${KNOWN_BACKLOG})`,
      all.length <= KNOWN_BACKLOG,
      all.join(", "));
@@ -179,7 +184,7 @@ eq("two branches without coordinates reads as the Arabic dual",
       (k) => COUNTED.test(dict[k]) && !CATEGORIES.some((c) => k.endsWith(`.${c}`)),
     );
 
-  const CEILING = 27;
+  const CEILING = 26;
   for (const [dictName, dict] of [["ar", ar], ["en", en]] as const) {
     const left = unpluralised(dict);
     ok(`${dictName}: counted labels without plural forms do not increase (${left.length} <= ${CEILING})`,
@@ -407,6 +412,97 @@ eq("two edited products take the Arabic dual",
      ar["visits.plan.missingRequired.few"] === "{n} حقول إلزامية بلا إجابة" &&
      ar[`${BASE}.few`] !== ar["visits.plan.missingRequired.few"],
      ar[`${BASE}.few`]);
+}
+
+// ── visits.ctx.lastVisit — Group E ───────────────────────────────────────────
+// The branch-history line in the create-visit modal. It read
+// `Last visited {n} day(s) ago` — the last parenthesised plural outside reports.
+//
+// The count is whole days from the branch's last visit to the RIYADH business
+// day (daysSinceIso, UTC-anchored). The call site is a three-way branch:
+//
+//   null -> visits.ctx.neverVisited
+//   0    -> visits.ctx.lastVisitToday      (a separate key, left alone)
+//   >= 1 -> visits.ctx.lastVisit           (this key)
+//
+// So the zero form below is UNREACHABLE through the only caller. It exists
+// because the six-form architecture requires it, and it is worded so that it
+// would still read correctly if a future caller ever reached it.
+{
+  const BASE = "visits.ctx.lastVisit";
+
+  // every category, both dictionaries
+  for (const c of CATEGORIES) {
+    ok(`ar has ${BASE}.${c}`, typeof ar[`${BASE}.${c}`] === "string" && ar[`${BASE}.${c}`].length > 0);
+    ok(`en has ${BASE}.${c}`, typeof en[`${BASE}.${c}`] === "string" && en[`${BASE}.${c}`].length > 0);
+  }
+
+  // exact output at the representative counts, Arabic
+  eq("0 days, Arabic",   ar[pluralKey(BASE, 0, "ar")],   "آخر زيارة اليوم");
+  eq("1 day, Arabic",    ar[pluralKey(BASE, 1, "ar")],   "آخر زيارة منذ يوم واحد");
+  eq("2 days, Arabic",   ar[pluralKey(BASE, 2, "ar")],   "آخر زيارة منذ يومين");
+  eq("3 days, Arabic",   ar[pluralKey(BASE, 3, "ar")],   "آخر زيارة منذ {n} أيام");
+  eq("11 days, Arabic",  ar[pluralKey(BASE, 11, "ar")],  "آخر زيارة منذ {n} يوماً");
+  eq("100 days, Arabic", ar[pluralKey(BASE, 100, "ar")], "آخر زيارة منذ {n} يوم");
+
+  // English resolves only `one` and `other`, so 0, 2, 3, 11 and 100 all land
+  // on the same form. That is correct, not a gap.
+  eq("1 day, English",    en[pluralKey(BASE, 1, "en")],   "Last visited 1 day ago");
+  eq("0 days, English",   en[pluralKey(BASE, 0, "en")],   "Last visited {n} days ago");
+  eq("2 days, English",   en[pluralKey(BASE, 2, "en")],   "Last visited {n} days ago");
+  eq("3 days, English",   en[pluralKey(BASE, 3, "en")],   "Last visited {n} days ago");
+  eq("11 days, English",  en[pluralKey(BASE, 11, "en")],  "Last visited {n} days ago");
+  eq("100 days, English", en[pluralKey(BASE, 100, "en")], "Last visited {n} days ago");
+  eq("the unreachable English zero form is still sane",
+     en[`${BASE}.zero`], "Last visited today");
+
+  // Arabic day agreement: يوم / يومين / أيام / يوماً are the four distinct
+  // shapes the noun takes, and 0/1/2 must not carry a numeral token.
+  ok("singular uses يوم واحد", ar[`${BASE}.one`].includes("يوم واحد"), ar[`${BASE}.one`]);
+  ok("dual uses يومين",       ar[`${BASE}.two`].includes("يومين"),   ar[`${BASE}.two`]);
+  ok("few uses أيام",         ar[`${BASE}.few`].includes("أيام"),    ar[`${BASE}.few`]);
+  ok("many uses يوماً",       ar[`${BASE}.many`].includes("يوماً"),  ar[`${BASE}.many`]);
+  ok("other uses يوم",        ar[`${BASE}.other`].includes("يوم"),   ar[`${BASE}.other`]);
+  for (const c of ["zero", "one", "two"] as const) {
+    ok(`Arabic ${c} carries no numeral token`, !ar[`${BASE}.${c}`].includes("{n}"), ar[`${BASE}.${c}`]);
+  }
+  eq("the six Arabic forms are all different",
+     new Set(CATEGORIES.map((c) => ar[`${BASE}.${c}`])).size, 6);
+
+  // English agreement: `1 day`, never `1 days`; everything countable above one
+  // takes `days`.
+  ok("English singular says day, not days",
+     /\b1 day\b/.test(en[`${BASE}.one`]) && !/\bdays\b/.test(en[`${BASE}.one`]),
+     en[`${BASE}.one`]);
+  for (const c of ["two", "few", "many", "other"] as const) {
+    ok(`English ${c} says days`, /\bdays\b/.test(en[`${BASE}.${c}`]), en[`${BASE}.${c}`]);
+  }
+
+  // 0..120 sweep in both languages.
+  const problems: Array<{ n: number; lang: string; why: string; got: string }> = [];
+  for (let i = 0; i <= 120; i++) {
+    for (const [lang, dict] of [["ar", ar], ["en", en]] as const) {
+      const key = pluralKey(BASE, i, lang);
+      const val = dict[key];
+      if (typeof val !== "string") { problems.push({ n: i, lang, why: "missing", got: key }); continue; }
+      if (val === key) problems.push({ n: i, lang, why: "raw key", got: val });
+      if (/\((?:e?s)\)/.test(val)) problems.push({ n: i, lang, why: "parenthesised", got: val });
+      if (lang === "en" && i === 1 && /\bdays\b/.test(val))
+        problems.push({ n: i, lang, why: "plural noun on a singular count", got: val });
+      if (lang === "ar" && i <= 2 && val.includes("{n}"))
+        problems.push({ n: i, lang, why: "numeral token in zero/singular/dual", got: val });
+      if (val.replace("{n}", String(i)).includes("{n}"))
+        problems.push({ n: i, lang, why: "unresolved token after substitution", got: val });
+    }
+  }
+  eq(`${BASE}: counts 0-120 clean in both languages`, problems, []);
+
+  // The today case belongs to a different key and must survive untouched — the
+  // ternary that picks between them is the reason zero is unreachable here.
+  eq("visits.ctx.lastVisitToday is unchanged (ar)", ar["visits.ctx.lastVisitToday"], "زيارة اليوم");
+  eq("visits.ctx.lastVisitToday is unchanged (en)", en["visits.ctx.lastVisitToday"], "Visited today");
+  ok("and it carries no count of its own",
+     !ar["visits.ctx.lastVisitToday"].includes("{n}") && !en["visits.ctx.lastVisitToday"].includes("{n}"));
 }
 
 // ── No list-footer total may interpolate a count without plural forms ────────

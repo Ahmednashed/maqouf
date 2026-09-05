@@ -34,7 +34,7 @@ import {
 } from "@/lib/visit-create-plan";
 import type { TranslationKey } from "@/lib/i18n/translations";
 import { merchDisplayName } from "@/lib/utils/member-name";
-import { fieldCountLabel } from "@/lib/i18n/plural";
+import { fieldCountLabel, pluralKey } from "@/lib/i18n/plural";
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
@@ -319,7 +319,10 @@ export function VisitCreateModal({ onClose, initialDate }: VisitCreateModalProps
                       ? <span className="text-ink-400">{t("visits.ctx.neverVisited")}</span>
                       : ctx.daysSinceVisit === 0
                         ? t("visits.ctx.lastVisitToday")
-                        : sub(t("visits.ctx.lastVisit"), { n: ctx.daysSinceVisit })}
+                        : sub(
+                            t(pluralKey("visits.ctx.lastVisit", ctx.daysSinceVisit, locale) as TranslationKey),
+                            { n: ctx.daysSinceVisit },
+                          )}
                   </p>
                 )}
               </div>
