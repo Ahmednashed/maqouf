@@ -151,10 +151,10 @@ eq("two branches without coordinates reads as the Arabic dual",
 // "branch(es)" is the tell of a string that cannot agree with its count.
 //
 // Every counted label the visit flow renders now has plural forms, so none of
-// them may use it. Two are left, both in reports: one that needs splitting
-// because it doubles as an Excel export column header, and one dead key. The
-// ceiling below lets that number fall but never rise, so a new counted label
-// cannot quietly join them.
+// them may use it. Exactly one is left: reports.col.noBranchCoords, which needs
+// a key split rather than a conversion because the same string is both the
+// on-screen warning and an Excel export column header. The ceiling below lets
+// that number fall but never rise, so a new counted label cannot quietly join it.
 {
   const PARENTHESISED = /\((?:e?s)\)/;
   const all = Object.entries(en).filter(([, v]) => PARENTHESISED.test(v)).map(([k]) => k);
@@ -162,10 +162,15 @@ eq("two branches without coordinates reads as the Arabic dual",
   eq("no dashboard label falls back to a parenthesised plural",
      all.filter((k) => k.startsWith("dashboard.")), []);
 
-  const KNOWN_BACKLOG = 2;
+  const KNOWN_BACKLOG = 1;
   ok(`parenthesised plurals outside the dashboard do not increase (${all.length} <= ${KNOWN_BACKLOG})`,
      all.length <= KNOWN_BACKLOG,
      all.join(", "));
+
+  // A ceiling alone would still pass if the survivor were swapped for a new
+  // offender, so pin which key it actually is.
+  eq("the only parenthesised plural left is the reports export-header key",
+     all, ["reports.col.noBranchCoords"]);
 }
 
 // ── The counted labels the (s) ratchet structurally cannot see ───────────────
@@ -184,7 +189,7 @@ eq("two branches without coordinates reads as the Arabic dual",
       (k) => COUNTED.test(dict[k]) && !CATEGORIES.some((c) => k.endsWith(`.${c}`)),
     );
 
-  const CEILING = 26;
+  const CEILING = 25;
   for (const [dictName, dict] of [["ar", ar], ["en", en]] as const) {
     const left = unpluralised(dict);
     ok(`${dictName}: counted labels without plural forms do not increase (${left.length} <= ${CEILING})`,
@@ -532,6 +537,39 @@ eq("and as a singular in English",
    en[pluralKey("places.total", 1, "en")], "1 branch");
 eq("two branches take the Arabic dual",
    ar[pluralKey("places.total", 2, "ar")], "فرعان");
+
+// ── reports.gpsCoordsWarning is gone — Group F ───────────────────────────────
+// This key was born dead. Commit 0c55d8c added it and, in the same commit,
+// wired the on-screen warning to reports.col.noBranchCoords instead. It had no
+// caller in that commit or any commit since, no dynamic reference, and no
+// export or API consumer — the XLSX export uses the col.* key too. Rather than
+// expand a label nothing can render into six plural forms, it was deleted.
+//
+// TranslationKey is `keyof typeof translations.ar`, so a surviving static
+// caller would already have failed type-check; these guard the dictionaries.
+{
+  const DEAD = "reports.gpsCoordsWarning";
+  const CATS = ["zero", "one", "two", "few", "many", "other"];
+
+  ok(`${DEAD} is absent from ar`, ar[DEAD] === undefined, ar[DEAD]);
+  ok(`${DEAD} is absent from en`, en[DEAD] === undefined, en[DEAD]);
+
+  // It must not come back as plural forms either — deleting it was the point.
+  for (const c of CATS) {
+    ok(`${DEAD}.${c} does not exist in ar`, ar[`${DEAD}.${c}`] === undefined, ar[`${DEAD}.${c}`]);
+    ok(`${DEAD}.${c} does not exist in en`, en[`${DEAD}.${c}`] === undefined, en[`${DEAD}.${c}`]);
+  }
+  eq("no key anywhere still starts with the dead base",
+     Object.keys(ar).filter((k) => k.startsWith(DEAD)).concat(
+     Object.keys(en).filter((k) => k.startsWith(DEAD))), []);
+
+  // The neighbouring key is explicitly out of scope for this batch and must
+  // survive byte-for-byte, including its parenthesised plural.
+  eq("reports.col.noBranchCoords is unchanged (ar)",
+     ar["reports.col.noBranchCoords"], "زيارة إلى فرع بلا إحداثيات");
+  eq("reports.col.noBranchCoords is unchanged (en)",
+     en["reports.col.noBranchCoords"], "visit(s) to a branch without coordinates");
+}
 
 // ── Dictionary parity ────────────────────────────────────────────────────────
 {
