@@ -12,12 +12,19 @@ import type { VisitProductPlan, VisitFieldPlan } from "@/lib/visit-plan";
 import type { DirtyState } from "@/lib/visit-dirty";
 import type { TranslationKey } from "@/lib/i18n/translations";
 import { useTranslation } from "@/hooks/use-translation";
+import { pluralKey } from "@/lib/i18n/plural";
 import { useCompleteVisit } from "@/hooks/use-visits";
 import type { VisitWithDetails } from "@/services/visits";
 import { merchDisplayName } from "@/lib/utils/member-name";
 
-/** One line per outstanding thing. Order comes from the readiness deriver. */
-const GAP_KEY: Record<ReadinessKind, TranslationKey> = {
+/**
+ * Base key per outstanding thing. Order comes from the readiness deriver.
+ *
+ * Three of these carry a count and are resolved through pluralKey at render:
+ * Arabic needs six agreement forms, so the KEY has to vary, not just the number
+ * substituted into it. `gps_missing` has no count and stays a plain key.
+ */
+const GAP_KEY: Record<ReadinessKind, string> = {
   required_fields:    "visits.ready.fields",
   required_products:  "visits.ready.reqProducts",
   unchecked_products: "visits.ready.unchecked",
@@ -147,7 +154,8 @@ export function CompleteModal({
             <div className="flex items-center justify-between text-[13px]">
               <span className="flex items-center gap-1.5 text-ink-600">
                 <Package className="w-3.5 h-3.5" />
-                {t("visits.productsChecked").replace("{n}", String(checked))}
+                {t(pluralKey("visits.productsChecked", checked, locale) as TranslationKey)
+                  .replace("{n}", String(checked))}
               </span>
               <span className="text-ink-400 text-[12px]">/ {totalProducts}</span>
             </div>
@@ -168,7 +176,10 @@ export function CompleteModal({
             {readiness.belowMinCount > 0 && (
               <div className="flex items-center gap-1.5 text-[13px] text-amber-600">
                 <AlertTriangle className="w-3.5 h-3.5" />
-                {sub(t("visits.ready.belowMin"), { n: readiness.belowMinCount })}
+                {sub(
+                  t(pluralKey("visits.ready.belowMin", readiness.belowMinCount, locale) as TranslationKey),
+                  { n: readiness.belowMinCount },
+                )}
               </div>
             )}
           </div>
@@ -186,12 +197,18 @@ export function CompleteModal({
               <ul className="mt-1.5 ms-6 space-y-0.5 list-disc">
                 {dirty.changedProducts > 0 && (
                   <li className="text-[12px] text-rose-700">
-                    {sub(t("visits.unsaved.products"), { n: dirty.changedProducts })}
+                    {sub(
+                      t(pluralKey("visits.unsaved.products", dirty.changedProducts, locale) as TranslationKey),
+                      { n: dirty.changedProducts },
+                    )}
                   </li>
                 )}
                 {dirty.changedResponses > 0 && (
                   <li className="text-[12px] text-rose-700">
-                    {sub(t("visits.unsaved.responses"), { n: dirty.changedResponses })}
+                    {sub(
+                      t(pluralKey("visits.unsaved.responses", dirty.changedResponses, locale) as TranslationKey),
+                      { n: dirty.changedResponses },
+                    )}
                   </li>
                 )}
               </ul>
@@ -233,8 +250,11 @@ export function CompleteModal({
                 {readiness.gaps.map((g) => (
                   <li key={g.kind} className="text-[12px] text-ink-700">
                     {g.kind === "gps_missing"
-                      ? t(GAP_KEY[g.kind])
-                      : sub(t(GAP_KEY[g.kind]), { n: g.count })}
+                      ? t(GAP_KEY[g.kind] as TranslationKey)
+                      : sub(
+                          t(pluralKey(GAP_KEY[g.kind], g.count, locale) as TranslationKey),
+                          { n: g.count },
+                        )}
                   </li>
                 ))}
               </ul>

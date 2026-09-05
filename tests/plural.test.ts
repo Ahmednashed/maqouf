@@ -37,6 +37,13 @@ const PLURAL_SETS: Array<{ base: string; token: string; converted: boolean }> = 
   { base: "products.total",                token: "{count}", converted: true },
   { base: "placeProducts.total",           token: "{count}", converted: true },
   { base: "schedule.total",                token: "{count}", converted: true },
+  { base: "visits.productsChecked",        token: "{n}",     converted: true },
+  { base: "visits.ready.fields",           token: "{n}",     converted: true },
+  { base: "visits.ready.reqProducts",      token: "{n}",     converted: true },
+  { base: "visits.ready.unchecked",        token: "{n}",     converted: true },
+  { base: "visits.ready.belowMin",         token: "{n}",     converted: true },
+  { base: "visits.unsaved.products",       token: "{n}",     converted: true },
+  { base: "visits.unsaved.responses",      token: "{n}",     converted: true },
   { base: "templates.fieldCount",          token: "{count}", converted: false },
 ];
 
@@ -136,11 +143,11 @@ eq("two branches without coordinates reads as the Arabic dual",
    "فرعان بلا إحداثيات — أضفهما");
 // "branch(es)" is the tell of a string that cannot agree with its count.
 //
-// Every dashboard label and every list-footer total now has plural forms, so
-// neither may use it. The rest of the app still has 11 — the visit-completion
-// labels, two visit-detail ones, and two in reports — awaiting the rest of the
-// triage. The ceiling below lets that number fall but never rise, so a new
-// counted label cannot quietly join them.
+// The dashboard, the list footers and the visit-completion flow all have plural
+// forms now, so none of them may use it. Four are left: two visit-detail labels,
+// one reports label that needs splitting because it doubles as an export column
+// header, and one dead key. The ceiling below lets that number fall but never
+// rise, so a new counted label cannot quietly join them.
 {
   const PARENTHESISED = /\((?:e?s)\)/;
   const all = Object.entries(en).filter(([, v]) => PARENTHESISED.test(v)).map(([k]) => k);
@@ -148,7 +155,7 @@ eq("two branches without coordinates reads as the Arabic dual",
   eq("no dashboard label falls back to a parenthesised plural",
      all.filter((k) => k.startsWith("dashboard.")), []);
 
-  const KNOWN_BACKLOG = 11;
+  const KNOWN_BACKLOG = 4;
   ok(`parenthesised plurals outside the dashboard do not increase (${all.length} <= ${KNOWN_BACKLOG})`,
      all.length <= KNOWN_BACKLOG,
      all.join(", "));
@@ -180,6 +187,55 @@ for (const [family, token] of [
        offenders, []);
   }
 }
+
+// ── No visit-completion label may interpolate a count without plural forms ───
+// These all render inside CompleteModal, where the counts are small — one or
+// two outstanding products is the common case, not the edge — so a fixed plural
+// noun is wrong most of the time it is seen.
+{
+  const FAMILIES = ["visits.ready.", "visits.unsaved."];
+  for (const [dictName, dict] of [["ar", ar], ["en", en]] as const) {
+    const offenders = Object.keys(dict).filter(
+      (k) =>
+        FAMILIES.some((f) => k.startsWith(f)) &&
+        dict[k].includes("{n}") &&
+        !CATEGORIES.some((c) => k.endsWith(`.${c}`)),
+    );
+    eq(`${dictName}: no visits.ready.*/visits.unsaved.* label interpolates {n} without plural forms`,
+       offenders, []);
+  }
+}
+
+// ── The gap keys CompleteModal composes must all resolve ─────────────────────
+// GAP_KEY holds bases, and the component appends a category for every kind
+// except gps_missing. A base with no key set would render the key itself.
+{
+  const COUNTED_GAPS = [
+    "visits.ready.fields",
+    "visits.ready.reqProducts",
+    "visits.ready.unchecked",
+  ];
+  for (const base of COUNTED_GAPS) {
+    for (let i = 1; i <= 30; i++) {
+      ok(`${base} resolves at ${i} (ar)`, typeof ar[pluralKey(base, i, "ar")] === "string");
+      ok(`${base} resolves at ${i} (en)`, typeof en[pluralKey(base, i, "en")] === "string");
+    }
+  }
+  ok("gps_missing stays a plain key with no count",
+     typeof ar["visits.ready.gpsMissing"] === "string" &&
+     !ar["visits.ready.gpsMissing"].includes("{n}"),
+     ar["visits.ready.gpsMissing"]);
+}
+
+// ── The single-item cases these labels are usually seen at ───────────────────
+eq("one outstanding required field reads as a singular in Arabic",
+   ar[pluralKey("visits.ready.fields", 1, "ar")], "حقل إلزامي واحد بلا إجابة");
+eq("and in English",
+   en[pluralKey("visits.ready.fields", 1, "en")], "1 required field unanswered");
+eq("one edited answer takes the Arabic feminine singular",
+   ar[pluralKey("visits.unsaved.responses", 1, "ar")], "إجابة واحدة معدَّلة");
+eq("two edited products take the Arabic dual",
+   ar[pluralKey("visits.unsaved.products", 2, "ar")], "منتجان معدَّلان");
 
 // ── No list-footer total may interpolate a count without plural forms ────────
 // `.total` is a suffix rather than a prefix, so this cannot ride the family
