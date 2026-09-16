@@ -47,6 +47,7 @@ const PLURAL_SETS: Array<{ base: string; token: string; converted: boolean }> = 
   { base: "visits.plan.missingRequired",   token: "{n}",     converted: true },
   { base: "visits.tf.requiredLeft",        token: "{n}",     converted: true },
   { base: "visits.ctx.lastVisit",          token: "{n}",     converted: true },
+  { base: "reports.gpsNoBranchCoords",     token: "{n}",     converted: true },
   { base: "templates.fieldCount",          token: "{count}", converted: false },
 ];
 
@@ -150,11 +151,10 @@ eq("two branches without coordinates reads as the Arabic dual",
    "فرعان بلا إحداثيات — أضفهما");
 // "branch(es)" is the tell of a string that cannot agree with its count.
 //
-// Every counted label the visit flow renders now has plural forms, so none of
-// them may use it. Exactly one is left: reports.col.noBranchCoords, which needs
-// a key split rather than a conversion because the same string is both the
-// on-screen warning and an Excel export column header. The ceiling below lets
-// that number fall but never rise, so a new counted label cannot quietly join it.
+// None are left. The last one, reports.col.noBranchCoords, was both the GPS
+// report's Excel column header and its counted on-screen warning; Group G split
+// those into a count-free header and reports.gpsNoBranchCoords. The ceiling is
+// now zero, so any new parenthesised plural fails here.
 {
   const PARENTHESISED = /\((?:e?s)\)/;
   const all = Object.entries(en).filter(([, v]) => PARENTHESISED.test(v)).map(([k]) => k);
@@ -162,15 +162,14 @@ eq("two branches without coordinates reads as the Arabic dual",
   eq("no dashboard label falls back to a parenthesised plural",
      all.filter((k) => k.startsWith("dashboard.")), []);
 
-  const KNOWN_BACKLOG = 1;
+  const KNOWN_BACKLOG = 0;
   ok(`parenthesised plurals outside the dashboard do not increase (${all.length} <= ${KNOWN_BACKLOG})`,
      all.length <= KNOWN_BACKLOG,
      all.join(", "));
 
-  // A ceiling alone would still pass if the survivor were swapped for a new
-  // offender, so pin which key it actually is.
-  eq("the only parenthesised plural left is the reports export-header key",
-     all, ["reports.col.noBranchCoords"]);
+  // Pinned as an empty set, not just a count, so the offender list itself is
+  // what a failure prints.
+  eq("no English string anywhere falls back to a parenthesised plural", all, []);
 }
 
 // ── The counted labels the (s) ratchet structurally cannot see ───────────────
@@ -563,12 +562,111 @@ eq("two branches take the Arabic dual",
      Object.keys(ar).filter((k) => k.startsWith(DEAD)).concat(
      Object.keys(en).filter((k) => k.startsWith(DEAD))), []);
 
-  // The neighbouring key is explicitly out of scope for this batch and must
-  // survive byte-for-byte, including its parenthesised plural.
-  eq("reports.col.noBranchCoords is unchanged (ar)",
-     ar["reports.col.noBranchCoords"], "زيارة إلى فرع بلا إحداثيات");
-  eq("reports.col.noBranchCoords is unchanged (en)",
-     en["reports.col.noBranchCoords"], "visit(s) to a branch without coordinates");
+  // The neighbouring key had to survive the deletion. Its wording is owned by
+  // the Group G block below, which turned it into a count-free export header.
+  ok("reports.col.noBranchCoords survived the deletion (ar)",
+     typeof ar["reports.col.noBranchCoords"] === "string");
+  ok("reports.col.noBranchCoords survived the deletion (en)",
+     typeof en["reports.col.noBranchCoords"] === "string");
+}
+
+// ── GPS report: export header vs. on-screen warning — Group G ───────────────
+// reports.col.noBranchCoords used to serve two contracts at once: the Excel
+// column header, and — with a count glued on in JSX — the warning under the
+// "No GPS recorded" cell (`3 زيارة إلى فرع…`, `3 visit(s) to a branch…`).
+// Because the count was prepended outside the string, the counted-label guard
+// never saw it. The two are now separate keys.
+//
+// The count is started visits whose branch has no coordinates (tallyGps). The
+// report shows the warning only when it is above zero.
+{
+  const HEADER = "reports.col.noBranchCoords";
+  const BASE = "reports.gpsNoBranchCoords";
+  const COUNTED = /\{n\}|\{count\}/;
+  const PARENS = /\((?:e?s)\)/;
+
+  // The header: present, count-free, a plain heading beside "No GPS recorded".
+  eq("export header (ar)", ar[HEADER], "بدون إحداثيات الفرع");
+  eq("export header (en)", en[HEADER], "No branch coordinates");
+  for (const [lang, dict] of [["ar", ar], ["en", en]] as const) {
+    ok(`${lang}: export header carries no count token`, !COUNTED.test(dict[HEADER]), dict[HEADER]);
+    ok(`${lang}: export header has no parenthesised plural`, !PARENS.test(dict[HEADER]), dict[HEADER]);
+    ok(`${lang}: export header is not a warning form`,
+       CATEGORIES.every((c) => dict[`${BASE}.${c}`] !== dict[HEADER]), dict[HEADER]);
+  }
+
+  // The warning: six forms in both dictionaries, with no un-suffixed base.
+  for (const c of CATEGORIES) {
+    ok(`ar has ${BASE}.${c}`, typeof ar[`${BASE}.${c}`] === "string" && ar[`${BASE}.${c}`].length > 0);
+    ok(`en has ${BASE}.${c}`, typeof en[`${BASE}.${c}`] === "string" && en[`${BASE}.${c}`].length > 0);
+  }
+
+  // exact output at the representative counts
+  eq("0 visits, Arabic",   ar[pluralKey(BASE, 0, "ar")],   "لا توجد زيارات إلى فروع بلا إحداثيات");
+  eq("1 visit, Arabic",    ar[pluralKey(BASE, 1, "ar")],   "زيارة واحدة إلى فرع بلا إحداثيات");
+  eq("2 visits, Arabic",   ar[pluralKey(BASE, 2, "ar")],   "زيارتان إلى فروع بلا إحداثيات");
+  eq("3 visits, Arabic",   ar[pluralKey(BASE, 3, "ar")],   "{n} زيارات إلى فروع بلا إحداثيات");
+  eq("11 visits, Arabic",  ar[pluralKey(BASE, 11, "ar")],  "{n} زيارةً إلى فروع بلا إحداثيات");
+  eq("100 visits, Arabic", ar[pluralKey(BASE, 100, "ar")], "{n} زيارة إلى فروع بلا إحداثيات");
+  // English resolves only `one` and `other`.
+  eq("0 visits, English",   en[pluralKey(BASE, 0, "en")],   "{n} visits to branches without coordinates");
+  eq("1 visit, English",    en[pluralKey(BASE, 1, "en")],   "1 visit to a branch without coordinates");
+  eq("2 visits, English",   en[pluralKey(BASE, 2, "en")],   "{n} visits to branches without coordinates");
+  eq("3 visits, English",   en[pluralKey(BASE, 3, "en")],   "{n} visits to branches without coordinates");
+  eq("11 visits, English",  en[pluralKey(BASE, 11, "en")],  "{n} visits to branches without coordinates");
+  eq("100 visits, English", en[pluralKey(BASE, 100, "en")], "{n} visits to branches without coordinates");
+  eq("the unreachable English zero is still sane", en[`${BASE}.zero`], "No visits to branches without coordinates");
+  eq("the unreachable English dual is still sane", en[`${BASE}.two`], "2 visits to branches without coordinates");
+
+  // Arabic agreement: the noun takes four shapes, and 0/1/2 carry no numeral.
+  ok("singular is زيارة واحدة", ar[`${BASE}.one`].startsWith("زيارة واحدة "), ar[`${BASE}.one`]);
+  ok("dual is زيارتان",         ar[`${BASE}.two`].startsWith("زيارتان "),     ar[`${BASE}.two`]);
+  ok("few is زيارات",           ar[`${BASE}.few`].startsWith("{n} زيارات "),  ar[`${BASE}.few`]);
+  ok("many is زيارةً",          ar[`${BASE}.many`].startsWith("{n} زيارةً "), ar[`${BASE}.many`]);
+  ok("other is زيارة",          ar[`${BASE}.other`].startsWith("{n} زيارة "), ar[`${BASE}.other`]);
+  for (const c of ["zero", "one", "two"] as const) {
+    ok(`Arabic ${c} carries no numeral token`, !ar[`${BASE}.${c}`].includes("{n}"), ar[`${BASE}.${c}`]);
+  }
+  eq("the six Arabic forms are all different", new Set(CATEGORIES.map((c) => ar[`${BASE}.${c}`])).size, 6);
+
+  // English agreement: `1 visit to a branch`, never `1 visits`.
+  ok("English singular says visit, not visits",
+     /^1 visit to a branch /.test(en[`${BASE}.one`]) && !/\bvisits\b/.test(en[`${BASE}.one`]),
+     en[`${BASE}.one`]);
+  for (const c of ["two", "few", "many", "other"] as const) {
+    ok(`English ${c} says visits`, /\bvisits\b/.test(en[`${BASE}.${c}`]), en[`${BASE}.${c}`]);
+  }
+
+  // 0..120 sweep in both languages, on the substituted string the cell shows.
+  const problems: Array<{ n: number; lang: string; why: string; got: string }> = [];
+  for (let i = 0; i <= 120; i++) {
+    for (const [lang, dict] of [["ar", ar], ["en", en]] as const) {
+      const key = pluralKey(BASE, i, lang);
+      const val = dict[key];
+      if (typeof val !== "string") { problems.push({ n: i, lang, why: "missing", got: key }); continue; }
+      const shown = val.replace(/\{n\}/g, String(i));
+      if (val === key || shown.includes("reports.")) problems.push({ n: i, lang, why: "raw key", got: val });
+      if (PARENS.test(shown)) problems.push({ n: i, lang, why: "parenthesised", got: val });
+      if (COUNTED.test(shown)) problems.push({ n: i, lang, why: "unresolved token", got: val });
+      if (shown === dict[HEADER]) problems.push({ n: i, lang, why: "reuses the export header", got: val });
+      if (lang === "en" && i === 1 && /\bvisits\b/.test(shown))
+        problems.push({ n: i, lang, why: "plural noun on a singular count", got: val });
+      if (lang === "ar" && i <= 2 && val.includes("{n}"))
+        problems.push({ n: i, lang, why: "numeral token in zero/singular/dual", got: val });
+    }
+  }
+  eq(`${BASE}: counts 0-120 clean in both languages`, problems, []);
+
+  // The header never interpolated a count — the number was glued on in JSX —
+  // so the counted-label guard never listed it and its backlog is unchanged.
+  const unpluralised = (dict: Record<string, string>) => Object.keys(dict).filter(
+    (k) => COUNTED.test(dict[k]) && !CATEGORIES.some((c) => k.endsWith(`.${c}`)));
+  eq("counted-label backlog is still exactly 25 (ar)", unpluralised(ar).length, 25);
+  eq("counted-label backlog is still exactly 25 (en)", unpluralised(en).length, 25);
+
+  // Group F's deleted key stays deleted, in every form.
+  eq("reports.gpsCoordsWarning is still absent",
+     Object.keys(ar).concat(Object.keys(en)).filter((k) => k.startsWith("reports.gpsCoordsWarning")), []);
 }
 
 // ── Dictionary parity ────────────────────────────────────────────────────────

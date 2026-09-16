@@ -21,6 +21,7 @@ import {
 import { useCompanyUsers } from "@/hooks/use-company-users";
 import { usePlaces } from "@/hooks/use-places";
 import { memberDisplayName } from "@/services/company-users";
+import { gpsExportRow, gpsNoBranchCoordsWarning } from "@/lib/gps-report";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -677,23 +678,13 @@ function ProductTab({ range, locale, filters, meta }: { range: DateRange; locale
 }
 
 function GpsTab({ range, filters, meta }: { range: DateRange; filters: ReportFilters; meta?: ExportMeta }) {
-  const { t }                                    = useTranslation();
+  const { t, locale }                            = useTranslation();
   const { data = [], isLoading }                 = useGpsReport(range, filters);
   const { sorted, sortKey, sortDir, toggleSort } = useSortedData(data);
   type Row = (typeof data)[number];
 
   async function doExport() {
-    const rows = sorted.map((r) => ({
-      [t("reports.col.merch")]:       r.full_name,
-      [t("reports.col.totalStarted")]:r.total_started,
-      [t("reports.col.gpsVerified")]:     r.gps_verified,
-      [t("reports.col.gpsOutside")]:      r.gps_outside,
-      [t("reports.col.gpsNotRecorded")]:  r.gps_not_recorded,
-      [t("reports.col.noBranchCoords")]:  r.no_branch_coords,
-      // Empty, not 0%: a rate of zero would assert every check failed.
-      [t("reports.col.gpsRate")]:         r.verification_rate === null ? "" : `${r.verification_rate}%`,
-      [t("reports.col.avgDistance")]:     r.avg_distance ?? "",
-    }));
+    const rows = sorted.map((r) => gpsExportRow(r, t));
     await exportXlsx(rows, `gps-compliance-${range.from}-${range.to}`, meta);
   }
 
@@ -753,8 +744,11 @@ function GpsTab({ range, filters, meta }: { range: DateRange; filters: ReportFil
                     {r.gps_not_recorded}
                   </span>
                   {r.no_branch_coords > 0 && (
-                    <span className="block text-[10.5px] text-amber-600 font-medium" title={t("reports.col.noBranchCoords")}>
-                      {r.no_branch_coords} {t("reports.col.noBranchCoords")}
+                    <span
+                      className="block text-[10.5px] text-amber-600 font-medium"
+                      title={gpsNoBranchCoordsWarning(r.no_branch_coords, locale, t)}
+                    >
+                      {gpsNoBranchCoordsWarning(r.no_branch_coords, locale, t)}
                     </span>
                   )}
                 </td>
