@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback, useMemo } from "react";
-import { Download, ChevronDown, ChevronUp, ShieldCheck, ChevronLeft, ChevronRight } from "lucide-react";
+import { Download, ChevronDown, ChevronUp, ShieldCheck, ChevronLeft, ChevronRight, AlertTriangle, RotateCcw } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
 import { riyadhToday, startOfMonthIso } from "@/lib/utils/date";
 import { useTranslation, type TranslationFn } from "@/hooks/use-translation";
@@ -22,6 +22,14 @@ import { useCompanyUsers } from "@/hooks/use-company-users";
 import { usePlaces } from "@/hooks/use-places";
 import { memberDisplayName } from "@/services/company-users";
 import { gpsExportRow, gpsNoBranchCoordsWarning } from "@/lib/gps-report";
+import {
+  durationLabel,
+  exportReportXlsx,
+  summaryExportMeta,
+  summaryStatus,
+  type ExportMeta,
+  type SummaryStatus,
+} from "@/lib/report-export";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -87,42 +95,31 @@ function usePagination<T>(data: T[]) {
 // ─── Excel export ─────────────────────────────────────────────────────────────
 
 /**
- * One sheet of headline numbers and the filters that produced them, written
- * ahead of the data sheet.
- *
- * Without it an exported file is a bare grid: a week later nobody can tell
- * which window it covered or whether it was filtered to one merchandiser, and
- * a filtered export is indistinguishable from a complete one.
+ * The Export button every tab shares. `meta` is null only while the period
+ * summary is still loading: exporting then would write a workbook whose
+ * summary sheet says "unavailable" for figures that are a moment away, so the
+ * button waits and says why. Once the summary has failed, `meta` carries the
+ * period and filters with an explicit "unavailable" row, and export works.
  */
-export interface ExportMeta {
-  sheetName: string;
-  rows:      Record<string, unknown>[];
-  dataSheet: string;
-}
-
-async function exportXlsx(
-  rows: Record<string, unknown>[],
-  filename: string,
-  meta?: ExportMeta,
-) {
-  const XLSX = await import("xlsx");
-  const wb   = XLSX.utils.book_new();
-
-  if (meta) {
-    XLSX.utils.book_append_sheet(
-      wb,
-      XLSX.utils.json_to_sheet(meta.rows),
-      meta.sheetName,
-    );
-  }
-
-  XLSX.utils.book_append_sheet(
-    wb,
-    XLSX.utils.json_to_sheet(rows),
-    meta?.dataSheet ?? "Report",
+function ExportButton({
+  onClick, disabled, meta, t,
+}: {
+  onClick:  () => void;
+  disabled: boolean;
+  meta:     ExportMeta | null;
+  t:        TranslationFn;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled || !meta}
+      title={!meta ? t("reports.exp.waitSummary") : undefined}
+      className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-ink-200 text-[12px] text-ink-600 hover:bg-ink-50 disabled:opacity-40 transition-all"
+    >
+      <Download className="w-3.5 h-3.5" />
+      {t("reports.export")}
+    </button>
   );
-
-  XLSX.writeFile(wb, `${filename}.xlsx`);
 }
 
 // ─── Summary cards ────────────────────────────────────────────────────────────
@@ -162,14 +159,39 @@ function SummaryCard({
 }
 
 function SummaryCards({
-  summary, isLoading, t,
-}: { summary?: ReportSummary; isLoading: boolean; t: TranslationFn }) {
+  summary, status, onRetry, t,
+}: { summary?: ReportSummary; status: SummaryStatus; onRetry: () => void; t: TranslationFn }) {
   const s = summary;
+  const isLoading = status === "loading";
   const num = (n: number | undefined) => (n == null ? "—" : String(n));
 
   // Completion rate is only reassuring above 80; below half it is a problem.
   const rateTone: "good" | "warn" | "bad" =
     !s ? "warn" : s.completion_rate >= 80 ? "good" : s.completion_rate >= 50 ? "warn" : "bad";
+
+  // A failed summary replaces the grid: nine cards of "—" read as "nothing
+  // happened in this period", which is the one thing we do not know.
+  if (status === "error") {
+    return (
+      <div>
+        <p className="text-[12px] font-semibold text-ink-500 mb-2">{t("reports.summaryTitle")}</p>
+        <div role="alert" className="flex items-center gap-3 rounded-xl border border-rose-200 bg-rose-50/70 px-4 py-3">
+          <AlertTriangle className="w-4 h-4 text-rose-500 shrink-0" />
+          <div className="flex-1 min-w-0">
+            <p className="text-[12.5px] font-semibold text-rose-700">{t("reports.sum.error")}</p>
+            <p className="mt-0.5 text-[11.5px] text-rose-600/90">{t("reports.sum.errorExportNote")}</p>
+          </div>
+          <button
+            onClick={onRetry}
+            className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg bg-white border border-rose-200 text-[11.5px] font-bold text-rose-600 hover:bg-rose-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-400 transition-all shrink-0"
+          >
+            <RotateCcw className="w-3 h-3" />
+            {t("reports.sum.retry")}
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div>
@@ -312,11 +334,6 @@ function statusLabel(status: string, t: TranslationFn): string {
   return key ? t(key) : status;
 }
 
-/** "45 د" / "45 min" — never the bare English "45m". */
-function durationLabel(minutes: number, t: TranslationFn): string {
-  return minutes > 0 ? `${minutes} ${t("common.minutesShort")}` : "—";
-}
-
 function StatusBadge({ status }: { status: string }) {
   const { t } = useTranslation();
   const map: Record<string, string> = {
@@ -366,7 +383,7 @@ function Pagination({
 
 // ─── Tab components ───────────────────────────────────────────────────────────
 
-function VisitsTab({ range, locale, filters, meta }: { range: DateRange; locale: string; filters: ReportFilters; meta?: ExportMeta }) {
+function VisitsTab({ range, locale, filters, meta }: { range: DateRange; locale: string; filters: ReportFilters; meta: ExportMeta | null }) {
   const { t }                                     = useTranslation();
   const { data = [], isLoading }                  = useVisitsReport(range, filters);
   const { sorted, sortKey, sortDir, toggleSort }  = useSortedData(data);
@@ -384,20 +401,14 @@ function VisitsTab({ range, locale, filters, meta }: { range: DateRange; locale:
       [t("reports.col.status")]:   statusLabel(r.status, t),
       [t("reports.col.duration")]: r.duration_minutes || "",
     }));
-    await exportXlsx(rows, `visits-${range.from}-${range.to}`, meta);
+    if (!meta) return;
+    await exportReportXlsx(rows, `visits-${range.from}-${range.to}`, meta);
   }
 
   return (
     <>
       <div className="flex justify-end px-4 pt-3">
-        <button
-          onClick={doExport}
-          disabled={data.length === 0 || isLoading}
-          className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-ink-200 text-[12px] text-ink-600 hover:bg-ink-50 disabled:opacity-40 transition-all"
-        >
-          <Download className="w-3.5 h-3.5" />
-          {t("reports.export")}
-        </button>
+        <ExportButton onClick={doExport} disabled={data.length === 0 || isLoading} meta={meta} t={t} />
       </div>
       <div className="overflow-x-auto">
         <table className="w-full text-[12.5px]">
@@ -437,7 +448,7 @@ function VisitsTab({ range, locale, filters, meta }: { range: DateRange; locale:
   );
 }
 
-function MerchTab({ range, locale, filters, meta }: { range: DateRange; locale: string; filters: ReportFilters; meta?: ExportMeta }) {
+function MerchTab({ range, locale, filters, meta }: { range: DateRange; locale: string; filters: ReportFilters; meta: ExportMeta | null }) {
   const { t }                                    = useTranslation();
   const { data = [], isLoading }                 = useMerchReport(range, filters);
   const { sorted, sortKey, sortDir, toggleSort } = useSortedData(data);
@@ -452,20 +463,14 @@ function MerchTab({ range, locale, filters, meta }: { range: DateRange; locale: 
       [t("reports.col.rate")]:        `${r.completion_rate}%`,
       [t("reports.col.avgDuration")]: r.avg_duration || "",
     }));
-    await exportXlsx(rows, `merch-${range.from}-${range.to}`, meta);
+    if (!meta) return;
+    await exportReportXlsx(rows, `merch-${range.from}-${range.to}`, meta);
   }
 
   return (
     <>
       <div className="flex justify-end px-4 pt-3">
-        <button
-          onClick={doExport}
-          disabled={data.length === 0 || isLoading}
-          className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-ink-200 text-[12px] text-ink-600 hover:bg-ink-50 disabled:opacity-40 transition-all"
-        >
-          <Download className="w-3.5 h-3.5" />
-          {t("reports.export")}
-        </button>
+        <ExportButton onClick={doExport} disabled={data.length === 0 || isLoading} meta={meta} t={t} />
       </div>
       <div className="overflow-x-auto">
         <table className="w-full text-[12.5px]">
@@ -501,7 +506,7 @@ function MerchTab({ range, locale, filters, meta }: { range: DateRange; locale: 
   );
 }
 
-function BranchTab({ range, locale, filters, meta }: { range: DateRange; locale: string; filters: ReportFilters; meta?: ExportMeta }) {
+function BranchTab({ range, locale, filters, meta }: { range: DateRange; locale: string; filters: ReportFilters; meta: ExportMeta | null }) {
   const { t }                                    = useTranslation();
   const { data = [], isLoading }                 = useBranchReport(range, filters);
   const { sorted, sortKey, sortDir, toggleSort } = useSortedData(data);
@@ -521,20 +526,14 @@ function BranchTab({ range, locale, filters, meta }: { range: DateRange; locale:
       [t("reports.col.lastVisit")]:   r.last_visit_date ?? t("reports.neverVisited"),
       [t("reports.col.daysSince")]:   r.days_since ?? "",
     }));
-    await exportXlsx(rows, `branches-${range.from}-${range.to}`, meta);
+    if (!meta) return;
+    await exportReportXlsx(rows, `branches-${range.from}-${range.to}`, meta);
   }
 
   return (
     <>
       <div className="flex justify-end px-4 pt-3">
-        <button
-          onClick={doExport}
-          disabled={data.length === 0 || isLoading}
-          className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-ink-200 text-[12px] text-ink-600 hover:bg-ink-50 disabled:opacity-40 transition-all"
-        >
-          <Download className="w-3.5 h-3.5" />
-          {t("reports.export")}
-        </button>
+        <ExportButton onClick={doExport} disabled={data.length === 0 || isLoading} meta={meta} t={t} />
       </div>
       <div className="overflow-x-auto">
         <table className="w-full text-[12.5px]">
@@ -600,7 +599,7 @@ function BranchTab({ range, locale, filters, meta }: { range: DateRange; locale:
   );
 }
 
-function ProductTab({ range, locale, filters, meta }: { range: DateRange; locale: string; filters: ReportFilters; meta?: ExportMeta }) {
+function ProductTab({ range, locale, filters, meta }: { range: DateRange; locale: string; filters: ReportFilters; meta: ExportMeta | null }) {
   const { t }                                    = useTranslation();
   const { data = [], isLoading }                 = useProductReport(range, filters);
   const { sorted, sortKey, sortDir, toggleSort } = useSortedData(data);
@@ -617,20 +616,14 @@ function ProductTab({ range, locale, filters, meta }: { range: DateRange; locale
       [t("reports.col.availability")]: `${r.availability_pct}%`,
       [t("reports.col.totalMissing")]: r.total_missing,
     }));
-    await exportXlsx(rows, `products-${range.from}-${range.to}`, meta);
+    if (!meta) return;
+    await exportReportXlsx(rows, `products-${range.from}-${range.to}`, meta);
   }
 
   return (
     <>
       <div className="flex justify-end px-4 pt-3">
-        <button
-          onClick={doExport}
-          disabled={data.length === 0 || isLoading}
-          className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-ink-200 text-[12px] text-ink-600 hover:bg-ink-50 disabled:opacity-40 transition-all"
-        >
-          <Download className="w-3.5 h-3.5" />
-          {t("reports.export")}
-        </button>
+        <ExportButton onClick={doExport} disabled={data.length === 0 || isLoading} meta={meta} t={t} />
       </div>
       <div className="overflow-x-auto">
         <table className="w-full text-[12.5px]">
@@ -677,7 +670,7 @@ function ProductTab({ range, locale, filters, meta }: { range: DateRange; locale
   );
 }
 
-function GpsTab({ range, filters, meta }: { range: DateRange; filters: ReportFilters; meta?: ExportMeta }) {
+function GpsTab({ range, filters, meta }: { range: DateRange; filters: ReportFilters; meta: ExportMeta | null }) {
   const { t, locale }                            = useTranslation();
   const { data = [], isLoading }                 = useGpsReport(range, filters);
   const { sorted, sortKey, sortDir, toggleSort } = useSortedData(data);
@@ -685,7 +678,8 @@ function GpsTab({ range, filters, meta }: { range: DateRange; filters: ReportFil
 
   async function doExport() {
     const rows = sorted.map((r) => gpsExportRow(r, t));
-    await exportXlsx(rows, `gps-compliance-${range.from}-${range.to}`, meta);
+    if (!meta) return;
+    await exportReportXlsx(rows, `gps-compliance-${range.from}-${range.to}`, meta);
   }
 
   return (
@@ -699,14 +693,7 @@ function GpsTab({ range, filters, meta }: { range: DateRange; filters: ReportFil
             <span className="block text-[10.5px] text-ink-300">{t("reports.gpsRateHint")}</span>
           </span>
         </p>
-        <button
-          onClick={doExport}
-          disabled={data.length === 0 || isLoading}
-          className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-ink-200 text-[12px] text-ink-600 hover:bg-ink-50 disabled:opacity-40 transition-all"
-        >
-          <Download className="w-3.5 h-3.5" />
-          {t("reports.export")}
-        </button>
+        <ExportButton onClick={doExport} disabled={data.length === 0 || isLoading} meta={meta} t={t} />
       </div>
       <div className="overflow-x-auto">
         <table className="w-full text-[12.5px]">
@@ -854,33 +841,22 @@ export default function ReportsPage() {
       })()
     : t("reports.exp.none");
 
-  const exportMeta: ExportMeta | undefined = summary.data
-    ? {
-        sheetName: t("reports.exp.sheetSummary"),
-        dataSheet: t("reports.exp.sheetData"),
-        rows: [
-          { [t("reports.exp.metric")]: t("reports.exp.range"),        [t("reports.exp.value")]: `${range.from} → ${range.to}` },
-          { [t("reports.exp.metric")]: t("reports.exp.filterMerch"),  [t("reports.exp.value")]: merchLabel },
-          { [t("reports.exp.metric")]: t("reports.exp.filterBranch"), [t("reports.exp.value")]: placeLabel },
-          { [t("reports.exp.metric")]: t("reports.exp.filterStatus"), [t("reports.exp.value")]: status ? statusLabel(status, t) : t("reports.exp.none") },
-          { [t("reports.exp.metric")]: t("reports.exp.filterLastVisit"), [t("reports.exp.value")]: lastVisitLabel },
-          { [t("reports.exp.metric")]: t("reports.sum.totalVisits"),     [t("reports.exp.value")]: summary.data.total_visits },
-          { [t("reports.exp.metric")]: t("reports.sum.completed"),       [t("reports.exp.value")]: summary.data.completed },
-          { [t("reports.exp.metric")]: t("reports.sum.missed"),          [t("reports.exp.value")]: summary.data.missed },
-          { [t("reports.exp.metric")]: t("reports.sum.pending"),         [t("reports.exp.value")]: summary.data.pending },
-          { [t("reports.exp.metric")]: t("reports.sum.rate"),            [t("reports.exp.value")]: `${summary.data.completion_rate}%` },
-          { [t("reports.exp.metric")]: t("reports.sum.activeMerch"),     [t("reports.exp.value")]: summary.data.active_merchandisers },
-          { [t("reports.exp.metric")]: t("reports.sum.coveredBranches"), [t("reports.exp.value")]: `${summary.data.covered_branches} / ${summary.data.scheduled_branches}` },
-          { [t("reports.exp.metric")]: t("reports.sum.avgDuration"),     [t("reports.exp.value")]: durationLabel(summary.data.avg_duration, t) },
-          {
-            [t("reports.exp.metric")]: t("reports.sum.productIssues"),
-            [t("reports.exp.value")]: summary.data.products_with_shortfall == null
-              ? t("reports.sum.noAudits")
-              : summary.data.products_with_shortfall,
-          },
-        ],
-      }
-    : undefined;
+  // null while the summary is still owed (loading or paused) — Export waits.
+  // Otherwise the summary sheet is always written: with the figures when they
+  // loaded, and with an explicit "unavailable" row once they failed.
+  const summaryState = summaryStatus(summary);
+  const exportMeta: ExportMeta | null = summaryExportMeta(
+    summaryState,
+    {
+      t,
+      range,
+      merchLabel,
+      placeLabel,
+      statusText: status ? statusLabel(status, t) : t("reports.exp.none"),
+      lastVisitLabel,
+    },
+    summary.data,
+  );
 
   const tabLabel: Record<Tab, string> = {
     visits:  t("reports.tab.visits"),
@@ -1023,7 +999,12 @@ export default function ReportsPage() {
       </div>
 
       {/* Period summary */}
-      <SummaryCards summary={summary.data} isLoading={summary.isLoading} t={t} />
+      <SummaryCards
+        summary={summary.data}
+        status={summaryState}
+        onRetry={() => { void summary.refetch(); }}
+        t={t}
+      />
 
       {/* Tab strip */}
       <div className="flex gap-1 bg-ink-100/60 p-1 rounded-xl w-fit overflow-x-auto max-w-full">
