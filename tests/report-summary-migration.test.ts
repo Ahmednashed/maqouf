@@ -206,6 +206,37 @@ console.log("12) the columns line up with ReportSummary");
     fields.filter((f) => !APP_COMPUTED.includes(f) && !sqlCols.includes(f)), []);
   eq("every column feeds ReportSummary, directly or through the app's arithmetic",
     sqlCols.filter((c) => !SQL_ONLY.includes(c) && !fields.includes(c)), []);
-  ok("nothing in the app calls the function yet",
-    !src.includes("report_summary"), "fetchReportSummary must stay on table reads until the integration batch");
+}
+
+console.log("13) the app calls the function, and only through fetchReportSummary");
+{
+  const src = readFileSync(join(ROOT, "src", "services", "reports.ts"), "utf8");
+  const start = src.indexOf("export async function fetchReportSummary(");
+  const close = /\r?\n\}\r?\n/.exec(src.slice(start));
+  const fn = close ? src.slice(start, start + close.index) : "";
+  check("fetchReportSummary's body was located", start >= 0 && fn.length > 0 && fn.length < 4000, fn.length);
+
+  eq("report_summary is called exactly once in the reports service",
+    (src.match(/rpc\("report_summary"/g) ?? []).length, 1);
+  check("and that call is inside fetchReportSummary", start >= 0 && fn.includes('rpc("report_summary"'));
+  check("fetchReportSummary reads no tables (no truncatable row fetch)", !fn.includes(".from("), fn.slice(0, 200));
+
+  // The argument names must be the SQL parameter names, or PostgREST cannot
+  // resolve the function (PGRST202) — the same failure as "does not exist".
+  const sqlParams = [...head.matchAll(/\b(p_\w+) (?:date|uuid|public\.visit_status)\b/g)].map((m) => m[1]).sort();
+  const call = fn.slice(fn.indexOf('rpc("report_summary"'), fn.indexOf("});", fn.indexOf('rpc("report_summary"')));
+  const tsArgs = [...call.matchAll(/^\s+(p_\w+):/gm)].map((m) => m[1]).sort();
+  eq("the SQL parameters are the five expected", sqlParams, ["p_from", "p_merch_id", "p_place_id", "p_status", "p_to"]);
+  eq("the service passes exactly the SQL parameter names", tsArgs, sqlParams);
+
+  let callers = 0;
+  const walk = (dir: string) => {
+    for (const e of readdirSync(dir, { withFileTypes: true })) {
+      const p = join(dir, e.name);
+      if (e.isDirectory()) walk(p);
+      else if (/\.(ts|tsx)$/.test(e.name) && readFileSync(p, "utf8").includes('"report_summary"')) callers++;
+    }
+  };
+  walk(join(ROOT, "src"));
+  eq("no other source file calls report_summary directly", callers, 1);
 }

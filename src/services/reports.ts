@@ -156,101 +156,116 @@ export interface ReportSummary {
   products_with_shortfall: number | null;
 }
 
-interface SummaryVisitRow {
-  status:           string;
-  duration_minutes: number | null;
-  merch_id:         string;
-  place_id:         string;
+/**
+ * One row of public.report_summary (migration 026). Whole counts only: the
+ * function deliberately returns duration_sum/duration_count rather than an
+ * average, and no completion rate, so the rounding below stays in JavaScript.
+ */
+interface ReportSummaryRpcRow {
+  total_visits:            number;
+  completed:               number;
+  missed:                  number;
+  pending:                 number;
+  inprogress:              number;
+  active_merchandisers:    number;
+  covered_branches:        number;
+  scheduled_branches:      number;
+  duration_sum:            number;
+  duration_count:          number;
+  audited_products:        number | null;
+  products_with_shortfall: number | null;
 }
 
-interface SummaryProductRow {
-  product_id:  string;
-  qty_missing: number | null;
+const SUMMARY_COUNT_COLUMNS = [
+  "total_visits", "completed", "missed", "pending", "inprogress",
+  "active_merchandisers", "covered_branches", "scheduled_branches",
+  "duration_sum", "duration_count",
+] as const;
+
+const SUMMARY_PRODUCT_COLUMNS = ["audited_products", "products_with_shortfall"] as const;
+
+const isCount = (v: unknown): v is number =>
+  typeof v === "number" && Number.isSafeInteger(v) && v >= 0;
+
+/**
+ * Accept exactly the row the SQL returns, or throw. A missing or malformed row
+ * must never render as a page of zeros — that reads as "nothing happened".
+ */
+function parseReportSummaryRow(data: unknown): ReportSummaryRpcRow {
+  if (!Array.isArray(data) || data.length !== 1) {
+    throw new Error(
+      `report_summary returned ${Array.isArray(data) ? `${data.length} rows` : "no rows"}, expected exactly 1`,
+    );
+  }
+  const row = data[0] as Record<string, unknown> | null;
+  if (row === null || typeof row !== "object") {
+    throw new Error("report_summary returned a malformed row");
+  }
+  for (const col of SUMMARY_COUNT_COLUMNS) {
+    if (!isCount(row[col])) {
+      throw new Error(`report_summary returned an invalid ${col}: ${JSON.stringify(row[col])}`);
+    }
+  }
+  for (const col of SUMMARY_PRODUCT_COLUMNS) {
+    if (row[col] !== null && !isCount(row[col])) {
+      throw new Error(`report_summary returned an invalid ${col}: ${JSON.stringify(row[col])}`);
+    }
+  }
+  // The SQL makes both NULL together (no audit rows) or neither.
+  if ((row.audited_products === null) !== (row.products_with_shortfall === null)) {
+    throw new Error("report_summary returned inconsistent product figures");
+  }
+  return row as unknown as ReportSummaryRpcRow;
 }
 
+/**
+ * Counted inside PostgreSQL by public.report_summary, so the Data API's
+ * 1,000-row cap cannot truncate the totals. Runs as the caller (SECURITY
+ * INVOKER), so RLS scopes it exactly as the old table reads were scoped.
+ *
+ * Status narrows the visit counts only; the product figures always count
+ * completed visits — the SQL keeps the old reads' behaviour. Errors are thrown,
+ * never replaced by row-fetching fallbacks that the cap would silently cut.
+ */
 export async function fetchReportSummary(
   range: DateRange,
   filters?: ReportFilters,
 ): Promise<ReportSummary> {
   const supabase = createClient();
 
-  let visitQuery = supabase
-    .from("visits")
-    .select("status, duration_minutes, merch_id, place_id")
-    .gte("scheduled_date", range.from)
-    .lte("scheduled_date", range.to);
+  const { data, error } = await supabase.rpc("report_summary", {
+    p_from:     range.from,
+    p_to:       range.to,
+    // Absent filters are NULL, never "" — an empty string is not a uuid.
+    p_merch_id: filters?.merchId || null,
+    p_place_id: filters?.placeId || null,
+    p_status:   filters?.status  || null,
+  });
 
-  if (filters?.merchId) visitQuery = visitQuery.eq("merch_id", filters.merchId);
-  if (filters?.placeId) visitQuery = visitQuery.eq("place_id", filters.placeId);
-  if (filters?.status)  visitQuery = visitQuery.eq("status",   filters.status);
+  if (error) throw error;
 
-  // Product shortfall rides the same inner-join filter the product report uses,
-  // so it stays consistent with that tab and needs no visit-id round trip.
-  let productQuery = supabase
-    .from("visit_products")
-    .select("product_id, qty_missing, visit:visits!inner (scheduled_date, status, merch_id, place_id)")
-    .gte("visit.scheduled_date", range.from)
-    .lte("visit.scheduled_date", range.to)
-    .eq("visit.status", "completed");
-
-  if (filters?.merchId) productQuery = productQuery.eq("visit.merch_id", filters.merchId);
-  if (filters?.placeId) productQuery = productQuery.eq("visit.place_id", filters.placeId);
-
-  const [visitsRes, productsRes] = await Promise.all([visitQuery, productQuery]);
-
-  if (visitsRes.error)   throw visitsRes.error;
-  if (productsRes.error) throw productsRes.error;
-
-  const visits = (visitsRes.data ?? []) as unknown as SummaryVisitRow[];
-
-  const merchants        = new Set<string>();
-  const branchesAny      = new Set<string>();
-  const branchesCompleted = new Set<string>();
-  const durations: number[] = [];
-
-  let completed = 0, missed = 0, pending = 0, inprogress = 0;
-
-  for (const v of visits) {
-    merchants.add(v.merch_id);
-    branchesAny.add(v.place_id);
-
-    if (v.status === "completed") {
-      completed++;
-      branchesCompleted.add(v.place_id);
-      if (v.duration_minutes != null && v.duration_minutes > 0) {
-        durations.push(v.duration_minutes);
-      }
-    } else if (v.status === "missed")     missed++;
-    else if (v.status === "pending")      pending++;
-    else if (v.status === "inprogress")   inprogress++;
-  }
-
-  const finished = completed + missed;
-  const products = (productsRes.data ?? []) as unknown as SummaryProductRow[];
-
-  const shortfall = new Set<string>();
-  for (const p of products) {
-    if ((p.qty_missing ?? 0) > 0) shortfall.add(p.product_id);
-  }
-  const auditedProducts = new Set(products.map((p) => p.product_id));
+  const row = parseReportSummaryRow(data);
+  const finished = row.completed + row.missed;
 
   return {
-    total_visits:     visits.length,
-    completed,
-    missed,
-    pending,
-    inprogress,
-    completion_rate:  finished > 0 ? Math.round((completed / finished) * 100) : 0,
-    active_merchandisers: merchants.size,
-    covered_branches:     branchesCompleted.size,
-    scheduled_branches:   branchesAny.size,
-    avg_duration: durations.length > 0
-      ? Math.round(durations.reduce((a, b) => a + b, 0) / durations.length)
+    total_visits:     row.total_visits,
+    completed:        row.completed,
+    missed:           row.missed,
+    pending:          row.pending,
+    inprogress:       row.inprogress,
+    // Same formulas and rounding order as the old in-browser count: exact SQL
+    // rounding would disagree (23 of 40 shows 57% here, 58% in SQL).
+    completion_rate:  finished > 0 ? Math.round((row.completed / finished) * 100) : 0,
+    active_merchandisers: row.active_merchandisers,
+    covered_branches:     row.covered_branches,
+    scheduled_branches:   row.scheduled_branches,
+    avg_duration: row.duration_count > 0
+      ? Math.round(row.duration_sum / row.duration_count)
       : 0,
     // No audit rows at all means "nobody checked", which is not the same as
     // "nothing was missing" — surface it as unknown, not as zero.
-    audited_products:        products.length > 0 ? auditedProducts.size : null,
-    products_with_shortfall: products.length > 0 ? shortfall.size       : null,
+    audited_products:        row.audited_products,
+    products_with_shortfall: row.products_with_shortfall,
   };
 }
 
