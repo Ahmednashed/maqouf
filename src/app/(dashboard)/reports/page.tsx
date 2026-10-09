@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { Download, ChevronDown, ChevronUp, ShieldCheck, ChevronLeft, ChevronRight, AlertTriangle, RotateCcw } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
 import { riyadhToday, startOfMonthIso } from "@/lib/utils/date";
@@ -25,7 +25,10 @@ import { gpsExportRow, gpsNoBranchCoordsWarning } from "@/lib/gps-report";
 import {
   durationLabel,
   exportReportXlsx,
+  shouldFocusSummaryAfterRetry,
+  staleNoticeParts,
   summaryExportMeta,
+  summaryLoadedAt,
   summaryStatus,
   type ExportMeta,
   type SummaryStatus,
@@ -159,11 +162,48 @@ function SummaryCard({
 }
 
 function SummaryCards({
-  summary, status, onRetry, t,
-}: { summary?: ReportSummary; status: SummaryStatus; onRetry: () => void; t: TranslationFn }) {
+  summary, status, isRefreshing, loadedAt, onRetry, t,
+}: {
+  summary?:     ReportSummary;
+  status:       SummaryStatus;
+  /** A refresh is in flight — Retry shows progress instead of firing again. */
+  isRefreshing: boolean;
+  /** When the figures on hand were last loaded (Riyadh), for the stale notice; null if unknown. */
+  loadedAt:     string | null;
+  onRetry:      () => void;
+  t:            TranslationFn;
+}) {
   const s = summary;
   const isLoading = status === "loading";
   const num = (n: number | undefined) => (n == null ? "—" : String(n));
+
+  // When the user's Retry succeeds, the stale notice and the Retry button they
+  // were on are removed, and focus would fall to <body>. Hand it to the summary
+  // title instead — only then; see shouldFocusSummaryAfterRetry.
+  const titleRef       = useRef<HTMLParagraphElement>(null);
+  const retryRequested = useRef(false);
+  const previousStatus = useRef(status);
+  useEffect(() => {
+    const previous = previousStatus.current;
+    previousStatus.current = status;
+    const active = document.activeElement;
+    if (shouldFocusSummaryAfterRetry({
+      previous,
+      current:        status,
+      retryRequested: retryRequested.current,
+      focusWasLost:   !active || active === document.body,
+    })) {
+      titleRef.current?.focus({ preventScroll: true });
+    }
+    if (status !== "stale") retryRequested.current = false;
+  }, [status]);
+  // A retry that ended still stale has failed: the button is still there and
+  // keeps focus, and a later automatic refresh must not move it.
+  useEffect(() => {
+    if (!isRefreshing && status === "stale") retryRequested.current = false;
+  }, [isRefreshing, status]);
+
+  const staleNotice = staleNoticeParts(t, loadedAt);
 
   // Completion rate is only reassuring above 80; below half it is a problem.
   const rateTone: "good" | "warn" | "bad" =
@@ -195,7 +235,49 @@ function SummaryCards({
 
   return (
     <div>
-      <p className="text-[12px] font-semibold text-ink-500 mb-2">{t("reports.summaryTitle")}</p>
+      {/* tabIndex -1: not a Tab stop, but focusable so a successful Retry can
+          hand keyboard focus here when the notice below disappears. */}
+      <p
+        ref={titleRef}
+        tabIndex={-1}
+        className="w-fit text-[12px] font-semibold text-ink-500 mb-2 rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-ink-300 focus-visible:ring-offset-2"
+      >
+        {t("reports.summaryTitle")}
+      </p>
+      {/* A refresh failed: the figures below are the last successful load, not
+          current. They stay — they are real — but are labelled as such, and the
+          export carries the same note. Stacked on phones, one row from sm up. */}
+      {status === "stale" && (
+        <div className="mb-2.5 flex flex-col gap-2.5 rounded-xl border border-amber-200 bg-amber-50/70 px-4 py-3 sm:flex-row sm:items-center sm:gap-3">
+          <div className="flex flex-1 min-w-0 items-center gap-3">
+            <AlertTriangle aria-hidden="true" className="w-4 h-4 text-amber-500 shrink-0" />
+            {/* Only the message is the live region: announced once when the
+                figures go stale, not again each time the Retry label changes. */}
+            <div role="status" className="flex-1 min-w-0">
+              <p className="text-[12.5px] font-semibold text-amber-800">
+                {staleNotice.before}
+                {/* Isolated LTR: inside the Arabic sentence the date would
+                    otherwise be drawn day-first, as "14:57 09-10-2026". */}
+                {staleNotice.time && <bdi dir="ltr" className="whitespace-nowrap">{staleNotice.time}</bdi>}
+                {staleNotice.after}
+              </p>
+              <p className="mt-0.5 text-[11.5px] text-amber-700/90">{t("reports.sum.staleExportNote")}</p>
+            </div>
+          </div>
+          {/* aria-disabled rather than disabled: a disabled button drops
+              keyboard focus mid-retry; this one keeps it and ignores clicks.
+              On phones it sits under the message, aligned with the text. */}
+          <button
+            type="button"
+            onClick={() => { if (!isRefreshing) { retryRequested.current = true; onRetry(); } }}
+            aria-disabled={isRefreshing}
+            className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg bg-white border border-amber-200 text-[11.5px] font-bold text-amber-700 hover:bg-amber-100 aria-disabled:opacity-60 aria-disabled:cursor-default focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 transition-all shrink-0 self-start ms-7 sm:ms-0 sm:self-auto"
+          >
+            <RotateCcw aria-hidden="true" className={cn("w-3 h-3", isRefreshing && "animate-spin")} />
+            {isRefreshing ? t("reports.sum.retrying") : t("reports.sum.retry")}
+          </button>
+        </div>
+      )}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2.5">
         <SummaryCard
           loading={isLoading}
@@ -856,6 +938,7 @@ export default function ReportsPage() {
       lastVisitLabel,
     },
     summary.data,
+    summary.dataUpdatedAt,
   );
 
   const tabLabel: Record<Tab, string> = {
@@ -1002,6 +1085,8 @@ export default function ReportsPage() {
       <SummaryCards
         summary={summary.data}
         status={summaryState}
+        isRefreshing={summary.isFetching}
+        loadedAt={summaryLoadedAt(summary.dataUpdatedAt)}
         onRetry={() => { void summary.refetch(); }}
         t={t}
       />

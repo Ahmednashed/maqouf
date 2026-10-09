@@ -23,7 +23,10 @@ import {
   buildExportMeta,
   buildReportWorkbook,
   durationLabel,
+  shouldFocusSummaryAfterRetry,
+  staleNoticeParts,
   summaryExportMeta,
+  summaryLoadedAt,
   summaryStatus,
   type ExportMeta,
 } from "@/lib/report-export";
@@ -123,7 +126,9 @@ const flags = (data: ReportSummary | undefined, isFetching: boolean, isPaused: b
 
 eq("figures on hand → ready",                                   flags(SUMMARY,   false, false, false), "ready");
 eq("figures on hand while refreshing → ready (no flicker)",     flags(SUMMARY,   true,  false, false), "ready");
-eq("figures kept after a failed background refresh → ready",    flags(SUMMARY,   false, false, true),  "ready");
+eq("figures kept after a failed background refresh → stale",    flags(SUMMARY,   false, false, true),  "stale");
+eq("figures kept, Retry of the refresh in flight → still stale", flags(SUMMARY,   true,  false, true),  "stale");
+eq("figures on hand, refresh paused (not failed) → ready",      flags(SUMMARY,   false, true,  false), "ready");
 eq("no figures, request in flight → loading",                   flags(undefined, true,  false, false), "loading");
 eq("no figures, request paused (offline / hidden tab) → loading", flags(undefined, false, true, false), "loading");
 eq("no figures, request failed → error",                        flags(undefined, false, false, true),  "error");
@@ -147,11 +152,11 @@ console.log("1b) summary state — real TanStack Query observer");
     const state = () => summaryStatus(now());
     return { o, stop, now, state };
   };
-  const meta = (s: ReturnType<typeof summaryStatus>, data: ReportSummary | undefined) =>
+  const meta = (s: ReturnType<typeof summaryStatus>, data: ReportSummary | undefined, dataUpdatedAt = Date.now()) =>
     summaryExportMeta(s, {
       t: tFor("en"), range: RANGE, merchLabel: "None", placeLabel: "None",
       statusText: "None", lastVisitLabel: "None",
-    }, data);
+    }, data, dataUpdatedAt);
 
   try {
     // Offline: the request is owed, not failed.
@@ -214,16 +219,62 @@ console.log("1b) summary state — real TanStack Query observer");
     eq("disabled query → unavailable (not loading forever)", d.state(), "unavailable");
     d.stop();
 
-    // A background refresh that fails keeps the figures it already had.
-    let failLater = false;
-    const r = observe("refresh", async () => { if (failLater) throw new Error("rpc failed"); return SUMMARY; });
+    // Success → failed background refresh → Retry (fails) → Retry → recovery.
+    // Each load returns a distinct total so "which figures are shown" is visible.
+    let mode: "ok" | "fail" = "ok";
+    let loads = 0;
+    const r = observe("refresh", async () => {
+      if (mode === "fail") throw new Error("rpc failed");
+      loads++;
+      return { ...SUMMARY, total_visits: 100 + loads };
+    });
     await wait(10);
-    failLater = true;
-    await r.o.refetch();
+    const first = r.now();
+    eq("loaded → ready, with the first figures", [r.state(), first.data?.total_visits], ["ready", 101]);
+    const loadedAt = (first as unknown as { dataUpdatedAt: number }).dataUpdatedAt;
+
+    mode = "fail";
+    const refresh = r.o.refetch();
+    eq("background refresh in flight (not failed yet) → still ready", r.state(), "ready");
+    await refresh;
     await wait(40);
-    eq("refresh failed: the library keeps the data and reports the error",
-       [r.now().isError, r.now().data === undefined], [true, false]);
-    eq("refresh failed: summary state stays ready", r.state(), "ready");
+    const failed = r.now() as Result & { data?: ReportSummary; dataUpdatedAt: number };
+    eq("refresh failed: the library keeps the previous figures and reports the error",
+       [failed.status, failed.isError, failed.data?.total_visits], ["error", true, 101]);
+    eq("refresh failed: dataUpdatedAt still marks the last successful load",
+       failed.dataUpdatedAt, loadedAt);
+    eq("refresh failed → stale (figures kept, never zeroed)", r.state(), "stale");
+
+    const staleMeta = summaryExportMeta(r.state(), {
+      t: tFor("en"), range: RANGE, merchLabel: "None", placeLabel: "None",
+      statusText: "None", lastVisitLabel: "None",
+    }, failed.data, failed.dataUpdatedAt);
+    eq("stale: the export carries the previous figures, not 'unavailable' and not zeros",
+       staleMeta?.rows.find((x) => x.Metric === "Total visits")?.Value, 101);
+    eq("stale: and says when they were last loaded",
+       staleMeta?.rows[5], { Metric: "Summary status",
+         Value: `Not refreshed — figures from the last successful load at ${summaryLoadedAt(loadedAt)} (Riyadh time)` });
+
+    const retry1 = r.o.refetch();
+    const retrying = r.now();
+    eq("Retry in flight with figures on hand: the library stays isError while fetching",
+       [retrying.status, retrying.isError, retrying.isFetching], ["error", true, true]);
+    eq("Retry in flight → still stale (the figures are still the old ones)", r.state(), "stale");
+    await retry1;
+    await wait(40);
+    eq("Retry failed → stale, same figures", [r.state(), r.now().data?.total_visits], ["stale", 101]);
+
+    mode = "ok";
+    await r.o.refetch();
+    const recovered = r.now() as Result & { data?: ReportSummary; dataUpdatedAt: number };
+    eq("Retry succeeded → ready with the new figures", [r.state(), recovered.data?.total_visits], ["ready", 102]);
+    ok("recovered: dataUpdatedAt moved forward", recovered.dataUpdatedAt > loadedAt);
+    const freshMeta = summaryExportMeta(r.state(), {
+      t: tFor("en"), range: RANGE, merchLabel: "None", placeLabel: "None",
+      statusText: "None", lastVisitLabel: "None",
+    }, recovered.data, recovered.dataUpdatedAt);
+    ok("recovered: the export no longer carries the 'not refreshed' note",
+       !freshMeta?.rows.some((x) => x.Metric === "Summary status"));
     r.stop();
   } finally {
     // Global singletons — leave them as the rest of the suite expects.
@@ -334,13 +385,13 @@ for (const locale of LOCALES) {
 
   // What the page actually hands to Export in each summary state.
   eq(`[${locale}] loading (in flight or paused) → no meta, Export waits`,
-     summaryExportMeta("loading", input, undefined), null);
+     summaryExportMeta("loading", input, undefined, Date.UTC(2026, 8, 29, 22, 1)), null);
   eq(`[${locale}] ready → the full summary sheet`,
-     summaryExportMeta("ready", input, SUMMARY), ok_);
+     summaryExportMeta("ready", input, SUMMARY, Date.UTC(2026, 8, 29, 22, 1)), ok_);
   eq(`[${locale}] error → period/filters plus the "unavailable" row`,
-     summaryExportMeta("error", input, undefined), off);
+     summaryExportMeta("error", input, undefined, Date.UTC(2026, 8, 29, 22, 1)), off);
   eq(`[${locale}] unavailable (no usable range) → the same explicit row`,
-     summaryExportMeta("unavailable", input, undefined), off);
+     summaryExportMeta("unavailable", input, undefined, Date.UTC(2026, 8, 29, 22, 1)), off);
 }
 
 // ── 4) The real workbook, both locales, success and unavailable ──────────────
@@ -425,4 +476,338 @@ console.log("6) page wiring (source check)");
      src.includes("status={summaryState}") && src.includes("summary.refetch()"));
   ok("an error replaces the cards with the translated message",
      src.includes('status === "error"') && src.includes('t("reports.sum.error")'));
+}
+
+// ── 7) Stale summary: previous figures kept, labelled, and exported with a note ──
+console.log("7) stale summary (a refresh failed after a successful load)");
+{
+  // Riyadh clock (UTC+3), not the machine's: 22:01 UTC on the 29th is 01:01
+  // on the 30th in Riyadh.
+  eq("load time is the Riyadh date and clock",
+     summaryLoadedAt(Date.UTC(2026, 8, 29, 22, 1, 7)), "2026-09-30 01:01");
+  eq("load time before Riyadh midnight stays on the same day",
+     summaryLoadedAt(Date.UTC(2026, 8, 29, 20, 59, 59)), "2026-09-29 23:59");
+
+  const LOADED = Date.UTC(2026, 8, 29, 22, 1, 7);
+  for (const locale of LOCALES) {
+    const t = tFor(locale);
+    const input = {
+      t, range: RANGE, merchLabel: "Ahmed Nashed", placeLabel: "فرع ١",
+      statusText: t("visits.status.completed"), lastVisitLabel: t("reports.filter.lvGt30"),
+    };
+    const fresh = summaryExportMeta("ready", input, SUMMARY, LOADED)!;
+    const stale = summaryExportMeta("stale", input, SUMMARY, LOADED)!;
+    const note = { [t("reports.exp.metric")]: t("reports.exp.summaryStatus"),
+                   [t("reports.exp.value")]:  t("reports.exp.summaryStale", { time: "2026-09-30 01:01" }) };
+
+    eq(`[${locale}] a fresh export is unchanged: no status row, exactly the old sheet`,
+       fresh, buildExportMeta({ ...input, summary: SUMMARY }));
+    eq(`[${locale}] stale: same sheet names`, [stale.sheetName, stale.dataSheet], [fresh.sheetName, fresh.dataSheet]);
+    eq(`[${locale}] stale: period and filters exactly as on a fresh export`, stale.rows.slice(0, 5), fresh.rows.slice(0, 5));
+    eq(`[${locale}] stale: then one "not refreshed" row with the Riyadh load time`, stale.rows[5], note);
+    eq(`[${locale}] stale: then the previous figures, unchanged — never zeros or "unavailable"`,
+       stale.rows.slice(6), fresh.rows.slice(5));
+    eq(`[${locale}] stale: exactly one extra row`, stale.rows.length, fresh.rows.length + 1);
+    ok(`[${locale}] the note names the time in both the value and the key's template`,
+       String(stale.rows[5][t("reports.exp.value")]).includes("2026-09-30 01:01"));
+
+    // Not "stale" unless there really are figures: without them it is the
+    // ordinary failure sheet.
+    eq(`[${locale}] "stale" without figures falls back to the unavailable sheet`,
+       summaryExportMeta("stale", input, undefined, LOADED), buildExportMeta({ ...input, summary: null }));
+    eq(`[${locale}] error and loading are unchanged`,
+       [summaryExportMeta("error", input, undefined, LOADED), summaryExportMeta("loading", input, SUMMARY, LOADED)],
+       [buildExportMeta({ ...input, summary: null }), null]);
+
+    // The real workbook.
+    const dataRows = [gpsExportRow(GPS_ROW, t)];
+    const wb = roundTrip(stale, dataRows);
+    eq(`[${locale}/stale xlsx] two sheets: summary first, then data`,
+       wb.names, [t("reports.exp.sheetSummary"), t("reports.exp.sheetData")]);
+    eq(`[${locale}/stale xlsx] summary sheet header is Metric, Value`,
+       wb.summaryHdr, [t("reports.exp.metric"), t("reports.exp.value")]);
+    eq(`[${locale}/stale xlsx] summary sheet holds exactly the stale rows`, wb.summary, stale.rows);
+    eq(`[${locale}/stale xlsx] the note is the row after the filters`, wb.summary[5], note);
+    eq(`[${locale}/stale xlsx] previous figures are still numbers`,
+       wb.summary.slice(6).map((r) => typeof r[t("reports.exp.value")]),
+       fresh.rows.slice(5).map((r) => typeof r[t("reports.exp.value")]));
+    eq(`[${locale}/stale xlsx] data sheet unchanged`, wb.data, dataRows);
+  }
+
+  // Strings.
+  const ar = translations.ar as Record<string, string>;
+  const en = translations.en as Record<string, string>;
+  for (const k of ["reports.sum.stale", "reports.sum.staleExportNote", "reports.sum.retrying",
+                   "reports.exp.summaryStatus", "reports.exp.summaryStale"]) {
+    check(`${k} is Arabic in ar`, /[\u0600-\u06FF]/.test(ar[k] ?? ""), ar[k]);
+    check(`${k} is English in en`, !!en[k] && !/[\u0600-\u06FF]/.test(en[k]), en[k]);
+  }
+  for (const k of ["reports.sum.stale", "reports.exp.summaryStale"]) {
+    ok(`${k} carries {time} in both languages`, ar[k].includes("{time}") && en[k].includes("{time}"));
+    ok(`${k} says Riyadh time in both languages`, ar[k].includes("الرياض") && /Riyadh/.test(en[k]));
+  }
+
+  // Page wiring — source check (the JSX cannot be rendered here).
+  const src = readFileSync(join(process.cwd(), "src", "app", "(dashboard)", "reports", "page.tsx"), "utf8");
+  ok("the stale notice renders only in the stale state, above the kept cards",
+     src.includes('{status === "stale" && (') && src.includes("const staleNotice = staleNoticeParts(t, loadedAt);"));
+  ok("its Retry shows progress and cannot fire twice (aria-disabled + click guard)",
+     src.includes("aria-disabled={isRefreshing}") && src.includes("if (!isRefreshing) { retryRequested.current = true; onRetry(); }") &&
+     src.includes('isRefreshing ? t("reports.sum.retrying") : t("reports.sum.retry")'));
+  ok("the cards get the refresh flag and the Riyadh load time",
+     src.includes("isRefreshing={summary.isFetching}") && src.includes("loadedAt={summaryLoadedAt(summary.dataUpdatedAt)}"));
+  ok("the export gets the load time too",
+     /summaryExportMeta\([\s\S]*?summary\.data,\s*summary\.dataUpdatedAt,\s*\)/.test(src));
+}
+
+// ── 8) Review follow-ups: no 1970 stamp, no stale flash, paused Retry, a11y ──
+console.log("8) missing load time, retry transitions, notice accessibility");
+{
+  // A missing or zero load time must never print as a date.
+  for (const bad of [0, -1, Number.NaN, Number.POSITIVE_INFINITY, undefined, null]) {
+    eq(`load time ${String(bad)} → null, not a 1970 date`, summaryLoadedAt(bad as number | null | undefined), null);
+  }
+  eq("a real load time still formats on the Riyadh clock",
+     summaryLoadedAt(Date.UTC(2026, 8, 29, 22, 1, 7)), "2026-09-30 01:01");
+
+  for (const locale of LOCALES) {
+    const t = tFor(locale);
+    const input = {
+      t, range: RANGE, merchLabel: t("reports.exp.none"), placeLabel: t("reports.exp.none"),
+      statusText: t("reports.exp.none"), lastVisitLabel: t("reports.exp.none"),
+    };
+    const fresh = summaryExportMeta("ready", input, SUMMARY, Date.UTC(2026, 8, 29, 22, 1));
+    for (const missing of [0, undefined, null]) {
+      const stale = summaryExportMeta("stale", input, SUMMARY, missing)!;
+      eq(`[${locale}] stale, load time ${String(missing)}: the note stays, without a time`, stale.rows[5], {
+        [t("reports.exp.metric")]: t("reports.exp.summaryStatus"),
+        [t("reports.exp.value")]:  t("reports.sum.staleNoTime"),
+      });
+      ok(`[${locale}] stale, load time ${String(missing)}: no 1970 anywhere in the sheet`,
+         !JSON.stringify(stale.rows).includes("1970"));
+      eq(`[${locale}] stale, load time ${String(missing)}: period, filters and figures unchanged`,
+         [stale.rows.slice(0, 5), stale.rows.slice(6)], [fresh!.rows.slice(0, 5), fresh!.rows.slice(5)]);
+    }
+    const wb = roundTrip(summaryExportMeta("stale", input, SUMMARY, 0)!, [gpsExportRow(GPS_ROW, t)]);
+    eq(`[${locale}/xlsx] stale without a time: the no-time note is the row after the filters`,
+       wb.summary[5][t("reports.exp.value")], t("reports.sum.staleNoTime"));
+  }
+  {
+    const ar = translations.ar as Record<string, string>;
+    const en = translations.en as Record<string, string>;
+    check("reports.sum.staleNoTime is Arabic in ar", /[؀-ۿ]/.test(ar["reports.sum.staleNoTime"] ?? ""));
+    check("reports.sum.staleNoTime is English in en",
+          !!en["reports.sum.staleNoTime"] && !/[؀-ۿ]/.test(en["reports.sum.staleNoTime"]));
+    ok("the no-time note carries no placeholder and no digit",
+       !/[{}0-9٠-٩]/.test(ar["reports.sum.staleNoTime"] + en["reports.sum.staleNoTime"]));
+  }
+
+  // The installed TanStack Query, driven through the two transitions the review named.
+  const { QueryClient, QueryObserver, onlineManager } = await import("@tanstack/react-query");
+  type Obs = { status: string; isFetching: boolean; isPaused: boolean; isError: boolean;
+               data?: ReportSummary; dataUpdatedAt: number };
+  const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  const client = new QueryClient({ defaultOptions: { queries: { retry: 1, retryDelay: 5 } } });
+  client.mount();
+  const input = {
+    t: tFor("en"), range: RANGE, merchLabel: "None", placeLabel: "None",
+    statusText: "None", lastVisitLabel: "None",
+  };
+  try {
+    // (a) A refresh fails once, then the AUTOMATIC retry succeeds: every state
+    //     the observer publishes must be ready — no stale flash, no skeleton.
+    let failNext = false, loads = 0;
+    const a = new QueryObserver<ReportSummary>(client, {
+      queryKey: ["summary-review", "retry-ok"],
+      queryFn: async () => {
+        if (failNext) { failNext = false; throw new Error("transient"); }
+        loads++;
+        return { ...SUMMARY, total_visits: 200 + loads };
+      },
+    });
+    const seen: string[] = [];
+    const stopA = a.subscribe((res) => { seen.push(summaryStatus(res as unknown as Obs)); });
+    await wait(10);
+    const before = a.getCurrentResult() as unknown as Obs;
+    eq("(a) first load → ready with the first figures", [summaryStatus(before), before.data?.total_visits], ["ready", 201]);
+    seen.length = 0;
+    failNext = true;
+    await a.refetch();
+    await wait(30);
+    const after = a.getCurrentResult() as unknown as Obs;
+    ok("(a) the refresh really failed once before succeeding", loads === 2 && !failNext);
+    ok("(a) the observer published intermediate states", seen.length > 0);
+    eq("(a) every published state during the refresh was ready — never stale, loading or error",
+       [...new Set(seen)], ["ready"]);
+    eq("(a) ends ready with the new figures and a later load time",
+       [summaryStatus(after), after.data?.total_visits, after.dataUpdatedAt > before.dataUpdatedAt],
+       ["ready", 202, true]);
+    ok("(a) and its export carries no 'not refreshed' note",
+       !summaryExportMeta("ready", input, after.data, after.dataUpdatedAt)!.rows.some((r) => r.Metric === "Summary status"));
+    stopA();
+
+    // (b) Stale, then the Retry is paused offline: still stale (figures kept,
+    //     not a skeleton, not zeros), exports the note with the ORIGINAL load
+    //     time, and recovers once back online.
+    let mode: "ok" | "fail" = "ok";
+    let n = 0;
+    const b = new QueryObserver<ReportSummary>(client, {
+      queryKey: ["summary-review", "paused-retry"],
+      queryFn: async () => {
+        if (mode === "fail") throw new Error("rpc failed");
+        n++;
+        return { ...SUMMARY, total_visits: 300 + n };
+      },
+    });
+    const stopB = b.subscribe(() => {});
+    await wait(10);
+    const loaded = (b.getCurrentResult() as unknown as Obs).dataUpdatedAt;
+    mode = "fail";
+    await b.refetch();
+    await wait(30);
+    eq("(b) refresh failed → stale", summaryStatus(b.getCurrentResult() as unknown as Obs), "stale");
+
+    onlineManager.setOnline(false);
+    mode = "ok";
+    const pausedRetry = b.refetch();
+    const paused = b.getCurrentResult() as unknown as Obs;
+    eq("(b) Retry offline: the library pauses it and keeps the error and the figures",
+       [paused.isPaused, paused.isFetching, paused.isError, paused.data?.total_visits], [true, false, true, 301]);
+    eq("(b) Retry offline → still stale (not loading, not ready)", summaryStatus(paused), "stale");
+    const pausedMeta = summaryExportMeta(summaryStatus(paused), input, paused.data, paused.dataUpdatedAt)!;
+    eq("(b) Retry offline: export keeps the note with the ORIGINAL load time",
+       pausedMeta.rows[5].Value,
+       `Not refreshed — figures from the last successful load at ${summaryLoadedAt(loaded)} (Riyadh time)`);
+    eq("(b) Retry offline: and the previous figures, not zeros",
+       pausedMeta.rows.find((r) => r.Metric === "Total visits")?.Value, 301);
+
+    onlineManager.setOnline(true);
+    await pausedRetry;
+    const back = b.getCurrentResult() as unknown as Obs;
+    eq("(b) back online: the paused Retry resumes and succeeds → ready with new figures",
+       [summaryStatus(back), back.data?.total_visits, back.dataUpdatedAt > loaded], ["ready", 302, true]);
+    stopB();
+  } finally {
+    onlineManager.setOnline(true);
+    client.unmount();
+    client.clear();
+  }
+
+  // Notice accessibility — source check (the JSX cannot be rendered here).
+  const src = readFileSync(join(process.cwd(), "src", "app", "(dashboard)", "reports", "page.tsx"), "utf8");
+  const start = src.indexOf('{status === "stale" && (');
+  const notice = src.slice(start, src.indexOf("      )}", start));
+  // Tag-level: which element carries the role matters, not just where it is.
+  const outerTag = notice.slice(notice.indexOf("<div"), notice.indexOf(">", notice.indexOf("<div")) + 1);
+  const liveTagStart = notice.lastIndexOf("<div", notice.indexOf('role="status"'));
+  const liveTag = notice.slice(liveTagStart, notice.indexOf(">", liveTagStart) + 1);
+  const live = notice.slice(liveTagStart, notice.indexOf("</div>", liveTagStart));
+  ok("the notice container itself is not a live region", !/role=|aria-live/.test(outerTag));
+  ok("the live region is the message column", liveTag.includes("flex-1 min-w-0") && liveTag.includes('role="status"'));
+  ok("the live region holds the message", live.includes("reports.sum.staleExportNote"));
+  ok("the Retry button comes after the live region, outside it",
+     notice.indexOf("<button") > notice.indexOf("</div>", liveTagStart) && !live.includes("<button"));
+  ok("the notice has exactly one live region", (notice.match(/role="status"|aria-live/g) ?? []).length === 1);
+  ok("Retry keeps focus while retrying: aria-disabled, not disabled",
+     notice.includes("aria-disabled={isRefreshing}") && !/\sdisabled=\{/.test(notice));
+  ok("no aria-busy on the button", !notice.includes("aria-busy"));
+  ok("decorative icons are hidden from screen readers",
+     (notice.match(/aria-hidden="true"/g) ?? []).length === 2);
+  ok("Retry is a plain button (keyboard: Enter/Space)", notice.includes('type="button"'));
+}
+
+// ── 9) Browser follow-ups: date order, focus after Retry, phone layout ───────
+console.log("9) isolated load time, focus after a successful Retry, stacked phone layout");
+{
+  const TIME = "2026-10-09 14:57";
+
+  // (1) The sentence is only split, never reworded: the three parts concatenate
+  //     to exactly the translated sentence, and the time is the shared value.
+  for (const locale of LOCALES) {
+    const t = tFor(locale);
+    const parts = staleNoticeParts(t, TIME);
+    eq(`[${locale}] before + time + after is exactly the translated sentence`,
+       parts.before + parts.time + parts.after, t("reports.sum.stale", { time: TIME }));
+    eq(`[${locale}] the time part is the shared value, in YYYY-MM-DD HH:mm order`, parts.time, TIME);
+    ok(`[${locale}] the time part matches YYYY-MM-DD HH:mm`, /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(parts.time ?? ""));
+    ok(`[${locale}] the time is not repeated in the surrounding text`,
+       !parts.before.includes(TIME) && !parts.after.includes(TIME));
+    ok(`[${locale}] no placeholder leaks into the rendered text`,
+       !(parts.before + parts.after).includes("{time}"));
+    ok(`[${locale}] no bidi control characters are added to the text`,
+       !/[‎‏‪-‮⁦-⁩]/.test(parts.before + parts.time + parts.after));
+
+    eq(`[${locale}] no load time → the no-time sentence, and no time element`,
+       staleNoticeParts(t, null), { before: t("reports.sum.staleNoTime"), time: null, after: "" });
+
+    // The Excel text is a plain string and is not touched by the on-screen split.
+    const stale = summaryExportMeta("stale", {
+      t, range: RANGE, merchLabel: t("reports.exp.none"), placeLabel: t("reports.exp.none"),
+      statusText: t("reports.exp.none"), lastVisitLabel: t("reports.exp.none"),
+    }, SUMMARY, Date.UTC(2026, 8, 29, 22, 1, 7))!;
+    eq(`[${locale}] the Excel note is unchanged: the plain translated string`,
+       stale.rows[5][t("reports.exp.value")], t("reports.exp.summaryStale", { time: "2026-09-30 01:01" }));
+    ok(`[${locale}] the Excel note carries no markup or bidi controls`,
+       !/[<>‎‏‪-‮⁦-⁩]/.test(String(stale.rows[5][t("reports.exp.value")])));
+  }
+  {
+    const ar = staleNoticeParts(tFor("ar"), TIME);
+    ok("[ar] the time sits inside the Arabic parentheses, followed by 'Riyadh time'",
+       ar.before.endsWith("(") && ar.after.startsWith(" بتوقيت الرياض"));
+    const en = staleNoticeParts(tFor("en"), TIME);
+    ok("[en] the time follows 'last loaded at' and precedes '(Riyadh time)'",
+       en.before.endsWith("last loaded at ") && en.after === " (Riyadh time)");
+    // A translation that lost its placeholder still shows the whole sentence.
+    const noPlaceholder = ((key: TranslationKey) =>
+      key === "reports.sum.stale" ? "Figures were not refreshed" : key) as TranslationFn;
+    eq("a sentence without {time} is shown whole, never dropped",
+       staleNoticeParts(noPlaceholder, TIME), { before: "Figures were not refreshed", time: null, after: "" });
+  }
+
+  // (2) When focus may move to the summary title.
+  const f = (previous: string, current: string, retryRequested: boolean, focusWasLost: boolean) =>
+    shouldFocusSummaryAfterRetry({ previous, current, retryRequested, focusWasLost } as Parameters<typeof shouldFocusSummaryAfterRetry>[0]);
+  eq("user's Retry succeeded and focus fell to <body> → move focus", f("stale", "ready", true, true), true);
+  eq("Retry pending (still stale) → focus stays on the button", f("stale", "stale", true, false), false);
+  eq("Retry failed (still stale) → focus stays on the button", f("stale", "stale", true, true), false);
+  eq("recovered by an automatic refresh the user did not ask for → leave focus alone", f("stale", "ready", false, true), false);
+  eq("Retry succeeded but the user already moved focus elsewhere → do not steal it", f("stale", "ready", true, false), false);
+  eq("ordinary first load → never moves focus", f("loading", "ready", false, true), false);
+  eq("first load after an initial error's Retry → not this path", f("loading", "ready", true, true), false);
+  eq("going stale → never moves focus", f("ready", "stale", false, true), false);
+  eq("staying ready → never moves focus", f("ready", "ready", true, true), false);
+
+  // (3) Markup — source check (the JSX cannot be rendered here; the rendered
+  //     result is verified separately in the browser).
+  const src = readFileSync(join(process.cwd(), "src", "app", "(dashboard)", "reports", "page.tsx"), "utf8");
+  const start = src.indexOf('{status === "stale" && (');
+  const notice = src.slice(start, src.indexOf("      )}", start));
+  ok("the load time renders in a direction-isolated LTR element",
+     /<bdi dir="ltr"[^>]*>\{staleNotice\.time\}<\/bdi>/.test(notice));
+  ok("the sentence is rendered as before / time / after",
+     notice.indexOf("{staleNotice.before}") < notice.indexOf("<bdi") && notice.indexOf("<bdi") < notice.indexOf("{staleNotice.after}"));
+  ok("the time is no longer substituted into the sentence by t()",
+     !src.includes('t("reports.sum.stale", { time: loadedAt })'));
+  ok("the isolated time is still inside the live region",
+     notice.indexOf('role="status"') < notice.indexOf("<bdi") && notice.indexOf("<bdi") < notice.indexOf("<button"));
+
+  const outerTag = notice.slice(notice.indexOf("<div"), notice.indexOf(">", notice.indexOf("<div")) + 1);
+  ok("phones: the notice stacks (column), one row from sm up",
+     outerTag.includes("flex-col") && outerTag.includes("sm:flex-row") && outerTag.includes("sm:items-center"));
+  // The opening tag: everything from <button up to its first child.
+  const buttonTag = notice.slice(notice.indexOf("<button"), notice.indexOf("<RotateCcw", notice.indexOf("<button")));
+  ok("phones: Retry sits under the message, aligned with the text; unchanged from sm up",
+     buttonTag.includes("self-start") && buttonTag.includes("ms-7") && buttonTag.includes("sm:ms-0") && buttonTag.includes("sm:self-auto"));
+
+  const titleStart = src.lastIndexOf("<p", src.indexOf("ref={titleRef}"));
+  const titleTag = src.slice(titleStart, src.indexOf(">", src.indexOf("ref={titleRef}")) + 1);
+  ok("the summary title can take programmatic focus but is not a Tab stop",
+     titleTag.includes("ref={titleRef}") && titleTag.includes("tabIndex={-1}"));
+  ok("the title shows a focus indicator for keyboard users", titleTag.includes("focus-visible:ring-2"));
+  ok("focus is moved only through the tested decision, without scrolling the page",
+     src.includes("shouldFocusSummaryAfterRetry({") && src.includes("titleRef.current?.focus({ preventScroll: true })"));
+  ok("only the user's own Retry arms the focus hand-off",
+     (src.match(/retryRequested\.current = true/g) ?? []).length === 1 && buttonTag.length > 0 &&
+     notice.includes("retryRequested.current = true; onRetry();"));
+  ok("a failed retry disarms it", src.includes('if (!isRefreshing && status === "stale") retryRequested.current = false;'));
 }
