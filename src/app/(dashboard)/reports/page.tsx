@@ -23,6 +23,17 @@ import { usePlaces } from "@/hooks/use-places";
 import { memberDisplayName } from "@/services/company-users";
 import { gpsExportRow, gpsNoBranchCoordsWarning } from "@/lib/gps-report";
 import {
+  canExportReport,
+  emptyNoticeMemory,
+  reportNotice,
+  reportTabMessage,
+  reportTabState,
+  requestReportRetry,
+  settleReportNotice,
+  type ReportNotice,
+  type ReportNoticeMemory,
+} from "@/lib/report-completeness";
+import {
   durationLabel,
   exportReportXlsx,
   shouldFocusSummaryAfterRetry,
@@ -392,6 +403,104 @@ function LoadingRow({ cols }: { cols: number }) {
   );
 }
 
+/**
+ * Everything a tab takes from its query: the rows it may show (empty unless
+ * the result is complete and current), the notice to render, and where focus
+ * goes after a successful Retry.
+ *
+ * The notice keeps a little memory so that it — and the Retry button the user
+ * is on — stays mounted while a retry runs; see reportNotice. When the user's
+ * own Retry then succeeds and the notice goes, focus is handed to the results
+ * region instead of falling to <body>.
+ */
+function useReportTab<T>(
+  query: {
+    data?: T[]; isFetching: boolean; isPaused: boolean; isError: boolean; error: unknown;
+    refetch: () => unknown;
+  },
+  range: DateRange,
+  filters: ReportFilters,
+) {
+  const tabState = reportTabState<T>(query);
+  // A different range or filter is a different question: its loading state
+  // must not inherit the previous one's problem.
+  const key = [
+    range.from, range.to, filters.merchId ?? "", filters.placeId ?? "",
+    filters.status ?? "", filters.lastVisit ?? "",
+  ].join("|");
+  const memory     = useRef<ReportNoticeMemory<T>>(emptyNoticeMemory<T>(key));
+  const resultsRef = useRef<HTMLDivElement>(null);
+
+  const step = reportNotice(memory.current, { key, state: tabState, isFetching: query.isFetching });
+  memory.current = step.memory;
+  const notice      = step.notice;
+  const noticeShown = notice !== null;
+
+  // After every render: record what was shown, and move focus only when the
+  // user's Retry has just succeeded and focus was lost with the notice.
+  useEffect(() => {
+    const active = document.activeElement;
+    const settled = settleReportNotice(memory.current, {
+      state:        tabState,
+      isFetching:   query.isFetching,
+      noticeShown,
+      focusWasLost: !active || active === document.body,
+    });
+    memory.current = settled.memory;
+    if (settled.focusResults) resultsRef.current?.focus({ preventScroll: true });
+  });
+
+  const retry = () => {
+    memory.current = requestReportRetry(memory.current);
+    void query.refetch();
+  };
+
+  return { tabState, data: tabState.rows, isLoading: tabState.kind === "loading", notice, retry, resultsRef };
+}
+/**
+ * Shown instead of rows when a tab cannot vouch for its data: the read was cut
+ * by the row cap, its completeness could not be confirmed, or the request
+ * failed (including a failed refresh — earlier rows are withheld rather than
+ * shown as if current). Renders nothing while loading or ready.
+ *
+ * A block above the table, not a row inside it: the tables scroll sideways on
+ * a phone, and a notice in a cell was as wide as the table and cut off.
+ */
+function ReportProblem<T>({
+  notice, onRetry, t,
+}: {
+  notice:  ReportNotice<T> | null;
+  onRetry: () => void;
+  t:       TranslationFn;
+}) {
+  const message = notice ? reportTabMessage(notice.problem, t) : null;
+  if (!notice || !message) return null;
+  const retrying = notice.retrying;
+  return (
+    <div className="px-4 pt-3">
+      <div className="flex flex-col gap-2.5 rounded-xl border border-rose-200 bg-rose-50/70 px-4 py-3 sm:flex-row sm:items-center sm:gap-3">
+        <div className="flex flex-1 min-w-0 items-center gap-3">
+          <AlertTriangle aria-hidden="true" className="w-4 h-4 text-rose-500 shrink-0" />
+          {/* Only the message is announced; the button sits outside it. */}
+          <div role="alert" className="flex-1 min-w-0">
+            <p className="text-[12.5px] font-semibold text-rose-700">{message.title}</p>
+            <p className="mt-0.5 text-[11.5px] text-rose-600/90">{message.detail}</p>
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={() => { if (!retrying) onRetry(); }}
+          aria-disabled={retrying}
+          className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg bg-white border border-rose-200 text-[11.5px] font-bold text-rose-600 hover:bg-rose-100 aria-disabled:opacity-60 aria-disabled:cursor-default focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-400 transition-all shrink-0 self-start ms-7 sm:ms-0 sm:self-auto"
+        >
+          <RotateCcw aria-hidden="true" className={cn("w-3 h-3", retrying && "animate-spin")} />
+          {retrying ? t("reports.sum.retrying") : t("reports.sum.retry")}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function RateBadge({ rate }: { rate: number }) {
   const cls =
     rate >= 80 ? "bg-emerald-100 text-emerald-700" :
@@ -467,7 +576,9 @@ function Pagination({
 
 function VisitsTab({ range, locale, filters, meta }: { range: DateRange; locale: string; filters: ReportFilters; meta: ExportMeta | null }) {
   const { t }                                     = useTranslation();
-  const { data = [], isLoading }                  = useVisitsReport(range, filters);
+  const query = useVisitsReport(range, filters);
+  // Rows are empty unless the result is complete and current — see reportTabState.
+  const { tabState, data, isLoading, notice, retry, resultsRef } = useReportTab(query, range, filters);
   const { sorted, sortKey, sortDir, toggleSort }  = useSortedData(data);
   const { slice, page, setPage, totalPages }      = usePagination(sorted);
   type Row = (typeof data)[number];
@@ -490,9 +601,17 @@ function VisitsTab({ range, locale, filters, meta }: { range: DateRange; locale:
   return (
     <>
       <div className="flex justify-end px-4 pt-3">
-        <ExportButton onClick={doExport} disabled={data.length === 0 || isLoading} meta={meta} t={t} />
+        <ExportButton onClick={doExport} disabled={!canExportReport(tabState)} meta={meta} t={t} />
       </div>
-      <div className="overflow-x-auto">
+      <ReportProblem notice={notice} onRetry={retry} t={t} />
+      {/* Focusable by script only: where focus lands after a successful Retry. */}
+      <div
+        ref={resultsRef}
+        tabIndex={-1}
+        role="region"
+        aria-label={t("reports.tab.visits")}
+        className="overflow-x-auto focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ink-300"
+      >
         <table className="w-full text-[12.5px]">
           <thead>
             <tr className="border-b border-ink-100 bg-ink-50/50">
@@ -506,7 +625,7 @@ function VisitsTab({ range, locale, filters, meta }: { range: DateRange; locale:
           </thead>
           <tbody>
             {isLoading && <LoadingRow cols={7} />}
-            {!isLoading && sorted.length === 0 && <EmptyRow cols={7} message={t("reports.noData")} />}
+            {tabState.kind === "ready" && sorted.length === 0 && <EmptyRow cols={7} message={t("reports.noData")} />}
             {!isLoading && slice.map((r, i) => (
               <tr key={r.id} className={cn(i > 0 && "border-t border-ink-50")}>
                 <td className="ps-4 py-2.5 text-ink-600 font-mono text-[11.5px]">{r.scheduled_date}</td>
@@ -532,7 +651,9 @@ function VisitsTab({ range, locale, filters, meta }: { range: DateRange; locale:
 
 function MerchTab({ range, locale, filters, meta }: { range: DateRange; locale: string; filters: ReportFilters; meta: ExportMeta | null }) {
   const { t }                                    = useTranslation();
-  const { data = [], isLoading }                 = useMerchReport(range, filters);
+  const query = useMerchReport(range, filters);
+  // Rows are empty unless the result is complete and current — see reportTabState.
+  const { tabState, data, isLoading, notice, retry, resultsRef } = useReportTab(query, range, filters);
   const { sorted, sortKey, sortDir, toggleSort } = useSortedData(data);
   type Row = (typeof data)[number];
 
@@ -552,9 +673,17 @@ function MerchTab({ range, locale, filters, meta }: { range: DateRange; locale: 
   return (
     <>
       <div className="flex justify-end px-4 pt-3">
-        <ExportButton onClick={doExport} disabled={data.length === 0 || isLoading} meta={meta} t={t} />
+        <ExportButton onClick={doExport} disabled={!canExportReport(tabState)} meta={meta} t={t} />
       </div>
-      <div className="overflow-x-auto">
+      <ReportProblem notice={notice} onRetry={retry} t={t} />
+      {/* Focusable by script only: where focus lands after a successful Retry. */}
+      <div
+        ref={resultsRef}
+        tabIndex={-1}
+        role="region"
+        aria-label={t("reports.tab.merch")}
+        className="overflow-x-auto focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ink-300"
+      >
         <table className="w-full text-[12.5px]">
           <thead>
             <tr className="border-b border-ink-100 bg-ink-50/50">
@@ -568,7 +697,7 @@ function MerchTab({ range, locale, filters, meta }: { range: DateRange; locale: 
           </thead>
           <tbody>
             {isLoading && <LoadingRow cols={6} />}
-            {!isLoading && sorted.length === 0 && <EmptyRow cols={6} message={t("reports.noData")} />}
+            {tabState.kind === "ready" && sorted.length === 0 && <EmptyRow cols={6} message={t("reports.noData")} />}
             {!isLoading && sorted.map((r, i) => (
               <tr key={r.merch_id} className={cn(i > 0 && "border-t border-ink-50")}>
                 <td className="ps-4 py-2.5 font-semibold text-ink-800">{r.full_name}</td>
@@ -590,7 +719,9 @@ function MerchTab({ range, locale, filters, meta }: { range: DateRange; locale: 
 
 function BranchTab({ range, locale, filters, meta }: { range: DateRange; locale: string; filters: ReportFilters; meta: ExportMeta | null }) {
   const { t }                                    = useTranslation();
-  const { data = [], isLoading }                 = useBranchReport(range, filters);
+  const query = useBranchReport(range, filters);
+  // Rows are empty unless the result is complete and current — see reportTabState.
+  const { tabState, data, isLoading, notice, retry, resultsRef } = useReportTab(query, range, filters);
   const { sorted, sortKey, sortDir, toggleSort } = useSortedData(data);
   const { slice, page, setPage, totalPages }     = usePagination(sorted);
   type Row = (typeof data)[number];
@@ -615,9 +746,17 @@ function BranchTab({ range, locale, filters, meta }: { range: DateRange; locale:
   return (
     <>
       <div className="flex justify-end px-4 pt-3">
-        <ExportButton onClick={doExport} disabled={data.length === 0 || isLoading} meta={meta} t={t} />
+        <ExportButton onClick={doExport} disabled={!canExportReport(tabState)} meta={meta} t={t} />
       </div>
-      <div className="overflow-x-auto">
+      <ReportProblem notice={notice} onRetry={retry} t={t} />
+      {/* Focusable by script only: where focus lands after a successful Retry. */}
+      <div
+        ref={resultsRef}
+        tabIndex={-1}
+        role="region"
+        aria-label={t("reports.tab.branch")}
+        className="overflow-x-auto focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ink-300"
+      >
         <table className="w-full text-[12.5px]">
           <thead>
             <tr className="border-b border-ink-100 bg-ink-50/50">
@@ -633,7 +772,7 @@ function BranchTab({ range, locale, filters, meta }: { range: DateRange; locale:
           </thead>
           <tbody>
             {isLoading && <LoadingRow cols={8} />}
-            {!isLoading && sorted.length === 0 && <EmptyRow cols={8} message={t("reports.noData")} />}
+            {tabState.kind === "ready" && sorted.length === 0 && <EmptyRow cols={8} message={t("reports.noData")} />}
             {!isLoading && slice.map((r, i) => (
               <tr key={r.place_id} className={cn(i > 0 && "border-t border-ink-50")}>
                 <td className="ps-4 py-2.5">
@@ -683,7 +822,9 @@ function BranchTab({ range, locale, filters, meta }: { range: DateRange; locale:
 
 function ProductTab({ range, locale, filters, meta }: { range: DateRange; locale: string; filters: ReportFilters; meta: ExportMeta | null }) {
   const { t }                                    = useTranslation();
-  const { data = [], isLoading }                 = useProductReport(range, filters);
+  const query = useProductReport(range, filters);
+  // Rows are empty unless the result is complete and current — see reportTabState.
+  const { tabState, data, isLoading, notice, retry, resultsRef } = useReportTab(query, range, filters);
   const { sorted, sortKey, sortDir, toggleSort } = useSortedData(data);
   type Row = (typeof data)[number];
   const isAr = locale === "ar";
@@ -705,9 +846,17 @@ function ProductTab({ range, locale, filters, meta }: { range: DateRange; locale
   return (
     <>
       <div className="flex justify-end px-4 pt-3">
-        <ExportButton onClick={doExport} disabled={data.length === 0 || isLoading} meta={meta} t={t} />
+        <ExportButton onClick={doExport} disabled={!canExportReport(tabState)} meta={meta} t={t} />
       </div>
-      <div className="overflow-x-auto">
+      <ReportProblem notice={notice} onRetry={retry} t={t} />
+      {/* Focusable by script only: where focus lands after a successful Retry. */}
+      <div
+        ref={resultsRef}
+        tabIndex={-1}
+        role="region"
+        aria-label={t("reports.tab.product")}
+        className="overflow-x-auto focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ink-300"
+      >
         <table className="w-full text-[12.5px]">
           <thead>
             <tr className="border-b border-ink-100 bg-ink-50/50">
@@ -722,7 +871,7 @@ function ProductTab({ range, locale, filters, meta }: { range: DateRange; locale
           </thead>
           <tbody>
             {isLoading && <LoadingRow cols={7} />}
-            {!isLoading && sorted.length === 0 && <EmptyRow cols={7} message={t("reports.noData")} />}
+            {tabState.kind === "ready" && sorted.length === 0 && <EmptyRow cols={7} message={t("reports.noData")} />}
             {!isLoading && sorted.map((r, i) => (
               <tr key={r.product_id} className={cn(i > 0 && "border-t border-ink-50")}>
                 <td className="ps-4 py-2.5">
@@ -754,7 +903,9 @@ function ProductTab({ range, locale, filters, meta }: { range: DateRange; locale
 
 function GpsTab({ range, filters, meta }: { range: DateRange; filters: ReportFilters; meta: ExportMeta | null }) {
   const { t, locale }                            = useTranslation();
-  const { data = [], isLoading }                 = useGpsReport(range, filters);
+  const query = useGpsReport(range, filters);
+  // Rows are empty unless the result is complete and current — see reportTabState.
+  const { tabState, data, isLoading, notice, retry, resultsRef } = useReportTab(query, range, filters);
   const { sorted, sortKey, sortDir, toggleSort } = useSortedData(data);
   type Row = (typeof data)[number];
 
@@ -775,9 +926,17 @@ function GpsTab({ range, filters, meta }: { range: DateRange; filters: ReportFil
             <span className="block text-[10.5px] text-ink-300">{t("reports.gpsRateHint")}</span>
           </span>
         </p>
-        <ExportButton onClick={doExport} disabled={data.length === 0 || isLoading} meta={meta} t={t} />
+        <ExportButton onClick={doExport} disabled={!canExportReport(tabState)} meta={meta} t={t} />
       </div>
-      <div className="overflow-x-auto">
+      <ReportProblem notice={notice} onRetry={retry} t={t} />
+      {/* Focusable by script only: where focus lands after a successful Retry. */}
+      <div
+        ref={resultsRef}
+        tabIndex={-1}
+        role="region"
+        aria-label={t("reports.tab.gps")}
+        className="overflow-x-auto focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ink-300"
+      >
         <table className="w-full text-[12.5px]">
           <thead>
             <tr className="border-b border-ink-100 bg-ink-50/50">
@@ -792,7 +951,7 @@ function GpsTab({ range, filters, meta }: { range: DateRange; filters: ReportFil
           </thead>
           <tbody>
             {isLoading && <LoadingRow cols={6} />}
-            {!isLoading && sorted.length === 0 && <EmptyRow cols={6} message={t("reports.noData")} />}
+            {tabState.kind === "ready" && sorted.length === 0 && <EmptyRow cols={6} message={t("reports.noData")} />}
             {!isLoading && sorted.map((r, i) => (
               <tr key={r.merch_id} className={cn(i > 0 && "border-t border-ink-50")}>
                 <td className="ps-4 py-2.5 font-semibold text-ink-800">{r.full_name}</td>

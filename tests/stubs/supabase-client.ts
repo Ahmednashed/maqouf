@@ -12,15 +12,24 @@ export interface RecordedCall {
   columns: string;
   /** `eq` filters applied, in order. */
   filters: Array<{ column: string; value: unknown }>;
+  /** The options passed to `select`, e.g. `{ count: "exact" }`. */
+  selectOptions?: unknown;
+  /** Non-`eq` conditions (`gte`, `lte`, `not`), in order. */
+  conditions: Array<{ op: string; column: string; value: unknown; operator?: string }>;
+  /** `order` calls, in order — the sort keys a read asked for. */
+  orders: Array<{ column: string; ascending: boolean }>;
 }
 
 export interface StubResult {
   data:  unknown;
   error: unknown;
+  /** PostgREST's exact count, when the read asked for one. */
+  count?: number | null;
 }
 
 const calls: RecordedCall[] = [];
 let queue: StubResult[] = [];
+let tableQueues = new Map<string, StubResult[]>();
 let fallback: StubResult = { data: [], error: null };
 
 /** Every `from(...).select(...)` issued since the last reset, in order. */
@@ -33,6 +42,18 @@ export function queueResult(result: StubResult): void {
   queue.push(result);
 }
 
+/**
+ * Result for the next query against one table, whatever order the queries
+ * resolve in. For services that issue several reads concurrently, where the
+ * order they are awaited in is an implementation detail a test should not pin.
+ * Takes precedence over `queueResult` for that table.
+ */
+export function queueResultFor(table: string, result: StubResult): void {
+  const q = tableQueues.get(table) ?? [];
+  q.push(result);
+  tableQueues.set(table, q);
+}
+
 /** Result for any query beyond those queued. Defaults to an empty set. */
 export function setDefaultResult(result: StubResult): void {
   fallback = result;
@@ -43,17 +64,23 @@ export function resetStub(): void {
   calls.length = 0;
   rpcs.length = 0;
   queue = [];
+  tableQueues = new Map();
   fallback = { data: [], error: null };
 }
 
-function nextResult(): StubResult {
+function nextResult(table?: string): StubResult {
+  const forTable = table === undefined ? undefined : tableQueues.get(table);
+  if (forTable && forTable.length > 0) return forTable.shift()!;
   return queue.length > 0 ? queue.shift()! : fallback;
 }
 
 interface Chain extends PromiseLike<StubResult> {
-  select(columns?: string): Chain;
+  select(columns?: string, options?: unknown): Chain;
   eq(column: string, value: unknown): Chain;
-  order(column: string, options?: unknown): Chain;
+  gte(column: string, value: unknown): Chain;
+  lte(column: string, value: unknown): Chain;
+  not(column: string, operator: string, value: unknown): Chain;
+  order(column: string, options?: { ascending?: boolean }): Chain;
   limit(n: number): Chain;
   single(): Chain;
   maybeSingle(): Chain;
@@ -63,17 +90,25 @@ interface Chain extends PromiseLike<StubResult> {
 }
 
 function chain(table: string): Chain {
-  const call: RecordedCall = { table, columns: "", filters: [] };
+  const call: RecordedCall = { table, columns: "", filters: [], conditions: [], orders: [] };
   let recorded = false;
 
   const self: Chain = {
-    select(columns = "") {
+    select(columns = "", options) {
       call.columns = columns;
+      if (options !== undefined) call.selectOptions = options;
       if (!recorded) { calls.push(call); recorded = true; }
       return self;
     },
     eq(column, value) { call.filters.push({ column, value }); return self; },
-    order() { return self; },
+    gte(column, value) { call.conditions.push({ op: "gte", column, value }); return self; },
+    lte(column, value) { call.conditions.push({ op: "lte", column, value }); return self; },
+    not(column, operator, value) { call.conditions.push({ op: "not", column, value, operator }); return self; },
+    order(column, options) {
+      // PostgREST's default is ascending.
+      call.orders.push({ column, ascending: options?.ascending ?? true });
+      return self;
+    },
     limit() { return self; },
     single() { return self; },
     maybeSingle() { return self; },
@@ -81,7 +116,7 @@ function chain(table: string): Chain {
     update() { if (!recorded) { calls.push(call); recorded = true; } return self; },
     delete() { if (!recorded) { calls.push(call); recorded = true; } return self; },
     then(onFulfilled, onRejected) {
-      return Promise.resolve(nextResult()).then(onFulfilled, onRejected);
+      return Promise.resolve(nextResult(table)).then(onFulfilled, onRejected);
     },
   };
   return self;

@@ -40,19 +40,25 @@ by an explicit date range, as in §5.
 
 ### A correctness risk hiding inside the performance risk
 
-PostgREST can be configured with a `db-max-rows` ceiling. If one is set on this
-project — or introduced later — an unbounded read **silently truncates** rather
-than erroring.
+PostgREST enforces a `db-max-rows` ceiling, and this project has one: the Data
+API "Max rows" setting is **1,000** (read from the dashboard, 2026-09-19). A read
+that matches more rows than that **silently truncates** rather than erroring.
 
 - `fetchProductCoverage` had **no ordering at all**, so truncation would have
   dropped an arbitrary subset and produced silently wrong coverage counts.
-  Migration 024 removed that exposure. **No read in the app now carries it.**
+  Migration 024 removed that exposure.
+- The five Reports tab reads (§5) are bounded by a date range, not by a row
+  count, so a large enough range still reaches the ceiling — and four of them
+  aggregate in the browser, where a cut read becomes plausible, wrong totals.
+  They no longer truncate silently: each asks for PostgREST's exact count and
+  **refuses the result** unless it equals the rows received (see §5). That is a
+  safeguard, not a fix — the range becomes unavailable, not loadable.
 - It previously applied to `fetchBranchLastVisits` too, and more insidiously:
   ordered newest-first, truncation would have made a genuinely-visited branch
   read as **"never visited"** — wrong, and indistinguishable from the truth.
   Migration 022 removed that exposure by aggregating server-side.
 
-This has not been observed and current row counts are far below any plausible
+This has not been observed and current row counts are far below the 1,000-row
 ceiling. It stays here because the failure mode is silent, and because it is the
 reason the three aggregates were worth writing before anything got slow rather
 than after.
@@ -217,6 +223,29 @@ property that matters as the team grows.
 
 The GPS tab additionally joins `place:places(lat,lng)` per visit. Fine, but it
 means the GPS report's cost tracks visit count, not branch count.
+
+### The 1,000-row ceiling — detected, not yet lifted
+
+A date range is not a row bound: once a range matches more than 1,000 base rows
+(`visits`, or `visit_products` for the Product tab), the API returns the first
+1,000 without an error. Each of the five tab reads now:
+
+- asks for the exact count of the same filtered query (`{ count: "exact" }`,
+  one extra `COUNT` per read);
+- orders by a unique key (`id`; `visit_id, product_id` for `visit_products`),
+  so the rows returned are the same on every load;
+- throws `ReportIncompleteError` unless the count equals the rows received —
+  including when the count is missing.
+
+A tab in that state shows a message instead of rows and disables its Excel
+export; a failed refresh withholds the earlier rows too
+(`src/lib/report-completeness.ts`). No partial aggregate is shown or exported.
+
+**Still open.** A range over the ceiling is unavailable, not loadable: reading
+it in pages, or the server-side aggregation above, is what lifts the limit.
+`fetchBranchReport`'s two secondary reads (active `places`, and
+`v_branch_operations` via `fetchBranchLastVisits`) are not counted; they are
+bounded by branch count and only matter above 1,000 branches.
 
 ---
 

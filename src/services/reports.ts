@@ -2,6 +2,7 @@ import { createClient } from "@/lib/supabase/client";
 import { tallyGps } from "@/lib/gps-status";
 import { fetchBranchLastVisits, daysSinceIso } from "@/services/places";
 import { riyadhToday } from "@/lib/utils/date";
+import { assertReportComplete } from "@/lib/report-completeness";
 
 // ─── Shared types ─────────────────────────────────────────────────────────────
 
@@ -299,7 +300,7 @@ export async function fetchVisitsReport(
       id, scheduled_date, status, duration_minutes, merch_id, place_id,
       place:places (branch_ar, branch_en, code, chain:chains (name_ar, name_en)),
       merch:company_users (display_name, user:users!company_users_user_id_fkey (full_name))
-    `)
+    `, { count: "exact" })
     .gte("scheduled_date", range.from)
     .lte("scheduled_date", range.to);
 
@@ -307,11 +308,16 @@ export async function fetchVisitsReport(
   if (filters?.placeId) query = query.eq("place_id", filters.placeId);
   if (filters?.status) query = query.eq("status", filters.status);
 
-  const { data, error } = await query.order("scheduled_date", { ascending: false });
+  // Newest first, with `id` as a unique tie-breaker so the order within a day
+  // is the same on every load.
+  const { data, error, count } = await query
+    .order("scheduled_date", { ascending: false })
+    .order("id", { ascending: false });
 
   if (error) throw error;
 
   const rows = (data ?? []) as unknown as VisitReportQueryRow[];
+  assertReportComplete("visits", rows, count);
   return rows.map((row) => ({
     id:               row.id,
     merch_id:         row.merch_id,
@@ -356,18 +362,20 @@ export async function fetchMerchReport(
         id, display_name,
         user:users!company_users_user_id_fkey (full_name)
       )
-    `)
+    `, { count: "exact" })
     .gte("scheduled_date", range.from)
     .lte("scheduled_date", range.to);
 
   if (filters?.merchId) query = query.eq("merch_id", filters.merchId);
   if (filters?.placeId) query = query.eq("place_id", filters.placeId);
 
-  const { data, error } = await query;
+  const { data, error, count } = await query.order("id", { ascending: true });
 
   if (error) throw error;
 
   const rows = (data ?? []) as unknown as MerchReportQueryRow[];
+  // Aggregating a cut result would produce plausible, wrong totals.
+  assertReportComplete("merch", rows, count);
 
   // Aggregate client-side
   const map = new Map<string, MerchReportRow>();
@@ -462,7 +470,7 @@ export async function fetchBranchReport(
     .select(`
       status, duration_minutes, place_id,
       place:places (branch_ar, branch_en, code, chain:chains (name_ar, name_en))
-    `)
+    `, { count: "exact" })
     .gte("scheduled_date", range.from)
     .lte("scheduled_date", range.to);
 
@@ -477,7 +485,7 @@ export async function fetchBranchReport(
   if (filters?.placeId) placeQuery = placeQuery.eq("id", filters.placeId);
 
   const [visitsRes, placesRes, lastVisits] = await Promise.all([
-    query,
+    query.order("id", { ascending: true }),
     placeQuery,
     fetchBranchLastVisits(),
   ]);
@@ -486,6 +494,8 @@ export async function fetchBranchReport(
   if (placesRes.error) throw placesRes.error;
 
   const rows = (visitsRes.data ?? []) as unknown as BranchReportQueryRow[];
+  // A cut result would show covered branches as uncovered.
+  assertReportComplete("branch", rows, visitsRes.count);
   const today = riyadhToday();
 
   const map = new Map<string, BranchReportRow>();
@@ -601,7 +611,7 @@ export async function fetchProductReport(
       product_id, qty_found, qty_missing,
       product:products (id, name_ar, name_en, sku, unit),
       visit:visits!inner (scheduled_date, status, merch_id, place_id)
-    `)
+    `, { count: "exact" })
     .gte("visit.scheduled_date", range.from)
     .lte("visit.scheduled_date", range.to)
     .eq("visit.status", "completed");
@@ -609,11 +619,17 @@ export async function fetchProductReport(
   if (filters?.merchId) query = query.eq("visit.merch_id", filters.merchId);
   if (filters?.placeId) query = query.eq("visit.place_id", filters.placeId);
 
-  const { data: vpRows, error: vpErr } = await query;
+  // (visit_id, product_id) is this table's primary key: a unique, stable order.
+  // The exact count is of visit_products rows AFTER the inner join's filters,
+  // i.e. of exactly the rows this read returns when nothing is cut.
+  const { data: vpRows, error: vpErr, count } = await query
+    .order("visit_id", { ascending: true })
+    .order("product_id", { ascending: true });
 
   if (vpErr) throw vpErr;
 
   const rows = (vpRows ?? []) as unknown as ProductReportQueryRow[];
+  assertReportComplete("product", rows, count);
 
   // Aggregate
   const map = new Map<string, ProductReportRow>();
@@ -704,7 +720,7 @@ export async function fetchGpsReport(
       merch_id, checkin_verified, checkin_lat, checkin_lng, checkin_distance_meters,
       place:places (lat, lng),
       merch:company_users (display_name, user:users!company_users_user_id_fkey (full_name))
-    `)
+    `, { count: "exact" })
     .gte("scheduled_date", range.from)
     .lte("scheduled_date", range.to)
     .not("started_at", "is", null);   // only started visits
@@ -712,11 +728,12 @@ export async function fetchGpsReport(
   if (filters?.merchId) query = query.eq("merch_id", filters.merchId);
   if (filters?.placeId) query = query.eq("place_id", filters.placeId);
 
-  const { data, error } = await query;
+  const { data, error, count } = await query.order("id", { ascending: true });
 
   if (error) throw error;
 
   const rows = (data ?? []) as unknown as GpsQueryRow[];
+  assertReportComplete("gps", rows, count);
 
   // Group first, then let tallyGps() do the classifying, so this report and
   // the visit detail page cannot drift apart about what "verified" means.
