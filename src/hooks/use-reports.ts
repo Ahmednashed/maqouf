@@ -58,11 +58,20 @@ export function useReportSummary(range: DateRange, filters?: ReportFilters, enab
   });
 }
 
+// The five tab reads turn TanStack's own retry off (the app default is one).
+// The Supabase client already retries a transient failure of a read — a 503,
+// a 520 or a network error — three times with a backoff, so a second layer
+// only doubled the wait before the tab's notice (about 15 s instead of 7) and
+// the requests sent to a struggling API. And a read refused as incomplete is
+// deterministic: repeating it fetches the same rows to refuse them again.
+// The notice has a Retry button for everything else. The summary is an RPC
+// (a POST, which the client does not retry), so it keeps the default.
 export function useVisitsReport(range: DateRange, filters?: ReportFilters, enabled = true) {
   return useQuery<VisitReportRow[]>({
     queryKey: key("visits", range, filters),
     queryFn:  () => fetchVisitsReport(range, filters),
     staleTime: 120_000,
+    retry:     false,
     enabled:   enabled && ready(range),
   });
 }
@@ -72,6 +81,7 @@ export function useMerchReport(range: DateRange, filters?: ReportFilters, enable
     queryKey: key("merch", range, filters),
     queryFn:  () => fetchMerchReport(range, filters),
     staleTime: 120_000,
+    retry:     false,
     enabled:   enabled && ready(range),
   });
 }
@@ -81,6 +91,7 @@ export function useBranchReport(range: DateRange, filters?: ReportFilters, enabl
     queryKey: key("branch", range, filters),
     queryFn:  () => fetchBranchReport(range, filters),
     staleTime: 120_000,
+    retry:     false,
     enabled:   enabled && ready(range),
   });
 }
@@ -90,6 +101,7 @@ export function useProductReport(range: DateRange, filters?: ReportFilters, enab
     queryKey: key("product", range, filters),
     queryFn:  () => fetchProductReport(range, filters),
     staleTime: 120_000,
+    retry:     false,
     enabled:   enabled && ready(range),
   });
 }
@@ -99,6 +111,7 @@ export function useGpsReport(range: DateRange, filters?: ReportFilters, enabled 
     queryKey: key("gps", range, filters),
     queryFn:  () => fetchGpsReport(range, filters),
     staleTime: 120_000,
+    retry:     false,
     enabled:   enabled && ready(range),
   });
 }
