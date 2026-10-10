@@ -14,7 +14,7 @@ export interface RecordedCall {
   filters: Array<{ column: string; value: unknown }>;
   /** The options passed to `select`, e.g. `{ count: "exact" }`. */
   selectOptions?: unknown;
-  /** Non-`eq` conditions (`gte`, `lte`, `gt`, `not`), in order. */
+  /** Non-`eq` conditions (`gte`, `lte`, `gt`, `not`, `or`), in order. An `or` has no column; its value is the raw filter expression. */
   conditions: Array<{ op: string; column: string; value: unknown; operator?: string }>;
   /** `order` calls, in order — the sort keys a read asked for. */
   orders: Array<{ column: string; ascending: boolean }>;
@@ -84,6 +84,7 @@ interface Chain extends PromiseLike<StubResult> {
   gte(column: string, value: unknown): Chain;
   lte(column: string, value: unknown): Chain;
   gt(column: string, value: unknown): Chain;
+  or(filters: string): Chain;
   not(column: string, operator: string, value: unknown): Chain;
   order(column: string, options?: { ascending?: boolean }): Chain;
   limit(n: number): Chain;
@@ -110,6 +111,7 @@ function chain(table: string): Chain {
     gte(column, value) { call.conditions.push({ op: "gte", column, value }); return self; },
     lte(column, value) { call.conditions.push({ op: "lte", column, value }); return self; },
     gt(column, value) { call.conditions.push({ op: "gt", column, value }); return self; },
+    or(filters) { call.conditions.push({ op: "or", column: "", value: filters }); return self; },
     not(column, operator, value) { call.conditions.push({ op: "not", column, value, operator }); return self; },
     order(column, options) {
       // PostgREST's default is ascending.

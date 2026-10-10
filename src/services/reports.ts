@@ -1,8 +1,8 @@
 import { createClient } from "@/lib/supabase/client";
 import { tallyGps } from "@/lib/gps-status";
-import { fetchBranchLastVisits, daysSinceIso } from "@/services/places";
+import { daysSinceIso } from "@/services/places";
 import { riyadhToday } from "@/lib/utils/date";
-import { assertReportComplete } from "@/lib/report-completeness";
+import { ReportIncompleteError } from "@/lib/report-completeness";
 import { loadAllReportPages } from "@/lib/report-pages";
 
 // ─── Shared types ─────────────────────────────────────────────────────────────
@@ -104,6 +104,8 @@ interface MerchReportQueryRow {
 }
 
 interface BranchReportQueryRow {
+  /** The visit's id: the paging key only — it is not part of the report. */
+  id:               string;
   status:           string;
   duration_minutes: number | null;
   place_id:         string;
@@ -115,7 +117,24 @@ interface BranchReportQueryRow {
   } | null;
 }
 
+/** An active branch, as the Branch report seeds its rows from. */
+interface BranchPlaceQueryRow {
+  id:        string;
+  branch_ar: string;
+  branch_en: string;
+  code:      string;
+  chain: { name_ar: string; name_en: string } | null;
+}
+
+/** One row per branch from v_branch_operations: its last real visit, if any. */
+interface BranchLastVisitQueryRow {
+  place_id:        string;
+  last_visit_date: string | null;
+}
+
 interface ProductReportQueryRow {
+  /** With product_id, this table's primary key — read as the paging key only. */
+  visit_id:    string;
   product_id:  string;
   qty_found:   number | null;
   qty_missing: number | null;
@@ -503,43 +522,141 @@ export interface BranchReportRow {
  * starts from the active branch list and fills in whatever visits exist, so a
  * zero row is a real answer rather than an absence.
  */
+/**
+ * Which of the Branch report's three reads to report as failed.
+ *
+ * They run together and are all allowed to settle, so the answer does not
+ * depend on which request happened to finish first. The order is the one this
+ * report has always had — a failure of the last-visit read, then of the visits
+ * read, then of the branch list, then an incomplete visits read — followed by
+ * the two cases that could not occur before the branch list and the last-visit
+ * read were counted: an incomplete branch list, then an incomplete last-visit
+ * read. Returns undefined when all three succeeded.
+ */
+function firstBranchFailure(
+  visits: PromiseSettledResult<unknown>,
+  places: PromiseSettledResult<unknown>,
+  lastVisits: PromiseSettledResult<unknown>,
+): unknown {
+  const failure = (r: PromiseSettledResult<unknown>, incomplete: boolean) =>
+    r.status === "rejected" && (r.reason instanceof ReportIncompleteError) === incomplete ? r : undefined;
+  const found =
+    failure(lastVisits, false) ?? failure(visits, false) ?? failure(places, false) ??
+    failure(visits, true) ?? failure(places, true) ?? failure(lastVisits, true);
+  return found?.reason;
+}
+
+/**
+ * All three reads are paged (see report-pages.ts), each by a unique key with an
+ * exact count on every page, so none of them can be cut short without the
+ * report being refused: the visits in the range, the active branches the rows
+ * are seeded from, and each branch's last real visit. Each is bounded by the
+ * same maximum. The visits arrive in the ascending `id` order they always
+ * did, so the aggregation below is unchanged.
+ *
+ * One thing is different on purpose. The branch list used to come back in no
+ * stated order; it is now read in `id` order, because paging needs a stable
+ * one. Branches with the same number of visits — the zero-visit rows above all —
+ * therefore keep `id` order among themselves instead of whatever order the
+ * database happened to return.
+ *
+ * `signal` stops all three loads between pages when the query they belong to
+ * has been superseded.
+ */
 export async function fetchBranchReport(
   range: DateRange,
   filters?: ReportFilters,
+  signal?: AbortSignal,
 ): Promise<BranchReportRow[]> {
   const supabase = createClient();
 
-  let query = supabase
-    .from("visits")
-    .select(`
-      status, duration_minutes, place_id,
-      place:places (branch_ar, branch_en, code, chain:chains (name_ar, name_en))
-    `, { count: "exact" })
-    .gte("scheduled_date", range.from)
-    .lte("scheduled_date", range.to);
+  const visitsLoad = loadAllReportPages<BranchReportQueryRow>({
+    report: "branch",
+    signal,
+    keyOf:  (row) => row.id,
+    fetchPage: async (after, limit) => {
+      let query = supabase
+        .from("visits")
+        .select(`
+          id, status, duration_minutes, place_id,
+          place:places (branch_ar, branch_en, code, chain:chains (name_ar, name_en))
+        `, { count: "exact" })
+        .gte("scheduled_date", range.from)
+        .lte("scheduled_date", range.to);
 
-  if (filters?.merchId) query = query.eq("merch_id", filters.merchId);
-  if (filters?.placeId) query = query.eq("place_id", filters.placeId);
+      if (filters?.merchId) query = query.eq("merch_id", filters.merchId);
+      if (filters?.placeId) query = query.eq("place_id", filters.placeId);
 
-  let placeQuery = supabase
-    .from("places")
-    .select("id, branch_ar, branch_en, code, is_active, chain:chains (name_ar, name_en)")
-    .eq("is_active", true);
+      // With the cursor applied, the exact count is of the rows from here on.
+      if (after !== null) query = query.gt("id", after);
+      let page = query.order("id", { ascending: true }).limit(limit);
+      if (signal) page = page.abortSignal(signal);
 
-  if (filters?.placeId) placeQuery = placeQuery.eq("id", filters.placeId);
+      const { data, error, count } = await page;
+      if (error) throw error;
+      return { rows: (data ?? []) as unknown as BranchReportQueryRow[], count };
+    },
+  });
 
-  const [visitsRes, placesRes, lastVisits] = await Promise.all([
-    query.order("id", { ascending: true }),
-    placeQuery,
-    fetchBranchLastVisits(),
-  ]);
+  // Every active branch, so uncovered ones still get a row. `id` is the
+  // table's primary key.
+  const placesLoad = loadAllReportPages<BranchPlaceQueryRow>({
+    report: "branch",
+    signal,
+    keyOf:  (row) => row.id,
+    fetchPage: async (after, limit) => {
+      let query = supabase
+        .from("places")
+        .select("id, branch_ar, branch_en, code, is_active, chain:chains (name_ar, name_en)", { count: "exact" })
+        .eq("is_active", true);
 
-  if (visitsRes.error) throw visitsRes.error;
-  if (placesRes.error) throw placesRes.error;
+      if (filters?.placeId) query = query.eq("id", filters.placeId);
 
-  const rows = (visitsRes.data ?? []) as unknown as BranchReportQueryRow[];
-  // A cut result would show covered branches as uncovered.
-  assertReportComplete("branch", rows, visitsRes.count);
+      if (after !== null) query = query.gt("id", after);
+      let page = query.order("id", { ascending: true }).limit(limit);
+      if (signal) page = page.abortSignal(signal);
+
+      const { data, error, count } = await page;
+      if (error) throw error;
+      return { rows: (data ?? []) as unknown as BranchPlaceQueryRow[], count };
+    },
+  });
+
+  // The last real visit per branch, across all history (see fetchBranchLastVisits
+  // in services/places for why it is not scoped to the range). The view returns
+  // exactly one row per branch, so `place_id` is unique in it.
+  const lastVisitsLoad = loadAllReportPages<BranchLastVisitQueryRow>({
+    report: "branch",
+    signal,
+    keyOf:  (row) => row.place_id,
+    fetchPage: async (after, limit) => {
+      let query = supabase
+        .from("v_branch_operations")
+        .select("place_id, last_visit_date", { count: "exact" });
+
+      if (after !== null) query = query.gt("place_id", after);
+      let page = query.order("place_id", { ascending: true }).limit(limit);
+      if (signal) page = page.abortSignal(signal);
+
+      const { data, error, count } = await page;
+      if (error) throw error;
+      return { rows: (data ?? []) as unknown as BranchLastVisitQueryRow[], count };
+    },
+  });
+
+  const [visitsRes, placesRes, lastVisitsRes] = await Promise.allSettled([visitsLoad, placesLoad, lastVisitsLoad]);
+
+  if (visitsRes.status !== "fulfilled" || placesRes.status !== "fulfilled" || lastVisitsRes.status !== "fulfilled") {
+    // A superseded load is just that, whichever read noticed first.
+    if (signal?.aborted) {
+      throw signal.reason instanceof Error ? signal.reason : new DOMException("The report load was cancelled", "AbortError");
+    }
+    throw firstBranchFailure(visitsRes, placesRes, lastVisitsRes);
+  }
+
+  const rows = visitsRes.value;
+  const lastVisits: Record<string, { last_visit_date: string | null }> = {};
+  for (const r of lastVisitsRes.value) lastVisits[r.place_id] = { last_visit_date: r.last_visit_date };
   const today = riyadhToday();
 
   const map = new Map<string, BranchReportRow>();
@@ -563,10 +680,7 @@ export async function fetchBranchReport(
   });
 
   // Seed every active branch so uncovered ones still appear.
-  const places = (placesRes.data ?? []) as unknown as {
-    id: string; branch_ar: string; branch_en: string; code: string;
-    chain: { name_ar: string; name_en: string } | null;
-  }[];
+  const places = placesRes.value;
 
   for (const p of places) {
     map.set(p.id, blankRow(
@@ -639,41 +753,82 @@ export interface ProductReportRow {
   total_missing:    number;   // sum of qty_missing
 }
 
+// visit_products has no id of its own: its primary key is (visit_id,
+// product_id). The page loader works with one string key, so the pair is joined
+// with a separator that sorts below every other character. Joined that way,
+// comparing two keys as strings is the same as comparing the pairs — visit
+// first, then product — whatever the ids' lengths.
+const PRODUCT_KEY_SEPARATOR = "\u0000";
+// Both halves go, unquoted, into a PostgREST filter expression; anything but a
+// plain id (they are UUIDs) would be refused rather than sent.
+const PLAIN_ID = /^[A-Za-z0-9-]+$/;
+
+function productRowKey(row: ProductReportQueryRow): string {
+  const v = row.visit_id, p = row.product_id;
+  if (typeof v !== "string" || typeof p !== "string" || !PLAIN_ID.test(v) || !PLAIN_ID.test(p)) return "";
+  return v + PRODUCT_KEY_SEPARATOR + p;
+}
+
+/**
+ * The audit rows are read in pages (see report-pages.ts), in the same
+ * (visit_id, product_id) order this read has always used, so the aggregation
+ * below sees exactly the rows it saw before, in the same order. The loader
+ * returns every row or throws. `signal` stops the load between pages when the
+ * query it belongs to has been superseded.
+ */
 export async function fetchProductReport(
   range: DateRange,
   filters?: ReportFilters,
+  signal?: AbortSignal,
 ): Promise<ProductReportRow[]> {
   const supabase = createClient();
 
-  // Filter through an inner join on the parent visit rather than fetching
-  // visit ids first and passing them back as .in(...). That two-step version
-  // put every completed visit id into the request URL, which silently breaks
-  // once a window contains enough visits to exceed the URL length limit.
-  let query = supabase
-    .from("visit_products")
-    .select(`
-      product_id, qty_found, qty_missing,
-      product:products (id, name_ar, name_en, sku, unit),
-      visit:visits!inner (scheduled_date, status, merch_id, place_id)
-    `, { count: "exact" })
-    .gte("visit.scheduled_date", range.from)
-    .lte("visit.scheduled_date", range.to)
-    .eq("visit.status", "completed");
+  const rows = await loadAllReportPages<ProductReportQueryRow>({
+    report: "product",
+    signal,
+    keyOf:  productRowKey,
+    fetchPage: async (after, limit) => {
+      // Filter through an inner join on the parent visit rather than fetching
+      // visit ids first and passing them back as .in(...). That two-step version
+      // put every completed visit id into the request URL, which silently breaks
+      // once a window contains enough visits to exceed the URL length limit.
+      let query = supabase
+        .from("visit_products")
+        .select(`
+          visit_id, product_id, qty_found, qty_missing,
+          product:products (id, name_ar, name_en, sku, unit),
+          visit:visits!inner (scheduled_date, status, merch_id, place_id)
+        `, { count: "exact" })
+        .gte("visit.scheduled_date", range.from)
+        .lte("visit.scheduled_date", range.to)
+        .eq("visit.status", "completed");
 
-  if (filters?.merchId) query = query.eq("visit.merch_id", filters.merchId);
-  if (filters?.placeId) query = query.eq("visit.place_id", filters.placeId);
+      if (filters?.merchId) query = query.eq("visit.merch_id", filters.merchId);
+      if (filters?.placeId) query = query.eq("visit.place_id", filters.placeId);
 
-  // (visit_id, product_id) is this table's primary key: a unique, stable order.
-  // The exact count is of visit_products rows AFTER the inner join's filters,
-  // i.e. of exactly the rows this read returns when nothing is cut.
-  const { data: vpRows, error: vpErr, count } = await query
-    .order("visit_id", { ascending: true })
-    .order("product_id", { ascending: true });
+      // The rows after (visit, product): a later visit, or the same visit and a
+      // later product. This condition is on visit_products itself and is ANDed
+      // with the join's filters above, so the exact count is of the audit rows
+      // still to come from the same filtered set.
+      if (after !== null) {
+        const [visitId, productId] = after.split(PRODUCT_KEY_SEPARATOR);
+        query = query.or(`visit_id.gt.${visitId},and(visit_id.eq.${visitId},product_id.gt.${productId})`);
+      }
 
-  if (vpErr) throw vpErr;
+      // (visit_id, product_id) is this table's primary key: a unique, stable
+      // order. The exact count is of visit_products rows AFTER the inner join's
+      // filters, i.e. of exactly the rows this read returns when nothing is cut.
+      let page = query
+        .order("visit_id", { ascending: true })
+        .order("product_id", { ascending: true })
+        .limit(limit);
+      if (signal) page = page.abortSignal(signal);
 
-  const rows = (vpRows ?? []) as unknown as ProductReportQueryRow[];
-  assertReportComplete("product", rows, count);
+      const { data, error, count } = await page;
+      if (error) throw error;
+      return { rows: (data ?? []) as unknown as ProductReportQueryRow[], count };
+    },
+  });
 
   // Aggregate
   const map = new Map<string, ProductReportRow>();
@@ -723,6 +878,8 @@ export async function fetchProductReport(
 // no raw distances are trusted from the client.
 
 interface GpsQueryRow {
+  /** The visit's id: the paging key only — it is not part of the report. */
+  id:                      string;
   merch_id:                string;
   checkin_verified:        boolean | null;
   checkin_lat:             number  | null;
@@ -752,32 +909,50 @@ export interface GpsReportRow {
   avg_distance:      number | null;
 }
 
+/**
+ * The started visits are read in pages (see report-pages.ts), in the same
+ * ascending `id` order this read has always used, so the grouping and
+ * tallyGps() below see exactly the rows they saw before, in the same order.
+ * The loader returns every row or throws, so no tally is ever made from part of
+ * a range. `signal` stops the load between pages when the query it belongs to
+ * has been superseded.
+ */
 export async function fetchGpsReport(
   range: DateRange,
   filters?: ReportFilters,
+  signal?: AbortSignal,
 ): Promise<GpsReportRow[]> {
   const supabase = createClient();
 
-  let query = supabase
-    .from("visits")
-    .select(`
-      merch_id, checkin_verified, checkin_lat, checkin_lng, checkin_distance_meters,
-      place:places (lat, lng),
-      merch:company_users (display_name, user:users!company_users_user_id_fkey (full_name))
-    `, { count: "exact" })
-    .gte("scheduled_date", range.from)
-    .lte("scheduled_date", range.to)
-    .not("started_at", "is", null);   // only started visits
+  const rows = await loadAllReportPages<GpsQueryRow>({
+    report: "gps",
+    signal,
+    keyOf:  (row) => row.id,
+    fetchPage: async (after, limit) => {
+      let query = supabase
+        .from("visits")
+        .select(`
+          id, merch_id, checkin_verified, checkin_lat, checkin_lng, checkin_distance_meters,
+          place:places (lat, lng),
+          merch:company_users (display_name, user:users!company_users_user_id_fkey (full_name))
+        `, { count: "exact" })
+        .gte("scheduled_date", range.from)
+        .lte("scheduled_date", range.to)
+        .not("started_at", "is", null);   // only started visits
 
-  if (filters?.merchId) query = query.eq("merch_id", filters.merchId);
-  if (filters?.placeId) query = query.eq("place_id", filters.placeId);
+      if (filters?.merchId) query = query.eq("merch_id", filters.merchId);
+      if (filters?.placeId) query = query.eq("place_id", filters.placeId);
 
-  const { data, error, count } = await query.order("id", { ascending: true });
+      // With the cursor applied, the exact count is of the rows from here on.
+      if (after !== null) query = query.gt("id", after);
+      let page = query.order("id", { ascending: true }).limit(limit);
+      if (signal) page = page.abortSignal(signal);
 
-  if (error) throw error;
-
-  const rows = (data ?? []) as unknown as GpsQueryRow[];
-  assertReportComplete("gps", rows, count);
+      const { data, error, count } = await page;
+      if (error) throw error;
+      return { rows: (data ?? []) as unknown as GpsQueryRow[], count };
+    },
+  });
 
   // Group first, then let tallyGps() do the classifying, so this report and
   // the visit detail page cannot drift apart about what "verified" means.

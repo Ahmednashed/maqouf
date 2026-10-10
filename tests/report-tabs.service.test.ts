@@ -68,10 +68,13 @@ const MERCH_OUT = [
   { merch_id: M2, full_name: "Sara",  total_visits: 2, completed: 1, missed: 0, pending: 0, inprogress: 1, completion_rate: 100, avg_duration: 0 },
 ];
 
+// Each visit carries its `id`, ascending: the paging key, not report data.
+// The branch list and the last-visit rows are paged too, by `id` and by
+// `place_id`, so those fixtures are in that order as well.
 const BRANCH_VISITS = [
-  { status: "completed", duration_minutes: 20, place_id: P1, place: place("1") },
-  { status: "missed",    duration_minutes: 0,  place_id: P1, place: place("1") },
-  { status: "completed", duration_minutes: 5,  place_id: P3, place: place("3") },   // inactive branch: not in the places list
+  { id: "b1", status: "completed", duration_minutes: 20, place_id: P1, place: place("1") },
+  { id: "b2", status: "missed",    duration_minutes: 0,  place_id: P1, place: place("1") },
+  { id: "b3", status: "completed", duration_minutes: 5,  place_id: P3, place: place("3") },   // inactive branch: not in the places list
 ];
 const BRANCH_PLACES = [
   { id: P1, ...place("1"), is_active: true },
@@ -93,21 +96,24 @@ const BRANCH_OUT = [
 ];
 
 const prod = (n: string) => ({ id: `prod-${n}`, name_ar: `منتج ${n}`, name_en: `Product ${n}`, sku: `SKU-${n}`, unit: "pc" });
+// Each audit row carries its (visit_id, product_id) key, ascending: the paging
+// key. The visit id is not report data.
 const PRODUCT_ROWS = [
-  { product_id: "prod-A", qty_found: 5, qty_missing: 0,    product: prod("A") },
-  { product_id: "prod-A", qty_found: 0, qty_missing: 3,    product: prod("A") },
-  { product_id: "prod-B", qty_found: 2, qty_missing: null, product: prod("B") },
+  { visit_id: "v1", product_id: "prod-A", qty_found: 5, qty_missing: 0,    product: prod("A") },
+  { visit_id: "v2", product_id: "prod-A", qty_found: 0, qty_missing: 3,    product: prod("A") },
+  { visit_id: "v2", product_id: "prod-B", qty_found: 2, qty_missing: null, product: prod("B") },
 ];
 const PRODUCT_OUT = [
   { product_id: "prod-A", name_ar: "منتج A", name_en: "Product A", sku: "SKU-A", unit: "pc", audited_count: 2, found_count: 1, missing_count: 1, availability_pct: 50,  total_missing: 3 },
   { product_id: "prod-B", name_ar: "منتج B", name_en: "Product B", sku: "SKU-B", unit: "pc", audited_count: 1, found_count: 1, missing_count: 0, availability_pct: 100, total_missing: 0 },
 ];
 
+// Each row carries its visit `id`, ascending: the paging key, not report data.
 const GPS_ROWS = [
-  { merch_id: M1, checkin_verified: true,  checkin_lat: 24.7, checkin_lng: 46.6, checkin_distance_meters: 40, place: { lat: 24.7, lng: 46.6 }, merch: merch("Ahmed") },
-  { merch_id: M1, checkin_verified: false, checkin_lat: 24.9, checkin_lng: 46.9, checkin_distance_meters: 900, place: { lat: 24.7, lng: 46.6 }, merch: merch("Ahmed") },
-  { merch_id: M1, checkin_verified: null,  checkin_lat: null, checkin_lng: null, checkin_distance_meters: null, place: { lat: 24.7, lng: 46.6 }, merch: merch("Ahmed") },
-  { merch_id: M2, checkin_verified: null,  checkin_lat: 24.7, checkin_lng: 46.6, checkin_distance_meters: null, place: { lat: null, lng: null }, merch: merch("Sara") },
+  { id: "g1", merch_id: M1, checkin_verified: true,  checkin_lat: 24.7, checkin_lng: 46.6, checkin_distance_meters: 40, place: { lat: 24.7, lng: 46.6 }, merch: merch("Ahmed") },
+  { id: "g2", merch_id: M1, checkin_verified: false, checkin_lat: 24.9, checkin_lng: 46.9, checkin_distance_meters: 900, place: { lat: 24.7, lng: 46.6 }, merch: merch("Ahmed") },
+  { id: "g3", merch_id: M1, checkin_verified: null,  checkin_lat: null, checkin_lng: null, checkin_distance_meters: null, place: { lat: 24.7, lng: 46.6 }, merch: merch("Ahmed") },
+  { id: "g4", merch_id: M2, checkin_verified: null,  checkin_lat: 24.7, checkin_lng: 46.6, checkin_distance_meters: null, place: { lat: null, lng: null }, merch: merch("Sara") },
 ];
 const gpsOut = (id: string, name: string, rows: typeof GPS_ROWS) => {
   const tally = tallyGps(rows);
@@ -159,7 +165,8 @@ const SPECS: Spec[] = [
 function arrange(spec: Spec, base: { data: unknown; error: unknown; count?: number | null }) {
   resetStub();
   queueResultFor(spec.table, base);
-  for (const [table, rows] of spec.extras ?? []) queueResultFor(table, { data: rows, error: null });
+  // A fetcher's other reads are counted reads as well (Branch pages all three).
+  for (const [table, rows] of spec.extras ?? []) queueResultFor(table, { data: rows, error: null, count: rows.length });
 }
 const baseCall = (spec: Spec): RecordedCall => recordedCalls().find((c) => c.table === spec.table)!;
 
@@ -267,8 +274,8 @@ console.log("fetcher-specific contracts");
   // it would otherwise show covered branches as uncovered.
   resetStub();
   queueResultFor("visits", { data: BRANCH_VISITS, error: null, count: 5000 });
-  queueResultFor("places", { data: BRANCH_PLACES, error: null });
-  queueResultFor("v_branch_operations", { data: BRANCH_OPS, error: null });
+  queueResultFor("places", { data: BRANCH_PLACES, error: null, count: BRANCH_PLACES.length });
+  queueResultFor("v_branch_operations", { data: BRANCH_OPS, error: null, count: BRANCH_OPS.length });
   const b = await outcome(() => fetchBranchReport(RANGE));
   ok("[branch] truncated visits are refused, with no zero-visit rows returned",
      b.error instanceof ReportIncompleteError && b.value === undefined);
@@ -276,8 +283,8 @@ console.log("fetcher-specific contracts");
   // Branch: the last-visit filter still applies after a complete read.
   resetStub();
   queueResultFor("visits", { data: BRANCH_VISITS, error: null, count: BRANCH_VISITS.length });
-  queueResultFor("places", { data: BRANCH_PLACES, error: null });
-  queueResultFor("v_branch_operations", { data: BRANCH_OPS, error: null });
+  queueResultFor("places", { data: BRANCH_PLACES, error: null, count: BRANCH_PLACES.length });
+  queueResultFor("v_branch_operations", { data: BRANCH_OPS, error: null, count: BRANCH_OPS.length });
   const never = await fetchBranchReport(RANGE, { lastVisit: "never" });
   eq("[branch] the last-visit filter narrows a complete result as before",
      never.map((r) => r.place_id), [P3, P2]);

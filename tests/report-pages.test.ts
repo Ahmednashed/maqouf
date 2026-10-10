@@ -358,8 +358,8 @@ console.log("3) the Visits hook and cancellation");
     await fnOf(tab)(context).catch(() => {});
     usesSignal[tab] = read;
   }
-  eq("only the paged tabs' hooks take the abort signal: Visits and Merch so far",
-     usesSignal, { summary: false, visits: true, merch: true, branch: false, product: false, gps: false });
+  eq("every tab's hook takes the abort signal; the summary, a single RPC, does not",
+     usesSignal, { summary: false, visits: true, merch: true, branch: true, product: true, gps: true });
 
   {
     const aborted = new AbortController();

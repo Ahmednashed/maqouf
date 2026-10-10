@@ -90,7 +90,7 @@ export function useMerchReport(range: DateRange, filters?: ReportFilters, enable
 export function useBranchReport(range: DateRange, filters?: ReportFilters, enabled = true) {
   return useQuery<BranchReportRow[]>({
     queryKey: key("branch", range, filters),
-    queryFn:  () => fetchBranchReport(range, filters),
+    queryFn:  ({ signal }) => fetchBranchReport(range, filters, signal),
     staleTime: 120_000,
     retry:     false,
     enabled:   enabled && ready(range),
@@ -100,7 +100,7 @@ export function useBranchReport(range: DateRange, filters?: ReportFilters, enabl
 export function useProductReport(range: DateRange, filters?: ReportFilters, enabled = true) {
   return useQuery<ProductReportRow[]>({
     queryKey: key("product", range, filters),
-    queryFn:  () => fetchProductReport(range, filters),
+    queryFn:  ({ signal }) => fetchProductReport(range, filters, signal),
     staleTime: 120_000,
     retry:     false,
     enabled:   enabled && ready(range),
@@ -110,7 +110,7 @@ export function useProductReport(range: DateRange, filters?: ReportFilters, enab
 export function useGpsReport(range: DateRange, filters?: ReportFilters, enabled = true) {
   return useQuery<GpsReportRow[]>({
     queryKey: key("gps", range, filters),
-    queryFn:  () => fetchGpsReport(range, filters),
+    queryFn:  ({ signal }) => fetchGpsReport(range, filters, signal),
     staleTime: 120_000,
     retry:     false,
     enabled:   enabled && ready(range),

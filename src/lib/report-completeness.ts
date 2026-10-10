@@ -7,12 +7,16 @@
 // export of them — with nothing to say so.
 //
 // Every tab read therefore asks PostgREST for the exact number of matching rows
-// alongside the rows themselves. If that count is missing, or is not exactly
-// the number of rows received, the read is refused: nothing is shown and nothing
+// alongside the rows themselves. If a count is missing, or the rows received do
+// not account for it exactly, the read is refused: nothing is shown and nothing
 // can be exported. A partial aggregate is never presented as valid.
 //
-// This is a safeguard, not pagination — a range over the cap becomes
-// unavailable rather than silently wrong. Loading it in pages is a later batch.
+// All five tabs now read in pages (report-pages.ts), so a range over the cap
+// loads instead of being refused; the loader applies this rule to every page
+// and throws the errors defined here. What remains refused is a result that
+// cannot be vouched for, and one over the loader's stated maximum.
+// assertReportComplete below is the same rule for a single, unpaged read; no
+// tab makes one any more, and it is kept as the rule's plainest statement.
 //
 // Kept free of React and of the Supabase client so it can be tested directly.
 

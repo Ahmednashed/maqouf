@@ -51,8 +51,9 @@ that matches more rows than that **silently truncates** rather than erroring.
   count, so a large enough range still reaches the ceiling — and four of them
   aggregate in the browser, where a cut read becomes plausible, wrong totals.
   They no longer truncate silently: each asks for PostgREST's exact count and
-  **refuses the result** unless it equals the rows received (see §5). That is a
-  safeguard, not a fix — the range becomes unavailable, not loadable.
+  **refuses the result** unless every row is accounted for, and each now reads
+  in pages, so a range over the ceiling loads instead of being refused — up to
+  a stated maximum (see §5).
 - It previously applied to `fetchBranchLastVisits` too, and more insidiously:
   ordered newest-first, truncation would have made a genuinely-visited branch
   read as **"never visited"** — wrong, and indistinguishable from the truth.
@@ -217,31 +218,32 @@ property that matters as the team grows.
 | | |
 |---|---|
 | **Why acceptable now** | Every visit read is bounded by `.gte/.lte("scheduled_date", …)`, and `idx_visits_company_date` serves exactly that predicate |
-| **The exception** | `fetchBranchReport` also reads **all active places** unbounded, to seed rows for branches with no visits so uncovered branches still appear. Bounded by branch count, which is small |
+| **The exception** | `fetchBranchReport` also reads **all active places**, to seed rows for branches with no visits so uncovered branches still appear, and one `v_branch_operations` row per branch. Both are bounded by branch count, which is small, and both are paged and counted like the visit reads (below) |
 | **Becomes risky at** | a year-wide range over a high-volume company — the date bound stops helping when the range *is* the whole table |
 | **Replacement** | server-side aggregation per tab. The five tabs are five different GROUP BYs over the same date-bounded visit set; one RPC returning all five would remove most of the payload |
 
 The GPS tab additionally joins `place:places(lat,lng)` per visit. Fine, but it
 means the GPS report's cost tracks visit count, not branch count.
 
-### The 1,000-row ceiling — detected; lifted for Visits and Merch
+### The 1,000-row ceiling — detected; lifted for all five tabs, up to 20,000 rows
 
 A date range is not a row bound: once a range matches more than 1,000 base rows
 (`visits`, or `visit_products` for the Product tab), the API returns the first
-1,000 without an error. Each of the five tab reads now:
+1,000 without an error. Each of the five tab reads:
 
 - asks for the exact count of the same filtered query (`{ count: "exact" }`,
-  one extra `COUNT` per read);
+  one extra `COUNT` per request);
 - orders by a unique key (`id`; `visit_id, product_id` for `visit_products`),
   so the rows returned are the same on every load;
-- throws `ReportIncompleteError` unless the count equals the rows received —
-  including when the count is missing.
+- throws `ReportIncompleteError` unless every row is accounted for — including
+  when a count is missing.
 
 A tab in that state shows a message instead of rows and disables its Excel
 export; a failed refresh withholds the earlier rows too
 (`src/lib/report-completeness.ts`). No partial aggregate is shown or exported.
 
-**Lifted for the Visits and Merch Performance tabs.** `fetchVisitsReport` reads in pages
+**Lifted for every tab.** All five now read in pages; Visits is described
+first because the others follow it. `fetchVisitsReport` reads in pages
 (`src/lib/report-pages.ts`): 1,000 rows per request in ascending `id` order,
 each page asking for the rows after the last `id` read (keyset, not offset),
 then sorted back to the tab's order (`scheduled_date` descending, `id`
@@ -273,12 +275,51 @@ export are unchanged; `id` is read only as the paging key and is not part of
 the report. Note what the maximum means here: the tab's answer is a few rows,
 but a range of more than 20,000 *visits* is refused all the same.
 
-**Still open.** Branch, Product and GPS still make one read each and are
-unavailable over the ceiling; the same loader, or the server-side aggregation
-above, is what lifts it for them (Product's key is composite).
-`fetchBranchReport`'s two secondary reads (active `places`, and
-`v_branch_operations` via `fetchBranchLastVisits`) are not counted; they are
-bounded by branch count and only matter above 1,000 branches.
+`fetchGpsReport` does the same for its started visits: the
+`started_at IS NOT NULL` condition is part of every page's query and count,
+and `tallyGps` sees the same rows in the same order.
+
+`fetchBranchReport` pages **three** reads, each by a unique key with its own
+exact counts: the visits (`id`), the active branches its rows are seeded from
+(`places.id`), and each branch's last real visit (`v_branch_operations`, one
+row per branch, by `place_id`). A cut in either of the last two used to be
+silent — branches missing from the report, or "never visited" against a branch
+that was — and is now refused like any other. The three reads settle together
+and the failure reported keeps its old order: the last-visit read, then the
+visits read, then the branch list, then an incomplete visits read, then (new)
+an incomplete branch list or last-visit read. One deliberate change: the
+branch list is now read in `id` order, which paging needs, so branches with
+the same number of visits — the zero-visit rows above all — appear in `id`
+order among themselves instead of whatever order the database returned.
+`services/places.ts` is untouched; its `fetchBranchLastVisits` is no longer
+called by the report.
+
+`fetchProductReport` pages `visit_products`, which has no `id`: its primary
+key is `(visit_id, product_id)`. The cursor is that pair — "a later visit, or
+the same visit and a later product", sent as one PostgREST
+`or=(visit_id.gt.V,and(visit_id.eq.V,product_id.gt.P))` condition on the audit
+table and ANDed with the inner join's filters, so each page's exact count is of
+the audit rows still to come from the same filtered set. Checked read-only
+against the real API. Ids are refused, not sent, unless they are plain
+(letters, digits, hyphens), since they go into that expression unquoted.
+
+**Still limited.**
+
+- **20,000 rows per read.** For the four aggregate tabs this is a limit on the
+  *base* rows (visits, or audit rows), not on the handful of rows shown: a range
+  over it is refused with a notice naming the maximum. Lifting it properly means
+  the server-side aggregation above. Branch's two secondary reads share the
+  same maximum, i.e. 20,000 active branches.
+- **Not a snapshot**, for any tab, as described for Visits above. Branch's
+  three reads are also separate from one another.
+- **Cost.** A large range is up to 20 sequential requests per read, and each
+  tab loads its own copy of the visit rows; the tab shows its loading row
+  throughout. Leaving a tab mid-load cancels that load.
+- **Only small real data so far.** Every tab has been seen paging against the
+  real API with a temporarily lowered page size, on four visits and two
+  branches. A real page of 1,000 rows has not been seen, and no real visit in
+  this data has more than one audited product, so the "same visit, later
+  product" half of the Product cursor has only been exercised in tests.
 
 ---
 
