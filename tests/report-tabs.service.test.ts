@@ -37,10 +37,13 @@ const place = (n: string) => ({ branch_ar: `فرع ${n}`, branch_en: `Branch ${n
 const merch = (name: string) => ({ display_name: null, user: { full_name: name } });
 
 // ── Fixtures and the exact output each must produce ──────────────────────────
+// Visits are read in ascending `id` order (the paging key) and put back into
+// the tab's order afterwards, so the fixture arrives by id and VISIT_OUT is in
+// the order the tab has always shown: newest date first, then id descending.
 const VISIT_ROWS = [
-  { id: "v3", scheduled_date: "2026-08-06", status: "completed", duration_minutes: 10, merch_id: M1, place_id: P1, place: place("1"), merch: merch("Ahmed") },
-  { id: "v2", scheduled_date: "2026-08-05", status: "missed",    duration_minutes: null, merch_id: M2, place_id: P2, place: null, merch: null },
   { id: "v1", scheduled_date: "2026-08-05", status: "pending",   duration_minutes: 0, merch_id: M1, place_id: P1, place: place("1"), merch: { display_name: " Sara ", user: { full_name: "ignored" } } },
+  { id: "v2", scheduled_date: "2026-08-05", status: "missed",    duration_minutes: null, merch_id: M2, place_id: P2, place: null, merch: null },
+  { id: "v3", scheduled_date: "2026-08-06", status: "completed", duration_minutes: 10, merch_id: M1, place_id: P1, place: place("1"), merch: merch("Ahmed") },
 ];
 const VISIT_OUT = [
   { id: "v3", merch_id: M1, place_id: P1, scheduled_date: "2026-08-06", status: "completed", duration_minutes: 10, branch_ar: "فرع 1", branch_en: "Branch 1", branch_code: "BR-1", chain_ar: "سلسلة", chain_en: "Chain", merch_name: "Ahmed" },
@@ -128,7 +131,9 @@ interface Spec {
 const SPECS: Spec[] = [
   { name: "visits", table: "visits", rows: VISIT_ROWS, out: VISIT_OUT, dateColumn: "scheduled_date", emptyOut: [],
     run: (f) => fetchVisitsReport(RANGE, f),
-    orders: [{ column: "scheduled_date", ascending: false }, { column: "id", ascending: false }] },
+    // Paged by primary key; the tab's own order is restored after loading
+    // (tests/report-pages.test.ts covers the paging itself).
+    orders: [{ column: "id", ascending: true }] },
   { name: "merch", table: "visits", rows: MERCH_ROWS, out: MERCH_OUT, dateColumn: "scheduled_date", emptyOut: [],
     run: (f) => fetchMerchReport(RANGE, f),
     orders: [{ column: "id", ascending: true }] },

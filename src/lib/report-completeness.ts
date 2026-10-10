@@ -24,8 +24,11 @@ export type ReportName = "visits" | "merch" | "branch" | "product" | "gps";
  *   truncated  — more rows match than were returned (the cap cut the read)
  *   unverified — the count is missing or inconsistent, so completeness cannot
  *                be established either way
+ *   tooLarge   — more rows match than one report load will read at all (the
+ *                paged loader's hard maximum; see report-pages.ts). Nothing was
+ *                cut: the load was declined, on the strength of the count
  */
-export type ReportIncompleteReason = "truncated" | "unverified";
+export type ReportIncompleteReason = "truncated" | "unverified" | "tooLarge";
 
 export class ReportIncompleteError extends Error {
   readonly report: ReportName;
@@ -34,18 +37,23 @@ export class ReportIncompleteError extends Error {
   readonly loaded: number;
   /** Rows that match, when known. */
   readonly total: number | null;
+  /** The most rows a load will read — set only when that is why it was refused. */
+  readonly max: number | null;
 
-  constructor(report: ReportName, reason: ReportIncompleteReason, loaded: number, total: number | null) {
+  constructor(report: ReportName, reason: ReportIncompleteReason, loaded: number, total: number | null, max: number | null = null) {
     super(
       reason === "truncated"
         ? `${report} report is incomplete: ${loaded} of ${total} rows were returned`
-        : `${report} report could not be verified as complete (${loaded} rows returned, no usable count)`,
+        : reason === "tooLarge"
+          ? `${report} report is too large to load: ${total} rows match, the maximum is ${max}`
+          : `${report} report could not be verified as complete (${loaded} rows returned, no usable count)`,
     );
     this.name = "ReportIncompleteError";
     this.report = report;
     this.reason = reason;
     this.loaded = loaded;
     this.total = total;
+    this.max = max;
   }
 }
 
@@ -79,6 +87,7 @@ export function assertReportComplete(
  *   loading    — no rows yet and a request is owed (in flight, or paused offline)
  *   ready      — a complete result, current as of its last successful load
  *   truncated  — the read was cut by the row cap
+ *   tooLarge   — the range matches more rows than a load will read
  *   unverified — completeness could not be established
  *   error      — the request failed. `hadRows` marks a failed REFRESH: rows from
  *                an earlier load exist but are withheld, because they can no
@@ -88,6 +97,7 @@ export type ReportTabState<T> =
   | { kind: "loading";    rows: T[] }
   | { kind: "ready";      rows: T[] }
   | { kind: "truncated";  rows: T[]; loaded: number; total: number }
+  | { kind: "tooLarge";   rows: T[]; total: number; max: number }
   | { kind: "unverified"; rows: T[] }
   | { kind: "error";      rows: T[]; hadRows: boolean };
 
@@ -104,6 +114,9 @@ export function reportTabState<T>(q: {
   if (q.isError) {
     const e = q.error;
     if (e instanceof ReportIncompleteError) {
+      if (e.reason === "tooLarge" && e.total !== null && e.max !== null) {
+        return { kind: "tooLarge", rows: [], total: e.total, max: e.max };
+      }
       return e.reason === "truncated" && e.total !== null
         ? { kind: "truncated", rows: [], loaded: e.loaded, total: e.total }
         : { kind: "unverified", rows: [] };
@@ -138,6 +151,12 @@ export function reportTabMessage<T>(
         title:  t("reports.data.truncated", { total: state.total, loaded: state.loaded }),
         detail: t("reports.data.narrow"),
       };
+    case "tooLarge":
+      // Grouped digits: these are the only large figures a notice shows.
+      return {
+        title:  t("reports.data.tooLarge", { total: state.total.toLocaleString("en-US"), max: state.max.toLocaleString("en-US") }),
+        detail: t("reports.data.narrow"),
+      };
     case "unverified":
       return { title: t("reports.data.unverified"), detail: t("reports.data.narrow") };
     case "error":
@@ -164,10 +183,10 @@ export function reportTabMessage<T>(
 // succeeds, fails, or is still running. Rows stay hidden either way: this is
 // about the notice, never about what data is shown.
 
-export type ReportProblemState<T> = Extract<ReportTabState<T>, { kind: "truncated" | "unverified" | "error" }>;
+export type ReportProblemState<T> = Extract<ReportTabState<T>, { kind: "truncated" | "tooLarge" | "unverified" | "error" }>;
 
 export function isReportProblem<T>(state: ReportTabState<T>): state is ReportProblemState<T> {
-  return state.kind === "truncated" || state.kind === "unverified" || state.kind === "error";
+  return state.kind === "truncated" || state.kind === "tooLarge" || state.kind === "unverified" || state.kind === "error";
 }
 
 export interface ReportNotice<T> {

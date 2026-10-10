@@ -14,10 +14,14 @@ export interface RecordedCall {
   filters: Array<{ column: string; value: unknown }>;
   /** The options passed to `select`, e.g. `{ count: "exact" }`. */
   selectOptions?: unknown;
-  /** Non-`eq` conditions (`gte`, `lte`, `not`), in order. */
+  /** Non-`eq` conditions (`gte`, `lte`, `gt`, `not`), in order. */
   conditions: Array<{ op: string; column: string; value: unknown; operator?: string }>;
   /** `order` calls, in order — the sort keys a read asked for. */
   orders: Array<{ column: string; ascending: boolean }>;
+  /** The `limit` asked for, when there was one. */
+  limit?: number;
+  /** The abort signal attached with `abortSignal`, when there was one. */
+  signal?: AbortSignal;
 }
 
 export interface StubResult {
@@ -79,9 +83,11 @@ interface Chain extends PromiseLike<StubResult> {
   eq(column: string, value: unknown): Chain;
   gte(column: string, value: unknown): Chain;
   lte(column: string, value: unknown): Chain;
+  gt(column: string, value: unknown): Chain;
   not(column: string, operator: string, value: unknown): Chain;
   order(column: string, options?: { ascending?: boolean }): Chain;
   limit(n: number): Chain;
+  abortSignal(signal: AbortSignal): Chain;
   single(): Chain;
   maybeSingle(): Chain;
   insert(values: unknown): Chain;
@@ -103,13 +109,15 @@ function chain(table: string): Chain {
     eq(column, value) { call.filters.push({ column, value }); return self; },
     gte(column, value) { call.conditions.push({ op: "gte", column, value }); return self; },
     lte(column, value) { call.conditions.push({ op: "lte", column, value }); return self; },
+    gt(column, value) { call.conditions.push({ op: "gt", column, value }); return self; },
     not(column, operator, value) { call.conditions.push({ op: "not", column, value, operator }); return self; },
     order(column, options) {
       // PostgREST's default is ascending.
       call.orders.push({ column, ascending: options?.ascending ?? true });
       return self;
     },
-    limit() { return self; },
+    limit(n) { call.limit = n; return self; },
+    abortSignal(signal) { call.signal = signal; return self; },
     single() { return self; },
     maybeSingle() { return self; },
     insert() { if (!recorded) { calls.push(call); recorded = true; } return self; },

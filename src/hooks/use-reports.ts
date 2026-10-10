@@ -69,7 +69,8 @@ export function useReportSummary(range: DateRange, filters?: ReportFilters, enab
 export function useVisitsReport(range: DateRange, filters?: ReportFilters, enabled = true) {
   return useQuery<VisitReportRow[]>({
     queryKey: key("visits", range, filters),
-    queryFn:  () => fetchVisitsReport(range, filters),
+    // The signal lets a paged load stop when the range or filters change.
+    queryFn:  ({ signal }) => fetchVisitsReport(range, filters, signal),
     staleTime: 120_000,
     retry:     false,
     enabled:   enabled && ready(range),

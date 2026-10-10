@@ -141,7 +141,7 @@ for (const locale of LOCALES) {
 {
   const ar = translations.ar as Record<string, string>;
   const en = translations.en as Record<string, string>;
-  for (const k of ["reports.data.truncated", "reports.data.unverified", "reports.data.narrow",
+  for (const k of ["reports.data.truncated", "reports.data.tooLarge", "reports.data.unverified", "reports.data.narrow",
                    "reports.data.loadError", "reports.data.refreshError", "reports.data.noExport"]) {
     check(`${k} is Arabic in ar`, /[؀-ۿ]/.test(ar[k] ?? ""), ar[k]);
     check(`${k} is English in en`, !!en[k] && !/[؀-ۿ]/.test(en[k]), en[k]);

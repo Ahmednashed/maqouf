@@ -224,7 +224,7 @@ property that matters as the team grows.
 The GPS tab additionally joins `place:places(lat,lng)` per visit. Fine, but it
 means the GPS report's cost tracks visit count, not branch count.
 
-### The 1,000-row ceiling — detected, not yet lifted
+### The 1,000-row ceiling — detected; lifted for Visits
 
 A date range is not a row bound: once a range matches more than 1,000 base rows
 (`visits`, or `visit_products` for the Product tab), the API returns the first
@@ -241,8 +241,34 @@ A tab in that state shows a message instead of rows and disables its Excel
 export; a failed refresh withholds the earlier rows too
 (`src/lib/report-completeness.ts`). No partial aggregate is shown or exported.
 
-**Still open.** A range over the ceiling is unavailable, not loadable: reading
-it in pages, or the server-side aggregation above, is what lifts the limit.
+**Lifted for the Visits tab only.** `fetchVisitsReport` reads in pages
+(`src/lib/report-pages.ts`): 1,000 rows per request in ascending `id` order,
+each page asking for the rows after the last `id` read (keyset, not offset),
+then sorted back to the tab's order (`scheduled_date` descending, `id`
+descending). Every page carries its own exact count, which with the cursor
+applied is the rows still to come; the load is refused — nothing shown, nothing
+exportable — if a count is missing, a later count is not the total minus the
+rows already read, a page is shorter or longer than it should be, an `id` is
+empty, repeated or out of order, or any page fails. A superseded load (changed
+range or filters) stops between pages.
+
+- **Hard maximum: 20,000 rows** (20 requests). The first page's count decides,
+  so a larger range is refused after one request, with a notice that names
+  the maximum and asks for a narrower range. Above that the answer is
+  server-side aggregation or a narrower range.
+- **Not a snapshot.** The pages are separate requests. A row added or removed
+  *ahead* of the cursor changes a later count and the load is refused. A change
+  *behind* the cursor — a row deleted after it was read, a row inserted with a
+  lower `id`, an edit to a row already read — leaves every later count as
+  expected and is not detected. The result is then as stale as a single read is
+  a moment after it returns, over the seconds a long load takes; it is never a
+  partial result.
+- **Cost.** A large range is several sequential requests, each recounting; the
+  tab shows its loading row throughout, with no progress indicator.
+
+**Still open.** Merch, Branch, Product and GPS still make one read each and are
+unavailable over the ceiling; the same loader, or the server-side aggregation
+above, is what lifts it for them (Product's key is composite).
 `fetchBranchReport`'s two secondary reads (active `places`, and
 `v_branch_operations` via `fetchBranchLastVisits`) are not counted; they are
 bounded by branch count and only matter above 1,000 branches.

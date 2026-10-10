@@ -3,6 +3,7 @@ import { tallyGps } from "@/lib/gps-status";
 import { fetchBranchLastVisits, daysSinceIso } from "@/services/places";
 import { riyadhToday } from "@/lib/utils/date";
 import { assertReportComplete } from "@/lib/report-completeness";
+import { loadAllReportPages } from "@/lib/report-pages";
 
 // ─── Shared types ─────────────────────────────────────────────────────────────
 
@@ -288,36 +289,59 @@ export interface VisitReportRow {
   merch_name:       string;
 }
 
+/**
+ * Read in pages, so a range may hold more visits than one API response does
+ * (see report-pages.ts for how each page is checked, the hard maximum, and what
+ * a multi-request read cannot promise). `signal` stops the load between pages
+ * when the query it belongs to has been superseded.
+ */
 export async function fetchVisitsReport(
   range: DateRange,
   filters?: ReportFilters,
+  signal?: AbortSignal,
 ): Promise<VisitReportRow[]> {
   const supabase = createClient();
 
-  let query = supabase
-    .from("visits")
-    .select(`
-      id, scheduled_date, status, duration_minutes, merch_id, place_id,
-      place:places (branch_ar, branch_en, code, chain:chains (name_ar, name_en)),
-      merch:company_users (display_name, user:users!company_users_user_id_fkey (full_name))
-    `, { count: "exact" })
-    .gte("scheduled_date", range.from)
-    .lte("scheduled_date", range.to);
+  const rows = await loadAllReportPages<VisitReportQueryRow>({
+    report: "visits",
+    signal,
+    keyOf:  (row) => row.id,
+    fetchPage: async (after, limit) => {
+      let query = supabase
+        .from("visits")
+        .select(`
+          id, scheduled_date, status, duration_minutes, merch_id, place_id,
+          place:places (branch_ar, branch_en, code, chain:chains (name_ar, name_en)),
+          merch:company_users (display_name, user:users!company_users_user_id_fkey (full_name))
+        `, { count: "exact" })
+        .gte("scheduled_date", range.from)
+        .lte("scheduled_date", range.to);
 
-  if (filters?.merchId) query = query.eq("merch_id", filters.merchId);
-  if (filters?.placeId) query = query.eq("place_id", filters.placeId);
-  if (filters?.status) query = query.eq("status", filters.status);
+      if (filters?.merchId) query = query.eq("merch_id", filters.merchId);
+      if (filters?.placeId) query = query.eq("place_id", filters.placeId);
+      if (filters?.status) query = query.eq("status", filters.status);
 
-  // Newest first, with `id` as a unique tie-breaker so the order within a day
-  // is the same on every load.
-  const { data, error, count } = await query
-    .order("scheduled_date", { ascending: false })
-    .order("id", { ascending: false });
+      // Pages follow the primary key. With the cursor applied, the exact count
+      // is of the rows from here on — what the loader checks each page against.
+      if (after !== null) query = query.gt("id", after);
+      let page = query.order("id", { ascending: true }).limit(limit);
+      if (signal) page = page.abortSignal(signal);
 
-  if (error) throw error;
+      const { data, error, count } = await page;
+      if (error) throw error;
+      return { rows: (data ?? []) as unknown as VisitReportQueryRow[], count };
+    },
+  });
 
-  const rows = (data ?? []) as unknown as VisitReportQueryRow[];
-  assertReportComplete("visits", rows, count);
+  // What the tab shows and exports is unchanged: newest first, with `id` as a
+  // unique tie-breaker so the order within a day is the same on every load.
+  // Both are compared as the API returns them (ISO dates, lowercase UUIDs),
+  // which sorts them exactly as the database did.
+  rows.sort((a, b) =>
+    a.scheduled_date !== b.scheduled_date
+      ? (a.scheduled_date < b.scheduled_date ? 1 : -1)
+      : (a.id < b.id ? 1 : a.id > b.id ? -1 : 0));
+
   return rows.map((row) => ({
     id:               row.id,
     merch_id:         row.merch_id,
