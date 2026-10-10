@@ -91,6 +91,8 @@ interface VisitReportQueryRow {
 }
 
 interface MerchReportQueryRow {
+  /** The visit's id: the paging key only — it is not part of the report. */
+  id:               string;
   status:           string;
   duration_minutes: number | null;
   merch_id:         string;
@@ -372,34 +374,52 @@ export interface MerchReportRow {
   avg_duration:    number;   // minutes
 }
 
+/**
+ * The visits are read in pages (see report-pages.ts), in the same ascending
+ * `id` order this read has always used, so everything below — which
+ * merchandiser is met first, the totals, the rounding — sees exactly the rows
+ * it saw before, however many requests they arrived in. Aggregating a cut or
+ * unverified result would produce plausible, wrong totals: the loader returns
+ * every row or throws. `signal` stops the load between pages when the query
+ * it belongs to has been superseded.
+ */
 export async function fetchMerchReport(
   range: DateRange,
   filters?: ReportFilters,
+  signal?: AbortSignal,
 ): Promise<MerchReportRow[]> {
   const supabase = createClient();
 
-  let query = supabase
-    .from("visits")
-    .select(`
-      status, duration_minutes, merch_id,
-      merch:company_users (
-        id, display_name,
-        user:users!company_users_user_id_fkey (full_name)
-      )
-    `, { count: "exact" })
-    .gte("scheduled_date", range.from)
-    .lte("scheduled_date", range.to);
+  const rows = await loadAllReportPages<MerchReportQueryRow>({
+    report: "merch",
+    signal,
+    keyOf:  (row) => row.id,
+    fetchPage: async (after, limit) => {
+      let query = supabase
+        .from("visits")
+        .select(`
+          id, status, duration_minutes, merch_id,
+          merch:company_users (
+            id, display_name,
+            user:users!company_users_user_id_fkey (full_name)
+          )
+        `, { count: "exact" })
+        .gte("scheduled_date", range.from)
+        .lte("scheduled_date", range.to);
 
-  if (filters?.merchId) query = query.eq("merch_id", filters.merchId);
-  if (filters?.placeId) query = query.eq("place_id", filters.placeId);
+      if (filters?.merchId) query = query.eq("merch_id", filters.merchId);
+      if (filters?.placeId) query = query.eq("place_id", filters.placeId);
 
-  const { data, error, count } = await query.order("id", { ascending: true });
+      // With the cursor applied, the exact count is of the rows from here on.
+      if (after !== null) query = query.gt("id", after);
+      let page = query.order("id", { ascending: true }).limit(limit);
+      if (signal) page = page.abortSignal(signal);
 
-  if (error) throw error;
-
-  const rows = (data ?? []) as unknown as MerchReportQueryRow[];
-  // Aggregating a cut result would produce plausible, wrong totals.
-  assertReportComplete("merch", rows, count);
+      const { data, error, count } = await page;
+      if (error) throw error;
+      return { rows: (data ?? []) as unknown as MerchReportQueryRow[], count };
+    },
+  });
 
   // Aggregate client-side
   const map = new Map<string, MerchReportRow>();

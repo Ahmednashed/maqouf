@@ -224,7 +224,7 @@ property that matters as the team grows.
 The GPS tab additionally joins `place:places(lat,lng)` per visit. Fine, but it
 means the GPS report's cost tracks visit count, not branch count.
 
-### The 1,000-row ceiling — detected; lifted for Visits
+### The 1,000-row ceiling — detected; lifted for Visits and Merch
 
 A date range is not a row bound: once a range matches more than 1,000 base rows
 (`visits`, or `visit_products` for the Product tab), the API returns the first
@@ -241,7 +241,7 @@ A tab in that state shows a message instead of rows and disables its Excel
 export; a failed refresh withholds the earlier rows too
 (`src/lib/report-completeness.ts`). No partial aggregate is shown or exported.
 
-**Lifted for the Visits tab only.** `fetchVisitsReport` reads in pages
+**Lifted for the Visits and Merch Performance tabs.** `fetchVisitsReport` reads in pages
 (`src/lib/report-pages.ts`): 1,000 rows per request in ascending `id` order,
 each page asking for the rows after the last `id` read (keyset, not offset),
 then sorted back to the tab's order (`scheduled_date` descending, `id`
@@ -266,7 +266,14 @@ range or filters) stops between pages.
 - **Cost.** A large range is several sequential requests, each recounting; the
   tab shows its loading row throughout, with no progress indicator.
 
-**Still open.** Merch, Branch, Product and GPS still make one read each and are
+`fetchMerchReport` uses the same loader for its visit rows, with the same
+checks, maximum and limits. It already read in ascending `id` order, so its
+aggregation sees the same rows in the same order and its figures, rounding and
+export are unchanged; `id` is read only as the paging key and is not part of
+the report. Note what the maximum means here: the tab's answer is a few rows,
+but a range of more than 20,000 *visits* is refused all the same.
+
+**Still open.** Branch, Product and GPS still make one read each and are
 unavailable over the ceiling; the same loader, or the server-side aggregation
 above, is what lifts it for them (Product's key is composite).
 `fetchBranchReport`'s two secondary reads (active `places`, and

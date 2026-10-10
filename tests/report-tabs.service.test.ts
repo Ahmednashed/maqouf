@@ -51,13 +51,15 @@ const VISIT_OUT = [
   { id: "v1", merch_id: M1, place_id: P1, scheduled_date: "2026-08-05", status: "pending", duration_minutes: 0, branch_ar: "فرع 1", branch_en: "Branch 1", branch_code: "BR-1", chain_ar: "سلسلة", chain_en: "Chain", merch_name: "Sara" },
 ];
 
+// Each row carries its visit `id`, ascending: the key the read is paged by.
+// It is not part of the report, so MERCH_OUT is exactly what it always was.
 const MERCH_ROWS = [
-  { status: "completed",  duration_minutes: 10,   merch_id: M1, merch: { id: M1, ...merch("Ahmed") } },
-  { status: "completed",  duration_minutes: 15,   merch_id: M1, merch: { id: M1, ...merch("Ahmed") } },
-  { status: "missed",     duration_minutes: 0,    merch_id: M1, merch: { id: M1, ...merch("Ahmed") } },
-  { status: "pending",    duration_minutes: null, merch_id: M1, merch: { id: M1, ...merch("Ahmed") } },
-  { status: "completed",  duration_minutes: 0,    merch_id: M2, merch: { id: M2, ...merch("Sara") } },
-  { status: "inprogress", duration_minutes: null, merch_id: M2, merch: { id: M2, ...merch("Sara") } },
+  { id: "v1", status: "completed",  duration_minutes: 10,   merch_id: M1, merch: { id: M1, ...merch("Ahmed") } },
+  { id: "v2", status: "completed",  duration_minutes: 15,   merch_id: M1, merch: { id: M1, ...merch("Ahmed") } },
+  { id: "v3", status: "missed",     duration_minutes: 0,    merch_id: M1, merch: { id: M1, ...merch("Ahmed") } },
+  { id: "v4", status: "pending",    duration_minutes: null, merch_id: M1, merch: { id: M1, ...merch("Ahmed") } },
+  { id: "v5", status: "completed",  duration_minutes: 0,    merch_id: M2, merch: { id: M2, ...merch("Sara") } },
+  { id: "v6", status: "inprogress", duration_minutes: null, merch_id: M2, merch: { id: M2, ...merch("Sara") } },
 ];
 const MERCH_OUT = [
   // 2 of 3 finished → 67%; (10 + 15) / 2 = 12.5 → 13.

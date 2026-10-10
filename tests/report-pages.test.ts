@@ -358,8 +358,8 @@ console.log("3) the Visits hook and cancellation");
     await fnOf(tab)(context).catch(() => {});
     usesSignal[tab] = read;
   }
-  eq("only the Visits hook takes the abort signal in this batch",
-     usesSignal, { summary: false, visits: true, merch: false, branch: false, product: false, gps: false });
+  eq("only the paged tabs' hooks take the abort signal: Visits and Merch so far",
+     usesSignal, { summary: false, visits: true, merch: true, branch: false, product: false, gps: false });
 
   {
     const aborted = new AbortController();

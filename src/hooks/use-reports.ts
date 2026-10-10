@@ -80,7 +80,7 @@ export function useVisitsReport(range: DateRange, filters?: ReportFilters, enabl
 export function useMerchReport(range: DateRange, filters?: ReportFilters, enabled = true) {
   return useQuery<MerchReportRow[]>({
     queryKey: key("merch", range, filters),
-    queryFn:  () => fetchMerchReport(range, filters),
+    queryFn:  ({ signal }) => fetchMerchReport(range, filters, signal),
     staleTime: 120_000,
     retry:     false,
     enabled:   enabled && ready(range),
