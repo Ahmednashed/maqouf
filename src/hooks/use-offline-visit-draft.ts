@@ -23,6 +23,7 @@ import {
   type DraftProducts,
   type DraftResponses,
 } from "@/lib/offline-drafts";
+import { classifyStoredDraft } from "@/lib/visit-completion";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -44,7 +45,8 @@ import {
  *
  * Offline path:
  *  unsaved → draft  (auto-save keeps going)
- *  draft stays until user comes back online and syncs.
+ *  draft stays until the user comes back online and presses Sync now /
+ *  Save. Nothing uploads it automatically.
  */
 export type SyncStatus =
   | "idle"     // nothing pending
@@ -64,6 +66,19 @@ export interface UseOfflineVisitDraftReturn {
    * decided what to do yet.  The page renders a restore-prompt banner.
    */
   pendingDraft:    VisitDraft | null;
+  /**
+   * Non-null when unsaved work is stored for a visit that is already closed.
+   * Shown read-only: it is never restored into, or written to, a closed visit,
+   * and is only removed by discardStrandedDraft().
+   */
+  strandedDraft:   VisitDraft | null;
+  /** Remove a stranded draft — only when the user asks. */
+  discardStrandedDraft: () => void;
+  /**
+   * The device went offline since the last successful save. Cleared by a
+   * successful save. Used to offer "Sync now" once the connection is back.
+   */
+  wasOffline:      boolean;
   /**
    * Call when the user confirms restore (AFTER updating page state with
    * pendingDraft.products / pendingDraft.responses).
@@ -108,7 +123,7 @@ export function useOfflineVisitDraft(
 
   useEffect(() => {
     const goOnline  = () => setIsOnline(true);
-    const goOffline = () => setIsOnline(false);
+    const goOffline = () => { setIsOnline(false); setWasOffline(true); };
     window.addEventListener("online",  goOnline);
     window.addEventListener("offline", goOffline);
     return () => {
@@ -120,6 +135,10 @@ export function useOfflineVisitDraft(
   // ── Sync status ───────────────────────────────────────────────────────────
   const [syncStatus,   setSyncStatus]   = useState<SyncStatus>("idle");
   const [pendingDraft, setPendingDraft] = useState<VisitDraft | null>(null);
+  const [strandedDraft, setStrandedDraft] = useState<VisitDraft | null>(null);
+  const [wasOffline,   setWasOffline]   = useState<boolean>(
+    typeof navigator !== "undefined" ? !navigator.onLine : false
+  );
 
   // Refs for debounce + latest draft snapshot
   const debounceRef   = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -127,12 +146,14 @@ export function useOfflineVisitDraft(
   const latestDataRef = useRef<{ products: DraftProducts; responses: DraftResponses } | null>(null);
 
   // ── Load draft on mount ───────────────────────────────────────────────────
+  // Re-run when the visit turns out to be closed: unsaved work for a closed
+  // visit is not restorable, but it must not disappear either.
   useEffect(() => {
-    if (!visitId || isReadOnly) return;
+    if (!visitId) return;
     const draft = readDraft(visitId);
-    if (draft?.dirty) {
-      setPendingDraft(draft);
-    }
+    const state = classifyStoredDraft(draft, isReadOnly);
+    setPendingDraft(state === "restorable" ? draft : null);
+    setStrandedDraft(state === "stranded" ? draft : null);
   }, [visitId, isReadOnly]);
 
   // ── Cleanup timers on unmount ─────────────────────────────────────────────
@@ -188,6 +209,7 @@ export function useOfflineVisitDraft(
       });
     }
     setSyncStatus("synced");
+    setWasOffline(false);
     // Auto-revert to idle after SYNCED_SHOW_MS so the indicator doesn't
     // permanently clutter the bar.
     if (syncedTimerRef.current) clearTimeout(syncedTimerRef.current);
@@ -212,6 +234,11 @@ export function useOfflineVisitDraft(
     setSyncStatus("idle");
   }, [visitId]);
 
+  const discardStrandedDraft = useCallback(() => {
+    clearDraft(visitId);
+    setStrandedDraft(null);
+  }, [visitId]);
+
   // ── Clear on completion ───────────────────────────────────────────────────
   const clearLocalDraft = useCallback(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -223,6 +250,9 @@ export function useOfflineVisitDraft(
     isOnline,
     syncStatus,
     pendingDraft,
+    strandedDraft,
+    discardStrandedDraft,
+    wasOffline,
     confirmRestore,
     discardDraft,
     updateDraft,

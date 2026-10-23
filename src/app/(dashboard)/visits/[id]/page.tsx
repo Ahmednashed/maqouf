@@ -50,7 +50,14 @@ import {
   useOfflineVisitDraft,
   type SyncStatus,
 } from "@/hooks/use-offline-visit-draft";
-import type { DraftProducts } from "@/lib/offline-drafts";
+import type { DraftProducts, VisitDraft } from "@/lib/offline-drafts";
+import {
+  syncPrompt,
+  describeStrandedDraft,
+  type SyncPrompt,
+  type StrandedProductRow,
+  type StrandedResponseRow,
+} from "@/lib/visit-completion";
 import { useEntityActivity } from "@/hooks/use-activity-logs";
 import { ActivityTimeline } from "@/components/activity/ActivityTimeline";
 
@@ -58,6 +65,16 @@ import { ActivityTimeline } from "@/components/activity/ActivityTimeline";
 
 type ProductEntry = { qty_found: string; notes: string };
 type Entries      = Record<string, ProductEntry>;
+
+/** One visit_products row as handleSave will send it, from the local entry. */
+function saveItemFor(p: VisitProductWithDetails, entry: ProductEntry | undefined) {
+  const e          = entry ?? { qty_found: "", notes: "" };
+  const qtyFound   = e.qty_found !== "" ? parseInt(e.qty_found) : null;
+  const qtyMissing = qtyFound != null && p.min_stock > 0
+    ? Math.max(0, p.min_stock - qtyFound)
+    : null;
+  return { product_id: p.product_id, qty_found: qtyFound, qty_missing: qtyMissing, notes: e.notes || null };
+}
 
 // ─── Elapsed timer hook ───────────────────────────────────────────────────────
 
@@ -182,6 +199,155 @@ function RestorePromptBanner({
         >
           {t("offline.discard")}
         </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Back online: Sync now ────────────────────────────────────────────────────
+
+function SyncNowBanner({
+  kind, syncing, t, onSync,
+}: {
+  kind:    Exclude<SyncPrompt, null>;
+  syncing: boolean;
+  t:       TranslationFn;
+  onSync:  () => void;
+}) {
+  const failed = kind === "failed";
+  return (
+    <div
+      role={failed ? "alert" : "status"}
+      className={cn(
+        "rounded-2xl border p-4 mb-5 shadow-sm",
+        failed ? "bg-rose-50 border-rose-200" : "bg-amber-50 border-amber-200",
+      )}
+    >
+      <div className="flex items-start gap-3">
+        <CloudUpload className={cn("w-5 h-5 shrink-0 mt-0.5", failed ? "text-rose-500" : "text-amber-500")} />
+        <div className="flex-1 min-w-0">
+          <p className={cn("text-[13.5px] font-bold", failed ? "text-rose-800" : "text-amber-800")}>
+            {failed ? t("offline.syncFailedTitle") : t("offline.backOnlineTitle")}
+          </p>
+          <p className={cn("text-[12px] mt-0.5", failed ? "text-rose-700" : "text-amber-700")}>
+            {failed ? t("offline.syncFailedDesc") : t("offline.backOnlineDesc")}
+          </p>
+        </div>
+      </div>
+      <button
+        type="button"
+        onClick={onSync}
+        disabled={syncing}
+        aria-busy={syncing}
+        className="mt-3 w-full h-10 rounded-xl bg-brand-500 hover:bg-brand-600 disabled:opacity-60 text-white text-[13px] font-semibold transition-all flex items-center justify-center gap-2"
+      >
+        <CloudUpload className={cn("w-4 h-4", syncing && "animate-pulse")} />
+        {syncing ? t("offline.syncing") : t("offline.syncNow")}
+      </button>
+    </div>
+  );
+}
+
+// ─── Unsaved work for a closed visit ──────────────────────────────────────────
+
+function StrandedDraftBanner({
+  draft, rows, locale, t, onDiscard,
+}: {
+  draft:     VisitDraft;
+  rows:      { products: StrandedProductRow[]; responses: StrandedResponseRow[] };
+  locale:    string;
+  t:         TranslationFn;
+  onDiscard: () => void;
+}) {
+  const [open, setOpen]             = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const isAr = locale === "ar";
+  const savedAt = new Date(draft.last_saved_locally_at).toLocaleString(
+    isAr ? "ar-SA" : "en-GB",
+    { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" },
+  );
+  const empty = rows.products.length === 0 && rows.responses.length === 0;
+
+  return (
+    <div role="status" className="bg-amber-50 border border-amber-300 rounded-2xl p-4 mb-5 shadow-sm">
+      <div className="flex items-start gap-3">
+        <AlertTriangle className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
+        <div className="flex-1 min-w-0">
+          <p className="text-[13.5px] font-bold text-amber-900">{t("offline.strandedTitle")}</p>
+          <p className="text-[12px] text-amber-800 mt-0.5">{t("offline.strandedDesc")}</p>
+          <p className="text-[12px] text-amber-700 mt-0.5">{t("offline.draftSavedAt").replace("{time}", savedAt)}</p>
+        </div>
+      </div>
+
+      {!empty && (
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          aria-expanded={open}
+          className="mt-3 text-[12.5px] font-semibold text-amber-900 underline underline-offset-2"
+        >
+          {open ? t("offline.strandedHide") : t("offline.strandedShow")}
+        </button>
+      )}
+
+      {open && !empty && (
+        <div className="mt-2 space-y-3 rounded-xl bg-white/70 border border-amber-200 p-3">
+          {rows.products.length > 0 && (
+            <div>
+              <p className="text-[12px] font-bold text-ink-700 mb-1">{t("offline.strandedProducts")}</p>
+              <ul className="space-y-1">
+                {rows.products.map((p) => (
+                  <li key={p.product_id} className="text-[12px] text-ink-700">
+                    <span className="font-semibold">{isAr ? p.name_ar : p.name_en}</span>
+                    {" — "}{t("offline.strandedQty")}: <bdi>{p.qty_found || "—"}</bdi>
+                    {p.notes && <>{" · "}{t("offline.strandedNotes")}: <bdi>{p.notes}</bdi></>}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {rows.responses.length > 0 && (
+            <div>
+              <p className="text-[12px] font-bold text-ink-700 mb-1">{t("offline.strandedResponses")}</p>
+              <ul className="space-y-1">
+                {rows.responses.map((r) => (
+                  <li key={r.field_id} className="text-[12px] text-ink-700">
+                    <span className="font-semibold">{isAr ? r.label_ar : r.label_en}</span>: <bdi>{r.value}</bdi>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
+
+      <div className="flex gap-2 mt-3">
+        {confirming ? (
+          <>
+            <button
+              type="button"
+              onClick={onDiscard}
+              className="flex-1 h-9 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-[12.5px] font-semibold transition-all"
+            >
+              {t("offline.strandedDiscardConfirm")}
+            </button>
+            <button
+              type="button"
+              onClick={() => setConfirming(false)}
+              className="flex-1 h-9 rounded-xl border border-amber-300 text-amber-900 text-[12.5px] font-semibold hover:bg-amber-100 transition-all"
+            >
+              {t("offline.strandedDiscardCancel")}
+            </button>
+          </>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setConfirming(true)}
+            className="h-9 px-3 rounded-xl border border-amber-300 text-amber-900 text-[12.5px] font-semibold hover:bg-amber-100 transition-all"
+          >
+            {t("offline.strandedDiscard")}
+          </button>
+        )}
       </div>
     </div>
   );
@@ -623,6 +789,9 @@ export default function VisitDetailPage() {
     isOnline,
     syncStatus,
     pendingDraft,
+    strandedDraft,
+    discardStrandedDraft,
+    wasOffline,
     confirmRestore,
     discardDraft,
     updateDraft,
@@ -638,19 +807,23 @@ export default function VisitDetailPage() {
   const [showComplete, setShowComplete] = useState(false);
   const prodInitialized                 = useRef(false);
 
+  // Initialised once the product rows have LOADED — including when there are
+  // none. Waiting for at least one row left a visit without an assortment
+  // never initialised, so its unsaved form answers were never detected as
+  // unsaved (editsReady below stayed false): no warning, no Sync now, and
+  // completion went ahead without saving them.
   useEffect(() => {
-    if (visitProducts.length > 0 && !prodInitialized.current) {
-      const initial: Entries = {};
-      visitProducts.forEach((p) => {
-        initial[p.product_id] = {
-          qty_found: p.qty_found != null ? String(p.qty_found) : "",
-          notes:     p.notes ?? "",
-        };
-      });
-      setEntries(initial);
-      prodInitialized.current = true;
-    }
-  }, [visitProducts]);
+    if (prodInitialized.current || productsLoading || !visit) return;
+    const initial: Entries = {};
+    visitProducts.forEach((p) => {
+      initial[p.product_id] = {
+        qty_found: p.qty_found != null ? String(p.qty_found) : "",
+        notes:     p.notes ?? "",
+      };
+    });
+    setEntries(initial);
+    prodInitialized.current = true;
+  }, [visitProducts, productsLoading, visit]);
 
   useEffect(() => {
     if (visit?.notes) setNotes(visit.notes);
@@ -722,14 +895,7 @@ export default function VisitDetailPage() {
   );
 
   function buildSaveItems() {
-    return visitProducts.map((p) => {
-      const e          = entries[p.product_id] ?? { qty_found: "", notes: "" };
-      const qtyFound   = e.qty_found !== "" ? parseInt(e.qty_found) : null;
-      const qtyMissing = qtyFound != null && p.min_stock > 0
-        ? Math.max(0, p.min_stock - qtyFound)
-        : null;
-      return { product_id: p.product_id, qty_found: qtyFound, qty_missing: qtyMissing, notes: e.notes || null };
-    });
+    return visitProducts.map((p) => saveItemFor(p, entries[p.product_id]));
   }
 
   function buildResponseItems() {
@@ -742,12 +908,13 @@ export default function VisitDetailPage() {
   /**
    * handleSave — syncs products + responses to the server.
    * When offline: skips the network call and acknowledges the local draft.
+   * Resolves true only when everything was saved; completing relies on that.
    */
-  async function handleSave() {
+  async function handleSave(): Promise<boolean> {
     if (!isOnline) {
       // Draft is already in localStorage (auto-saved on every edit).
       toast.info(t("offline.savedLocallyToast"));
-      return;
+      return false;
     }
 
     markSaving();
@@ -765,9 +932,11 @@ export default function VisitDetailPage() {
       }
       await Promise.all(saves);
       markSynced();
+      return true;
     } catch {
       // Error toast is already shown by the mutation's onError handler.
       markFailed();
+      return false;
     }
   }
 
@@ -851,6 +1020,49 @@ export default function VisitDetailPage() {
     [template?.fields, savedResponses],
   );
 
+  // The same two plans as they will stand once the unsaved edits are saved.
+  // The completion dialog reports on these: completing saves the edits first,
+  // so they are what actually gets completed. Identical to the saved plans
+  // when nothing is unsaved.
+  const productPlanAfterSave = useMemo(() => {
+    if (!editsReady) return productPlan;
+    return deriveVisitProductPlan(assortment, visitProducts.map((p) => {
+      const item = saveItemFor(p, entries[p.product_id]);
+      return { ...p, qty_found: item.qty_found, qty_missing: item.qty_missing };
+    }));
+  }, [editsReady, productPlan, assortment, visitProducts, entries]);
+
+  const fieldPlanAfterSave = useMemo(
+    () => (template?.fields
+      ? deriveVisitFieldPlan(template.fields, editsReady ? responses : savedResponses)
+      : null),
+    [template?.fields, editsReady, responses, savedResponses],
+  );
+
+  // Back online (or after a failed save) with edits only this device has.
+  const syncNeeded = syncPrompt({
+    isOnline,
+    dirty:      dirtyState.dirty,
+    wasOffline,
+    saveFailed: syncStatus === "failed",
+  });
+
+  // Unsaved work kept for a visit that has since been closed: shown, never written.
+  const strandedRows = useMemo(
+    () => (strandedDraft
+      ? describeStrandedDraft(strandedDraft, {
+          products:  visitProducts.map((p) => ({
+            product_id: p.product_id, qty_found: p.qty_found, notes: p.notes,
+            name_ar: p.product?.name_ar, name_en: p.product?.name_en,
+          })),
+          fields:    (template?.fields ?? []).filter((f) => f.type !== "section")
+            .map((f) => ({ id: f.id, label_ar: f.label_ar, label_en: f.label_en })),
+          responses: savedResponses,
+        })
+      : null),
+    [strandedDraft, visitProducts, template?.fields, savedResponses],
+  );
+
   // ── Loading ──────────────────────────────────────────────────────────────
   if (visitLoading) {
     return (
@@ -908,6 +1120,27 @@ export default function VisitDetailPage() {
           t={t}
           onRestore={handleRestoreDraft}
           onDiscard={handleDiscardDraft}
+        />
+      )}
+
+      {/* ── Unsaved work for a visit that is already closed ──────────────── */}
+      {isReadOnly && strandedDraft && strandedRows && (
+        <StrandedDraftBanner
+          draft={strandedDraft}
+          rows={strandedRows}
+          locale={locale}
+          t={t}
+          onDiscard={discardStrandedDraft}
+        />
+      )}
+
+      {/* ── Back online, or a failed save: offer Sync now ─────────────────── */}
+      {isInProgress && syncNeeded && !pendingDraft && (
+        <SyncNowBanner
+          kind={syncNeeded}
+          syncing={isSaving || syncStatus === "saving"}
+          t={t}
+          onSync={() => { void handleSave(); }}
         />
       )}
 
@@ -1205,25 +1438,25 @@ export default function VisitDetailPage() {
 
       {/* ── Complete modal ───────────────────────────────────────────────── */}
       {showComplete && (
-        /* Both plans are derived from SAVED rows, not the local edit state.
-           Completing does not persist the audit — handleSave does — so a
-           warning built on unsaved input would reassure the user about data
-           that is about to be discarded. */
+        /* The plans as they will stand after saving: completing saves any
+           unsaved edits first (and does not complete if that fails), so the
+           readiness warning describes what will actually be completed. */
         <CompleteModal
           visit={visit}
-          productPlan={productPlan}
-          fieldPlan={fieldPlan}
+          productPlan={productPlanAfterSave}
+          fieldPlan={fieldPlanAfterSave}
           dirty={dirtyState}
           isOnline={isOnline}
           saving={isSaving || syncStatus === "saving"}
           onSaveNow={handleSave}
           notes={notes}
           onClose={() => setShowComplete(false)}
-          onDone={() => {
-            // Only discard the local backup when the server already has
-            // everything. Completing offline with unsaved edits keeps the
-            // draft, which is the only remaining copy of that work.
-            if (!dirtyState.dirty) clearLocalDraft();
+          onDone={(allSaved) => {
+            // Only discard the local copy when the server has everything.
+            // Completion now only happens online, after any unsaved edits
+            // were saved, so this is the normal case; anything else keeps the
+            // draft, which would then be the only copy of that work.
+            if (allSaved) clearLocalDraft();
             setShowComplete(false);
             router.push("/visits");
           }}

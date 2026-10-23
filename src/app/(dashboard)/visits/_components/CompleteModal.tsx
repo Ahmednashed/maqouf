@@ -14,6 +14,7 @@ import type { TranslationKey } from "@/lib/i18n/translations";
 import { useTranslation } from "@/hooks/use-translation";
 import { pluralKey } from "@/lib/i18n/plural";
 import { useCompleteVisit } from "@/hooks/use-visits";
+import { completionDialogView, saveThenComplete } from "@/lib/visit-completion";
 import type { VisitWithDetails } from "@/services/visits";
 import { merchDisplayName } from "@/lib/utils/member-name";
 
@@ -33,20 +34,29 @@ const GAP_KEY: Record<ReadinessKind, string> = {
 
 interface CompleteModalProps {
   visit:    VisitWithDetails;
-  /** Plans from the detail page — already derived there, not recomputed. */
+  /**
+   * Plans from the detail page, as the visit will stand once unsaved edits
+   * are saved — completing saves them first, so that is what is completed.
+   */
   productPlan: VisitProductPlan;
   fieldPlan:   VisitFieldPlan | null;
   /** Local edits the server has not got. */
   dirty:       DirtyState;
   isOnline:    boolean;
   saving:      boolean;
-  /** Runs the page's existing handleSave — no new persistence path. */
-  onSaveNow:   () => void;
+  /**
+   * The page's existing handleSave — no new persistence path. Resolves true
+   * only when everything was saved.
+   */
+  onSaveNow:   () => Promise<boolean>;
   /** Extra notes from the audit textarea (passed from parent) */
   notes:    string;
   onClose:  () => void;
-  /** Called after successful completion */
-  onDone:   () => void;
+  /**
+   * Called after successful completion. `allSaved`: the server has every
+   * edit, so the local draft can go.
+   */
+  onDone:   (allSaved: boolean) => void;
 }
 
 export function CompleteModal({
@@ -65,6 +75,9 @@ export function CompleteModal({
   const complete        = useCompleteVisit();
   const [extraNotes, setExtraNotes] = useState(notes);
   const [acked, setAcked]           = useState(false);
+  const [working, setWorking]       = useState(false);
+  /** Why the last attempt stopped, shown until the next one. */
+  const [stopped, setStopped]       = useState<"saveFailed" | "offline" | null>(null);
 
   // ── Readiness ───────────────────────────────────────────────────────────────
   // The previous summary counted only quantities below the branch minimum,
@@ -73,17 +86,14 @@ export function CompleteModal({
   // looked at the form.
   const readiness  = deriveVisitReadiness({ productPlan, fieldPlan, visit });
 
-  // Online, saving is one click away, so unsaved work blocks outright — that
-  // is the only way "complete" cannot quietly drop it. Offline it cannot be
-  // saved at all, and refusing would strand a field user mid-shift, so it
-  // joins the Batch 11 acknowledgement instead.
-  const mustSave   = dirty.dirty && isOnline;
-  const needsAck   = hasRequiredGaps(readiness) || (dirty.dirty && !isOnline);
-  const blocked    = mustSave || (needsAck && !acked);
+  // Completing needs the connection: unsaved edits are saved first, and the
+  // completion request itself is never queued for later. Offline, the button
+  // is unavailable — there is no acknowledgement that bypasses it.
+  const needsAck   = hasRequiredGaps(readiness);
+  const busy       = working || saving || complete.isPending;
+  const view       = completionDialogView({ isOnline, dirty: dirty.dirty, needsAck, acked, busy });
+  const blocked    = view.block !== null;
 
-  // From the plan, not the passed-in rows: the rows carry local edit state,
-  // and completing does not save it. Counting typed-but-unsaved input here
-  // would contradict the warning directly below it.
   const checked       = productPlan.checkedCount;
   const totalProducts = productPlan.expectedCount;
   const sub = (key: string, vals: Record<string, string | number>) =>
@@ -97,9 +107,24 @@ export function CompleteModal({
   async function handleConfirm() {
     // Guarded here as well as on the button: the acknowledgement is the whole
     // point of the dialog, so it must not be bypassable by a stray call.
-    if (blocked) return;
-    await complete.mutateAsync({ id: visit.id, notes: extraNotes || undefined });
-    onDone();
+    if (blocked || busy) return;
+    setStopped(null);
+    setWorking(true);
+    try {
+      const outcome = await saveThenComplete({
+        dirty:    dirty.dirty,
+        // Read live, not from the prop captured at render: the connection can
+        // drop during the save.
+        isOnline: () => (typeof navigator === "undefined" ? true : navigator.onLine),
+        save:     onSaveNow,
+        complete: () => complete.mutateAsync({ id: visit.id, notes: extraNotes || undefined }),
+      });
+      if (outcome.kind === "completed") { onDone(true); return; }
+      if (outcome.kind === "saveFailed" || outcome.kind === "offline") setStopped(outcome.kind);
+      // completeFailed: the mutation's own error toast has said why.
+    } finally {
+      setWorking(false);
+    }
   }
 
   return (
@@ -193,7 +218,9 @@ export function CompleteModal({
                 <AlertTriangle className="w-4 h-4 shrink-0 mt-px" />
                 {t("visits.unsaved.title")}
               </p>
-              <p className="mt-1 ms-6 text-[12px] text-rose-700">{t("visits.unsaved.desc")}</p>
+              {view.unsavedMessage && (
+                <p className="mt-1 ms-6 text-[12px] text-rose-700">{t(view.unsavedMessage)}</p>
+              )}
               <ul className="mt-1.5 ms-6 space-y-0.5 list-disc">
                 {dirty.changedProducts > 0 && (
                   <li className="text-[12px] text-rose-700">
@@ -213,21 +240,24 @@ export function CompleteModal({
                 )}
               </ul>
 
-              {isOnline ? (
-                <button
-                  type="button"
-                  onClick={onSaveNow}
-                  disabled={saving}
-                  className="mt-3 w-full h-10 rounded-xl bg-brand-500 hover:bg-brand-600 disabled:opacity-60 text-white text-[13px] font-semibold transition-all"
-                >
-                  {saving ? t("visits.unsaved.saving") : t("visits.unsaved.saveNow")}
-                </button>
-              ) : (
-                <p className="mt-2 ms-6 text-[11.5px] text-rose-600 leading-snug">
-                  {t("visits.unsaved.offline")}
-                </p>
-              )}
             </div>
+          )}
+
+          {/* ── Why the last attempt stopped ────────────────────────────────
+              Announced, because the dialog stays open and nothing else on
+              screen changes when a save fails. */}
+          {stopped && (
+            <p role="alert" className="flex items-start gap-2 rounded-xl border border-rose-300 bg-rose-50 p-3 mb-4 text-[12.5px] text-rose-800 leading-snug">
+              <AlertTriangle className="w-4 h-4 shrink-0 mt-px" />
+              {stopped === "saveFailed" ? t("visits.unsaved.saveFailed") : t("visits.unsaved.offlineBlocked")}
+            </p>
+          )}
+
+          {view.offlineNotice && (
+            <p className="flex items-start gap-2 text-[12.5px] text-amber-800 mb-4 leading-snug">
+              <AlertTriangle className="w-4 h-4 shrink-0 mt-px" />
+              {t(view.offlineNotice)}
+            </p>
           )}
 
           {/* ── What completing now would leave unrecorded ──────────────────
@@ -306,14 +336,18 @@ export function CompleteModal({
             </button>
             <button
               onClick={handleConfirm}
-              disabled={complete.isPending || blocked}
-              title={mustSave ? t("visits.unsaved.blocked") : blocked ? t("visits.ready.ackRequired") : undefined}
+              disabled={view.confirmDisabled}
+              aria-busy={busy}
+              title={view.confirmTitle ? t(view.confirmTitle) : undefined}
               className="flex-1 h-11 rounded-xl bg-emerald-500 hover:bg-emerald-600 disabled:opacity-60 disabled:cursor-not-allowed text-white text-[13.5px] font-semibold shadow-pop transition-all flex items-center justify-center gap-2"
             >
-              {complete.isPending ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
+              {busy ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span className="sr-only">{dirty.dirty ? t("visits.unsaved.saving") : t("visits.complete")}</span>
+                </>
               ) : (
-                t("visits.complete")
+                t(view.confirmLabel)
               )}
             </button>
           </div>

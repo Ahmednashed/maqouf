@@ -15,6 +15,7 @@ import {
 } from "@/services/visits";
 import { type GpsPosition } from "@/lib/geo";
 import { useTranslation } from "@/hooks/use-translation";
+import { VISIT_PRODUCTS_KEY } from "@/hooks/use-visit-products";
 
 // ─── Query key factories ──────────────────────────────────────────────────────
 
@@ -112,7 +113,13 @@ export function useStartVisit() {
 
     onSettled: (data) => {
       qc.invalidateQueries({ queryKey: ["visits"] });
-      if (data) qc.invalidateQueries({ queryKey: VISIT_QUERY_KEY(data.id) });
+      if (data) {
+        qc.invalidateQueries({ queryKey: VISIT_QUERY_KEY(data.id) });
+        // Starting a visit seeds its visit_products rows (initVisitProducts).
+        // Without this the product list keeps the empty result it fetched
+        // before the visit started, until the page is reloaded.
+        qc.invalidateQueries({ queryKey: VISIT_PRODUCTS_KEY(data.id) });
+      }
     },
   });
 }
@@ -126,6 +133,13 @@ export function useCompleteVisit() {
   return useMutation({
     mutationFn: ({ id, notes }: { id: string; notes?: string }) =>
       completeVisit(id, notes),
+
+    // Never queue a completion. With the default ("online"), TanStack Query
+    // pauses this request while the device is offline and sends it when the
+    // connection returns — which could close the visit before its unsaved
+    // draft is synced. Offline, it now fails at once instead, and the visit
+    // stays open (see lib/visit-completion.ts).
+    networkMode: "always",
 
     onSuccess: (data) => {
       qc.setQueryData(VISIT_QUERY_KEY(data.id), data);
