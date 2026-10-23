@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { CheckCircle, X, Loader2, Package, AlertTriangle, FileText, MapPin } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
 import {
@@ -14,7 +14,12 @@ import type { TranslationKey } from "@/lib/i18n/translations";
 import { useTranslation } from "@/hooks/use-translation";
 import { pluralKey } from "@/lib/i18n/plural";
 import { useCompleteVisit } from "@/hooks/use-visits";
-import { completionDialogView, saveThenComplete } from "@/lib/visit-completion";
+import {
+  completionDialogView,
+  createCompletionGuard,
+  saveThenComplete,
+  type CompletionCloseSource,
+} from "@/lib/visit-completion";
 import type { VisitWithDetails } from "@/services/visits";
 import { merchDisplayName } from "@/lib/utils/member-name";
 
@@ -49,14 +54,17 @@ interface CompleteModalProps {
    * only when everything was saved.
    */
   onSaveNow:   () => Promise<boolean>;
+  /** The page's edit revision (bumped on every local edit). */
+  editRevision: () => number;
   /** Extra notes from the audit textarea (passed from parent) */
   notes:    string;
   onClose:  () => void;
   /**
-   * Called after successful completion. `allSaved`: the server has every
-   * edit, so the local draft can go.
+   * Called after successful completion, with the edit revision that was
+   * completed. The page clears the local draft only if nothing was edited
+   * since.
    */
-  onDone:   (allSaved: boolean) => void;
+  onDone:   (completedRevision: number | null) => void;
 }
 
 export function CompleteModal({
@@ -67,6 +75,7 @@ export function CompleteModal({
   isOnline,
   saving,
   onSaveNow,
+  editRevision,
   notes,
   onClose,
   onDone,
@@ -77,7 +86,14 @@ export function CompleteModal({
   const [acked, setAcked]           = useState(false);
   const [working, setWorking]       = useState(false);
   /** Why the last attempt stopped, shown until the next one. */
-  const [stopped, setStopped]       = useState<"saveFailed" | "offline" | null>(null);
+  const [stopped, setStopped]       = useState<"saveFailed" | "offline" | "changedDuringSave" | null>(null);
+  // Holds the dialog open while an operation runs. Kept in a ref and checked
+  // in the close handler, so it holds from the very first moment — before the
+  // re-render that disables the buttons.
+  const guard = useRef(createCompletionGuard()).current;
+  function requestClose(source: CompletionCloseSource) {
+    guard.requestClose(source, onClose);
+  }
 
   // ── Readiness ───────────────────────────────────────────────────────────────
   // The previous summary counted only quantities below the branch minimum,
@@ -107,7 +123,7 @@ export function CompleteModal({
   async function handleConfirm() {
     // Guarded here as well as on the button: the acknowledgement is the whole
     // point of the dialog, so it must not be bypassable by a stray call.
-    if (blocked || busy) return;
+    if (blocked || busy || !guard.begin()) return;
     setStopped(null);
     setWorking(true);
     try {
@@ -118,11 +134,19 @@ export function CompleteModal({
         isOnline: () => (typeof navigator === "undefined" ? true : navigator.onLine),
         save:     onSaveNow,
         complete: () => complete.mutateAsync({ id: visit.id, notes: extraNotes || undefined }),
+        revision: editRevision,
       });
-      if (outcome.kind === "completed") { onDone(true); return; }
-      if (outcome.kind === "saveFailed" || outcome.kind === "offline") setStopped(outcome.kind);
+      if (outcome.kind === "completed") {
+        guard.end();
+        onDone(outcome.revision);
+        return;
+      }
+      if (outcome.kind === "saveFailed" || outcome.kind === "offline" || outcome.kind === "changedDuringSave") {
+        setStopped(outcome.kind);
+      }
       // completeFailed: the mutation's own error toast has said why.
     } finally {
+      guard.end();
       setWorking(false);
     }
   }
@@ -130,7 +154,8 @@ export function CompleteModal({
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center p-4"
-      onClick={onClose}
+      onClick={() => requestClose("backdrop")}
+      aria-busy={busy}
     >
       <div className="absolute inset-0 bg-ink-900/40 backdrop-blur-sm animate-fade-in" />
 
@@ -140,8 +165,9 @@ export function CompleteModal({
       >
         {/* Close */}
         <button
-          onClick={onClose}
-          className="absolute top-4 end-4 w-8 h-8 rounded-lg flex items-center justify-center text-ink-400 hover:text-ink-700 hover:bg-ink-100 transition-all"
+          onClick={() => requestClose("closeButton")}
+          disabled={busy}
+          className="absolute top-4 end-4 w-8 h-8 rounded-lg flex items-center justify-center text-ink-400 hover:text-ink-700 hover:bg-ink-100 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
         >
           <X className="w-4 h-4" />
         </button>
@@ -249,7 +275,18 @@ export function CompleteModal({
           {stopped && (
             <p role="alert" className="flex items-start gap-2 rounded-xl border border-rose-300 bg-rose-50 p-3 mb-4 text-[12.5px] text-rose-800 leading-snug">
               <AlertTriangle className="w-4 h-4 shrink-0 mt-px" />
-              {stopped === "saveFailed" ? t("visits.unsaved.saveFailed") : t("visits.unsaved.offlineBlocked")}
+              {stopped === "saveFailed" ? t("visits.unsaved.saveFailed")
+               : stopped === "changedDuringSave" ? t("visits.unsaved.changedDuringSave")
+               : t("visits.unsaved.offlineBlocked")}
+            </p>
+          )}
+
+          {/* ── In progress ──────────────────────────────────────────────────
+              Says why the dialog cannot be closed right now. */}
+          {busy && (
+            <p role="status" className="flex items-center gap-2 rounded-xl bg-ink-50 border border-ink-100 p-3 mb-4 text-[12.5px] text-ink-700">
+              <Loader2 className="w-4 h-4 shrink-0 animate-spin" />
+              {dirty.dirty ? t("visits.completing.saving") : t("visits.completing.completing")}
             </p>
           )}
 
@@ -329,8 +366,9 @@ export function CompleteModal({
           {/* Actions */}
           <div className="flex gap-3">
             <button
-              onClick={onClose}
-              className="flex-1 h-11 rounded-xl border border-ink-200 text-ink-700 text-[13.5px] font-semibold hover:bg-ink-50 transition-all"
+              onClick={() => requestClose("cancel")}
+              disabled={busy}
+              className="flex-1 h-11 rounded-xl border border-ink-200 text-ink-700 text-[13.5px] font-semibold hover:bg-ink-50 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
             >
               {t("common.cancel")}
             </button>

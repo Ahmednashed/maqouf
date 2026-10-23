@@ -24,6 +24,7 @@ import { QueryClient, QueryClientProvider, MutationObserver, onlineManager } fro
 import { eq, ok } from "./_harness.ts";
 import {
   completionBlock, completionDialogView, saveThenComplete, classifyStoredDraft, syncPrompt, describeStrandedDraft,
+  createCompletionGuard, noEditsSince, type CompletionCloseSource,
 } from "@/lib/visit-completion";
 import { readDraft, writeDraft, type VisitDraft } from "@/lib/offline-drafts";
 import { useCompleteVisit, useStartVisit } from "@/hooks/use-visits";
@@ -67,8 +68,8 @@ console.log("1) the completion and draft rules");
   };
 
   eq("unsaved edits, online: save, then complete — in that order",
-     await run({ dirty: true }), { outcome: { kind: "completed", savedFirst: true }, calls: ["save", "complete"] });
-  eq("no unsaved edits: complete only", await run({ dirty: false }), { outcome: { kind: "completed", savedFirst: false }, calls: ["complete"] });
+     await run({ dirty: true }), { outcome: { kind: "completed", savedFirst: true, revision: null }, calls: ["save", "complete"] });
+  eq("no unsaved edits: complete only", await run({ dirty: false }), { outcome: { kind: "completed", savedFirst: false, revision: null }, calls: ["complete"] });
   eq("the save fails: no completion request at all",
      await run({ dirty: true, save: async () => false }), { outcome: { kind: "saveFailed" }, calls: ["save"] });
   eq("the save throws: treated as failed, no completion",
@@ -268,14 +269,19 @@ console.log("5) wiring");
   ok("the dialog completes only through saveThenComplete, saving with the page's handleSave",
      /saveThenComplete\(\{[\s\S]*save:\s+onSaveNow,[\s\S]*complete: \(\) => complete\.mutateAsync/.test(modal) && (modal.match(/complete\.mutateAsync/g) ?? []).length === 1);
   ok("the dialog reports a failed save in an announced message and stays open",
-     /role="alert"[\s\S]{0,300}visits\.unsaved\.saveFailed/.test(modal) && /if \(outcome\.kind === "completed"\) \{ onDone\(true\); return; \}/.test(modal));
+     /role="alert"[\s\S]{0,300}visits\.unsaved\.saveFailed/.test(modal) &&
+     /if \(outcome\.kind === "completed"\) \{\s+guard\.end\(\);\s+onDone\(outcome\.revision\);\s+return;\s+\}/.test(modal));
   ok("the dialog has no offline acknowledgement path left", !/dirty\.dirty && !isOnline/.test(modal));
   ok("the dialog takes its button state, label and messages from completionDialogView",
      modal.includes("completionDialogView({ isOnline, dirty: dirty.dirty, needsAck, acked, busy })") &&
      modal.includes("disabled={view.confirmDisabled}") && modal.includes("t(view.confirmLabel)") &&
      modal.includes("t(view.unsavedMessage)") && modal.includes("t(view.offlineNotice)"));
-  ok("handleSave reports success or failure", /async function handleSave\(\): Promise<boolean>/.test(page) && /markSynced\(\);\s+return true;/.test(page) && /markFailed\(\);\s+return false;/.test(page));
-  ok("the local draft is cleared only when completion reports everything saved", /onDone=\{\(allSaved\) => \{[\s\S]{0,400}if \(allSaved\) clearLocalDraft\(\);/.test(page));
+  ok("handleSave reports success or failure, and tells the draft which revision it saved",
+     /async function handleSave\(\): Promise<boolean>/.test(page) && page.includes("const savingRevision = markSaving();") &&
+     /markSynced\(savingRevision\);\s+return true;/.test(page) && /markFailed\(\);\s+return false;/.test(page));
+  ok("the local draft is cleared only if nothing was edited since the completed revision",
+     /onDone=\{\(completedRevision\) => \{[\s\S]{0,500}if \(noEditsSince\(completedRevision, editRevision\(\)\)\) clearLocalDraft\(\);/.test(page) &&
+     !/if \(allSaved\) clearLocalDraft/.test(page) && page.includes("editRevision={editRevision}"));
   ok("the stranded draft is shown only on a closed visit, and the banner never saves",
      page.includes("{isReadOnly && strandedDraft && strandedRows && (") &&
      !(/function StrandedDraftBanner[\s\S]*?\r?\n\}\r?\n/.exec(page)?.[0] ?? "handleSave").match(/handleSave|mutate|writeDraft|onSave/));
@@ -297,4 +303,133 @@ console.log("5) wiring");
   ok("the offline toast no longer promises an automatic sync",
      !/ستتم المزامنة عند الاتصال/.test(T("ar", "offline.savedLocallyToast")) && !/Sync when back online/.test(T("en", "offline.savedLocallyToast")) &&
      T("en", "offline.savedLocallyToast").includes(T("en", "offline.syncNow")) && T("ar", "offline.savedLocallyToast").includes(T("ar", "offline.syncNow")));
+}
+
+// ── 6) Closing the dialog while it works, and edits made meanwhile ───────────
+// The dialog's close handler asks createCompletionGuard; "Save and complete"
+// runs saveThenComplete with the page's edit revision. Driven here with a save
+// that takes as long as the test likes.
+console.log("6) closing while it works, and edits made meanwhile");
+{
+  type Deferred<T> = { promise: Promise<T>; resolve: (v: T) => void };
+  const deferred = <T,>(): Deferred<T> => { let resolve!: (v: T) => void; const promise = new Promise<T>((r) => { resolve = r; }); return { promise, resolve }; };
+  const SOURCES: CompletionCloseSource[] = ["backdrop", "closeButton", "cancel", "escape"];
+
+  // The guard on its own.
+  {
+    const g = createCompletionGuard();
+    let closed = 0;
+    eq("idle: every way of closing closes", SOURCES.map((src) => g.requestClose(src, () => { closed++; })), [true, true, true, true]);
+    eq("…each once", closed, 4);
+    closed = 0;
+    eq("an operation starts", g.begin(), true);
+    eq("a second press while it runs is refused", g.begin(), false);
+    eq("running: backdrop, X, Cancel and Escape are all refused", SOURCES.map((src) => g.requestClose(src, () => { closed++; })), [false, false, false, false]);
+    eq("…and the dialog's close callback is never called", closed, 0);
+    g.end();
+    eq("finished: closing works again", [g.requestClose("cancel", () => { closed++; }), closed], [true, 1]);
+  }
+
+  // A slow save: the dialog cannot be closed until it is over, and completion follows the save.
+  {
+    const g = createCompletionGuard();
+    const save = deferred<boolean>();
+    const calls: string[] = [];
+    let revision = 7;
+    let closed = 0;
+    g.begin();
+    const run = saveThenComplete({
+      dirty: true, isOnline: () => true, revision: () => revision,
+      save: async () => { calls.push("save:start"); const ok = await save.promise; calls.push("save:end"); return ok; },
+      complete: async () => { calls.push("complete"); },
+    }).finally(() => g.end());
+    await tick(5);
+    eq("while the save is pending, nothing has been completed", calls, ["save:start"]);
+    eq("…and every attempt to close is refused", SOURCES.map((src) => g.requestClose(src, () => { closed++; })), [false, false, false, false]);
+    save.resolve(true);
+    const outcome = await run;
+    eq("completion is sent only after the save has finished", calls, ["save:start", "save:end", "complete"]);
+    eq("…and reports the revision that was saved", outcome, { kind: "completed", savedFirst: true, revision: 7 });
+    eq("…so the draft may be cleared — nothing was edited since", noEditsSince((outcome as { revision: number }).revision, revision), true);
+    eq("the dialog can close once it is over", g.requestClose("cancel", () => { closed++; }), true);
+    eq("…and not before", closed, 1);
+  }
+
+  // An edit lands while the save is in flight: no completion, the draft stays.
+  {
+    const id = "v-edited-during-save";
+    const draft: VisitDraft = { visit_id: id, products: { p1: { qty_found: "3", notes: "" } }, responses: {}, last_saved_locally_at: "2026-10-24T08:00:00.000Z", dirty: true };
+    writeDraft(draft);
+    const save = deferred<boolean>();
+    const calls: string[] = [];
+    let revision = 12;
+    const run = saveThenComplete({
+      dirty: true, isOnline: () => true, revision: () => revision,
+      save: async () => { calls.push("save"); return save.promise; },
+      complete: async () => { calls.push("complete"); },
+    });
+    await tick(5);
+    revision += 1;   // the user edits again
+    writeDraft({ ...draft, products: { p1: { qty_found: "30", notes: "" } } });
+    save.resolve(true);
+    eq("edited during the save: the visit is NOT completed", [await run, calls], [{ kind: "changedDuringSave" }, ["save"]]);
+    eq("…and the newer edit is still in the draft, still unsaved", readDraft(id), { ...draft, products: { p1: { qty_found: "30", notes: "" } } });
+    eq("the save's 'synced' mark would not vouch for it either", noEditsSince(12, revision), false);
+  }
+
+  // An edit lands after the save but the completion went through: the draft is not cleared.
+  {
+    const save = deferred<boolean>();
+    let revision = 4;
+    const run = saveThenComplete({ dirty: true, isOnline: () => true, revision: () => revision, save: () => save.promise, complete: async () => { revision += 1; } });
+    save.resolve(true);
+    const outcome = await run;
+    eq("completed at revision 4, then an edit arrived (revision 5)", [outcome, revision], [{ kind: "completed", savedFirst: true, revision: 4 }, 5]);
+    eq("…so the page does not clear the newer draft", noEditsSince((outcome as { revision: number }).revision, revision), false);
+  }
+
+  // The draft through a failure and through a refused close.
+  {
+    const id = "v-cancel-or-fail";
+    const draft: VisitDraft = { visit_id: id, products: {}, responses: { f1: "typed" }, last_saved_locally_at: "2026-10-24T08:30:00.000Z", dirty: true };
+    writeDraft(draft);
+    const g = createCompletionGuard();
+    g.begin();
+    let closed = 0;
+    const failing = saveThenComplete({ dirty: true, isOnline: () => true, revision: () => 1, save: async () => { await tick(5); return false; }, complete: async () => { throw new Error("must not run"); } })
+      .finally(() => g.end());
+    g.requestClose("cancel", () => { closed++; });
+    eq("a slow save that fails: no completion", await failing, { kind: "saveFailed" });
+    eq("…the Cancel pressed during it did nothing", closed, 0);
+    eq("…and the draft is exactly as it was", readDraft(id), draft);
+    eq("Cancel after the failure closes the dialog — and closing touches no draft", [g.requestClose("cancel", () => { closed++; }), closed, readDraft(id)], [true, 1, draft]);
+  }
+
+  eq("noEditsSince: same revision", noEditsSince(3, 3), true);
+  eq("noEditsSince: edited since", noEditsSince(3, 4), false);
+  eq("noEditsSince: nothing recorded never vouches", [noEditsSince(null, 0), noEditsSince(undefined, 0)], [false, false]);
+
+  // Wiring.
+  const root = join(import.meta.dirname, "..", "src");
+  const modal = readFileSync(join(root, "app", "(dashboard)", "visits", "_components", "CompleteModal.tsx"), "utf8");
+  const draftHook = readFileSync(join(root, "hooks", "use-offline-visit-draft.ts"), "utf8");
+  ok("no close path calls onClose directly any more", !/onClick=\{onClose\}/.test(modal) && (modal.match(/\bonClose\b/g) ?? []).filter(Boolean).length === 3);
+  eq("backdrop, X and Cancel each go through the guarded handler",
+     ["backdrop", "closeButton", "cancel"].map((src) => modal.includes(`onClick={() => requestClose("${src}")}`)), [true, true, true]);
+  ok("the handler asks the guard, not the button state", /function requestClose\(source: CompletionCloseSource\) \{\s+guard\.requestClose\(source, onClose\);/.test(modal));
+  ok("the dialog has no Escape or other keyboard close path", !/Escape|onKeyDown|keydown/.test(modal));
+  ok("X and Cancel are also disabled while busy (the visible half)", (modal.match(/disabled=\{busy\}/g) ?? []).length === 2);
+  ok("the operation takes the guard before anything else, and releases it at the end",
+     /if \(blocked \|\| busy \|\| !guard\.begin\(\)\) return;/.test(modal) && /\} finally \{\s+guard\.end\(\);/.test(modal));
+  ok("the busy state is shown and announced", /\{busy && \([\s\S]{0,120}role="status"[\s\S]{0,300}visits\.completing\.saving/.test(modal) && modal.includes("aria-busy={busy}"));
+  ok("the revision is passed to saveThenComplete", modal.includes("revision: editRevision,"));
+  ok("every edit bumps the revision", /latestDataRef\.current = \{ products, responses \};\s+editRevisionRef\.current \+= 1;/.test(draftHook));
+  ok("markSynced does not write newer edits as clean",
+     /const markSynced = useCallback\(\(savedRevision\?: number\) => \{\s+[\s\S]{0,200}if \(savedRevision !== undefined && !noEditsSince\(savedRevision, editRevisionRef\.current\)\) \{\s+setSyncStatus\("draft"\);\s+return;/.test(draftHook));
+  for (const locale of ["ar", "en"] as const) {
+    for (const k of ["visits.unsaved.changedDuringSave", "visits.completing.saving", "visits.completing.completing"]) {
+      ok(`[${locale}] ${k} exists${locale === "ar" ? " in Arabic" : " in English"}`,
+         !!T(locale, k) && (locale === "ar" ? /[\u0600-\u06FF]/.test(T(locale, k)) : !/[\u0600-\u06FF]/.test(T(locale, k))));
+    }
+  }
 }

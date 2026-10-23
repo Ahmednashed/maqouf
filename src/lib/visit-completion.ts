@@ -87,8 +87,17 @@ export function completionDialogView(input: {
 }
 
 export type CompletionOutcome =
-  /** The visit is closed. `savedFirst`: unsaved edits were saved before it. */
-  | { kind: "completed"; savedFirst: boolean }
+  /**
+   * The visit is closed. `savedFirst`: unsaved edits were saved before it.
+   * `revision`: the edit revision that was saved (or found clean) — the local
+   * draft may only be cleared if nothing has been edited since.
+   */
+  | { kind: "completed"; savedFirst: boolean; revision: number | null }
+  /**
+   * The edits changed while they were being saved, so what was saved is not
+   * what is on screen. Nothing was completed and the draft is untouched.
+   */
+  | { kind: "changedDuringSave" }
   /** The edits could not be saved, so the visit was not completed. */
   | { kind: "saveFailed" }
   /** No connection, before or between the two steps. Nothing was completed. */
@@ -108,8 +117,15 @@ export async function saveThenComplete(input: {
   isOnline: () => boolean;
   save:     () => Promise<boolean>;
   complete: () => Promise<unknown>;
+  /**
+   * The current edit revision (bumped on every local edit). Read when the
+   * operation starts and again just before the completion request: if it
+   * moved, the visit is not completed.
+   */
+  revision?: () => number;
 }): Promise<CompletionOutcome> {
   if (!input.isOnline()) return { kind: "offline" };
+  const startRevision = input.revision ? input.revision() : null;
 
   let savedFirst = false;
   if (input.dirty) {
@@ -120,12 +136,55 @@ export async function saveThenComplete(input: {
     if (!input.isOnline()) return { kind: "offline" };
   }
 
+  if (input.revision && input.revision() !== startRevision) return { kind: "changedDuringSave" };
+
   try {
     await input.complete();
   } catch (error) {
     return { kind: "completeFailed", error };
   }
-  return { kind: "completed", savedFirst };
+  return { kind: "completed", savedFirst, revision: startRevision };
+}
+
+/**
+ * Whether nothing has been edited since `revision` — so a copy written or
+ * cleared on the strength of that revision is still accurate. A null revision
+ * (not tracked) never vouches for anything.
+ */
+export function noEditsSince(revision: number | null | undefined, current: number): boolean {
+  return typeof revision === "number" && revision === current;
+}
+
+// ─── Closing the dialog while it works ────────────────────────────────────────
+
+/** Every way the completion dialog can be asked to close. */
+export type CompletionCloseSource = "backdrop" | "closeButton" | "cancel" | "escape";
+
+/**
+ * Holds the completion dialog open while "Save and complete" or "Complete"
+ * runs. The check happens in the close handler itself, read at the moment of
+ * the request — a disabled button is only the visible half of it. Closing
+ * mid-operation used to leave the save and completion running behind a page
+ * the user could edit again, whose newer edits the completion then dropped.
+ */
+export function createCompletionGuard() {
+  let running = false;
+  return {
+    /** Start an operation. False if one is already running (a second press). */
+    begin(): boolean {
+      if (running) return false;
+      running = true;
+      return true;
+    },
+    end(): void { running = false; },
+    isRunning(): boolean { return running; },
+    /** Close only when nothing is running. Returns whether it closed. */
+    requestClose(_source: CompletionCloseSource, close: () => void): boolean {
+      if (running) return false;
+      close();
+      return true;
+    },
+  };
 }
 
 // ─── Local drafts ─────────────────────────────────────────────────────────────

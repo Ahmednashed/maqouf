@@ -54,6 +54,7 @@ import type { DraftProducts, VisitDraft } from "@/lib/offline-drafts";
 import {
   syncPrompt,
   describeStrandedDraft,
+  noEditsSince,
   type SyncPrompt,
   type StrandedProductRow,
   type StrandedResponseRow,
@@ -797,6 +798,7 @@ export default function VisitDetailPage() {
     updateDraft,
     markSaving,
     markSynced,
+    editRevision,
     markFailed,
     clearLocalDraft,
   } = useOfflineVisitDraft(id, isReadOnly);
@@ -917,7 +919,7 @@ export default function VisitDetailPage() {
       return false;
     }
 
-    markSaving();
+    const savingRevision = markSaving();
     try {
       const saves: Promise<unknown>[] = [
         saveProdMutation.mutateAsync(buildSaveItems()),
@@ -931,7 +933,7 @@ export default function VisitDetailPage() {
         );
       }
       await Promise.all(saves);
-      markSynced();
+      markSynced(savingRevision);
       return true;
     } catch {
       // Error toast is already shown by the mutation's onError handler.
@@ -1449,14 +1451,15 @@ export default function VisitDetailPage() {
           isOnline={isOnline}
           saving={isSaving || syncStatus === "saving"}
           onSaveNow={handleSave}
+          editRevision={editRevision}
           notes={notes}
           onClose={() => setShowComplete(false)}
-          onDone={(allSaved) => {
-            // Only discard the local copy when the server has everything.
-            // Completion now only happens online, after any unsaved edits
-            // were saved, so this is the normal case; anything else keeps the
-            // draft, which would then be the only copy of that work.
-            if (allSaved) clearLocalDraft();
+          onDone={(completedRevision) => {
+            // Only discard the local copy when the server has everything:
+            // completion saved (or found nothing unsaved at) this revision,
+            // and nothing has been edited since. Anything newer stays, as the
+            // only copy of that work.
+            if (noEditsSince(completedRevision, editRevision())) clearLocalDraft();
             setShowComplete(false);
             router.push("/visits");
           }}

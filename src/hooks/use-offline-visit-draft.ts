@@ -23,7 +23,7 @@ import {
   type DraftProducts,
   type DraftResponses,
 } from "@/lib/offline-drafts";
-import { classifyStoredDraft } from "@/lib/visit-completion";
+import { classifyStoredDraft, noEditsSince } from "@/lib/visit-completion";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -96,10 +96,20 @@ export interface UseOfflineVisitDraftReturn {
    * The hook writes to localStorage after a 500 ms idle window.
    */
   updateDraft:     (products: DraftProducts, responses: DraftResponses) => void;
-  /** Call at the start of a server-save attempt. */
-  markSaving:      () => void;
-  /** Call when the server save succeeds. Clears the dirty flag in localStorage. */
-  markSynced:      () => void;
+  /**
+   * Call at the start of a server-save attempt. Returns the edit revision the
+   * save is about to send; pass it back to markSynced.
+   */
+  markSaving:      () => number;
+  /**
+   * Call when the server save succeeds, with the revision markSaving returned.
+   * Clears the dirty flag in localStorage — unless the user edited again while
+   * the save was in flight, in which case those newer edits stay marked
+   * unsaved.
+   */
+  markSynced:      (savedRevision?: number) => void;
+  /** Bumped on every local edit (updateDraft). */
+  editRevision:    () => number;
   /** Call when the server save fails (draft is preserved). */
   markFailed:      () => void;
   /** Call when the visit is completed — removes the draft from localStorage. */
@@ -144,6 +154,10 @@ export function useOfflineVisitDraft(
   const debounceRef   = useRef<ReturnType<typeof setTimeout> | null>(null);
   const syncedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const latestDataRef = useRef<{ products: DraftProducts; responses: DraftResponses } | null>(null);
+  // One more for every local edit. A save or a completion records the value it
+  // started from, so it can tell whether the user edited again meanwhile.
+  const editRevisionRef = useRef(0);
+  const editRevision    = useCallback(() => editRevisionRef.current, []);
 
   // ── Load draft on mount ───────────────────────────────────────────────────
   // Re-run when the visit turns out to be closed: unsaved work for a closed
@@ -170,6 +184,7 @@ export function useOfflineVisitDraft(
       // Always keep the latest snapshot in a ref so the timeout closure
       // uses the most recent data even if multiple edits fire quickly.
       latestDataRef.current = { products, responses };
+      editRevisionRef.current += 1;
 
       // Immediately signal "unsaved" so the UI dot appears right away.
       setSyncStatus("unsaved");
@@ -194,9 +209,16 @@ export function useOfflineVisitDraft(
   const markSaving = useCallback(() => {
     if (syncedTimerRef.current) clearTimeout(syncedTimerRef.current);
     setSyncStatus("saving");
+    return editRevisionRef.current;
   }, []);
 
-  const markSynced = useCallback(() => {
+  const markSynced = useCallback((savedRevision?: number) => {
+    // Edited again while the save was in flight: the server has the earlier
+    // values, the draft has the newer ones. Do not write the draft as clean.
+    if (savedRevision !== undefined && !noEditsSince(savedRevision, editRevisionRef.current)) {
+      setSyncStatus("draft");
+      return;
+    }
     // Write a clean (non-dirty) copy to localStorage as a read-only backup.
     // It stays until the visit is completed.
     if (latestDataRef.current) {
@@ -258,6 +280,7 @@ export function useOfflineVisitDraft(
     updateDraft,
     markSaving,
     markSynced,
+    editRevision,
     markFailed,
     clearLocalDraft,
   };
