@@ -34,6 +34,16 @@ export type ReportName = "visits" | "merch" | "branch" | "product" | "gps";
  */
 export type ReportIncompleteReason = "truncated" | "unverified" | "tooLarge";
 
+/**
+ * What the counted rows are, so the notice can say so.
+ *
+ *   rows     — the rows of the range: visits, or audit rows (the default)
+ *   branches — Branch Coverage's list of branches, or its one-row-per-branch
+ *              last-visit read. Neither depends on the date range, so the
+ *              notice must not suggest narrowing it.
+ */
+export type ReportIncompleteSubject = "rows" | "branches";
+
 export class ReportIncompleteError extends Error {
   readonly report: ReportName;
   readonly reason: ReportIncompleteReason;
@@ -43,8 +53,12 @@ export class ReportIncompleteError extends Error {
   readonly total: number | null;
   /** The most rows a load will read — set only when that is why it was refused. */
   readonly max: number | null;
+  readonly subject: ReportIncompleteSubject;
 
-  constructor(report: ReportName, reason: ReportIncompleteReason, loaded: number, total: number | null, max: number | null = null) {
+  constructor(
+    report: ReportName, reason: ReportIncompleteReason, loaded: number, total: number | null,
+    max: number | null = null, subject: ReportIncompleteSubject = "rows",
+  ) {
     super(
       reason === "truncated"
         ? `${report} report is incomplete: ${loaded} of ${total} rows were returned`
@@ -58,7 +72,14 @@ export class ReportIncompleteError extends Error {
     this.loaded = loaded;
     this.total = total;
     this.max = max;
+    this.subject = subject;
   }
+}
+
+/** The same refusal, about a different subject. Anything else is returned as it is. */
+export function aboutSubject(error: unknown, subject: ReportIncompleteSubject): unknown {
+  if (!(error instanceof ReportIncompleteError) || error.subject === subject) return error;
+  return new ReportIncompleteError(error.report, error.reason, error.loaded, error.total, error.max, subject);
 }
 
 /**
@@ -96,13 +117,16 @@ export function assertReportComplete(
  *   error      — the request failed. `hadRows` marks a failed REFRESH: rows from
  *                an earlier load exist but are withheld, because they can no
  *                longer be shown as current
+ *
+ * `subject` is present only when the refused read was not of the range's rows
+ * (see ReportIncompleteSubject), so every other state is exactly as it was.
  */
 export type ReportTabState<T> =
   | { kind: "loading";    rows: T[] }
   | { kind: "ready";      rows: T[] }
-  | { kind: "truncated";  rows: T[]; loaded: number; total: number }
-  | { kind: "tooLarge";   rows: T[]; total: number; max: number }
-  | { kind: "unverified"; rows: T[] }
+  | { kind: "truncated";  rows: T[]; loaded: number; total: number; subject?: "branches" }
+  | { kind: "tooLarge";   rows: T[]; total: number; max: number; subject?: "branches" }
+  | { kind: "unverified"; rows: T[]; subject?: "branches" }
   | { kind: "error";      rows: T[]; hadRows: boolean };
 
 export function reportTabState<T>(q: {
@@ -118,12 +142,13 @@ export function reportTabState<T>(q: {
   if (q.isError) {
     const e = q.error;
     if (e instanceof ReportIncompleteError) {
+      const about = e.subject === "branches" ? { subject: "branches" as const } : {};
       if (e.reason === "tooLarge" && e.total !== null && e.max !== null) {
-        return { kind: "tooLarge", rows: [], total: e.total, max: e.max };
+        return { kind: "tooLarge", rows: [], total: e.total, max: e.max, ...about };
       }
       return e.reason === "truncated" && e.total !== null
-        ? { kind: "truncated", rows: [], loaded: e.loaded, total: e.total }
-        : { kind: "unverified", rows: [] };
+        ? { kind: "truncated", rows: [], loaded: e.loaded, total: e.total, ...about }
+        : { kind: "unverified", rows: [], ...about };
     }
     return { kind: "error", rows: [], hadRows: Array.isArray(q.data) };
   }
@@ -144,6 +169,10 @@ export function canExportReport<T>(state: ReportTabState<T>): boolean {
  * The message for a tab that cannot show its data, or null when it can.
  * The counts are stated in parentheses rather than attached to a noun, so the
  * sentence needs no plural forms in either language.
+ *
+ * A refusal about branches (Branch Coverage's branch list or last-visit read)
+ * says so, and its second line does not suggest a narrower range: the range
+ * does not change those reads.
  */
 export function reportTabMessage<T>(
   state: ReportTabState<T>,
@@ -151,18 +180,22 @@ export function reportTabMessage<T>(
 ): { title: string; detail: string } | null {
   switch (state.kind) {
     case "truncated":
-      return {
-        title:  t("reports.data.truncated", { total: state.total, loaded: state.loaded }),
-        detail: t("reports.data.narrow"),
-      };
-    case "tooLarge":
+      return state.subject === "branches"
+        ? { title:  t("reports.data.branchesTruncated", { total: state.total, loaded: state.loaded }),
+            detail: t("reports.data.branchesRetry") }
+        : { title:  t("reports.data.truncated", { total: state.total, loaded: state.loaded }),
+            detail: t("reports.data.narrow") };
+    case "tooLarge": {
       // Grouped digits: these are the only large figures a notice shows.
-      return {
-        title:  t("reports.data.tooLarge", { total: state.total.toLocaleString("en-US"), max: state.max.toLocaleString("en-US") }),
-        detail: t("reports.data.narrow"),
-      };
+      const vars = { total: state.total.toLocaleString("en-US"), max: state.max.toLocaleString("en-US") };
+      return state.subject === "branches"
+        ? { title: t("reports.data.branchesTooLarge", vars), detail: t("reports.data.branchesTooMany") }
+        : { title: t("reports.data.tooLarge", vars),         detail: t("reports.data.narrow") };
+    }
     case "unverified":
-      return { title: t("reports.data.unverified"), detail: t("reports.data.narrow") };
+      return state.subject === "branches"
+        ? { title: t("reports.data.branchesUnverified"), detail: t("reports.data.branchesRetry") }
+        : { title: t("reports.data.unverified"),         detail: t("reports.data.narrow") };
     case "error":
       return {
         title:  state.hadRows ? t("reports.data.refreshError") : t("reports.data.loadError"),

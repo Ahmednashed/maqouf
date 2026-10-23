@@ -2,7 +2,7 @@ import { createClient } from "@/lib/supabase/client";
 import { tallyGps } from "@/lib/gps-status";
 import { daysSinceIso } from "@/services/places";
 import { riyadhToday } from "@/lib/utils/date";
-import { ReportIncompleteError } from "@/lib/report-completeness";
+import { ReportIncompleteError, aboutSubject } from "@/lib/report-completeness";
 import { loadAllReportPages } from "@/lib/report-pages";
 
 // ─── Shared types ─────────────────────────────────────────────────────────────
@@ -644,7 +644,13 @@ export async function fetchBranchReport(
     },
   });
 
-  const [visitsRes, placesRes, lastVisitsRes] = await Promise.allSettled([visitsLoad, placesLoad, lastVisitsLoad]);
+  // A refusal of the branch list or of the last-visit read is about branches,
+  // not about the visits in the range; the notice says so.
+  const [visitsRes, placesRes, lastVisitsRes] = await Promise.allSettled([
+    visitsLoad,
+    placesLoad.catch((e) => { throw aboutSubject(e, "branches"); }),
+    lastVisitsLoad.catch((e) => { throw aboutSubject(e, "branches"); }),
+  ]);
 
   if (visitsRes.status !== "fulfilled" || placesRes.status !== "fulfilled" || lastVisitsRes.status !== "fulfilled") {
     // A superseded load is just that, whichever read noticed first.

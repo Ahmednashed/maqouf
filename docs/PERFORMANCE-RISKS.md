@@ -213,7 +213,15 @@ property that matters as the team grows.
 
 ## 5. Reports aggregations
 
-`src/services/reports.ts` — eight table reads across the tab services.
+`src/services/reports.ts` — seven paged reads across the five tabs (Branch
+makes three: visits, active places and `v_branch_operations`; every other tab
+makes one), plus the `report_summary` RPC behind the summary cards.
+
+The summary cards come from `public.report_summary` (migration 026), which
+counts inside PostgreSQL and returns one row, so the row cap cannot apply to
+it. That migration's header still says "Nothing calls this function yet": it
+was written before the app switched to the function and is a historical
+comment. Applied migrations are not edited to update it.
 
 | | |
 |---|---|

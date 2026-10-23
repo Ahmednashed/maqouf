@@ -20,6 +20,7 @@
 // process anywhere in this file: tab reads go to the recording stub, and the
 // real Supabase client is given a fake fetch.
 
+import { mock } from "node:test";
 import { createElement } from "react";
 import { renderToString } from "react-dom/server";
 import { QueryClient, QueryClientProvider, QueryObserver, type QueryFunction } from "@tanstack/react-query";
@@ -266,4 +267,96 @@ console.log("4) the Supabase client's own retries");
   eq("503 with the app default instead: eight — what the tabs did before", await through(APP_DEFAULT_RETRY, 503), [8, "error", 2]);
   eq("500 with the tab hooks' option: one request, then the error", await through(tabRetry, 500), [1, "error", 1]);
   eq("500 with the app default instead: two", await through(APP_DEFAULT_RETRY, 500), [2, "error", 2]);
+
+  // Which attempt is which: the client marks its own retries with X-Retry-Count,
+  // and a TanStack retry starts a fresh, unmarked sequence. So the eight requests
+  // of the app default are two outer attempts of four — and the tabs' option
+  // leaves exactly one of them.
+  const sequence = async (retry: false | number) => {
+    const api = fakeApi(503);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: APP_DEFAULT_RETRY, retryDelay: 5 } } });
+    client.mount();
+    const observer = new QueryObserver(client, {
+      queryKey: ["sequence", String(retry)],
+      queryFn: async () => { const { data, error } = await tabRead(api); if (error) throw error; return data; },
+      retry,
+    });
+    const unsubscribe = observer.subscribe(() => {});
+    for (let i = 0; i < 400 && observer.getCurrentResult().fetchStatus !== "idle"; i++) await tick(5);
+    await tick(60);
+    unsubscribe();
+    client.unmount();
+    client.clear();
+    return api.requests.map((r) => r.retryCount);
+  };
+  eq("X-Retry-Count with the tab hooks' option: one attempt, the client's three retries marked",
+     await sequence(tabRetry), [null, "1", "2", "3"]);
+  eq("X-Retry-Count with the app default: two outer attempts, each restarting the count",
+     await sequence(APP_DEFAULT_RETRY), [null, "1", "2", "3", null, "1", "2", "3"]);
+}
+
+// ── The client's own backoff, on a mocked clock ──────────────────────────────
+// Without Retry-After the client waits 1 s, 2 s and 4 s between its retries,
+// and it retries a network error (a fetch that throws) the same way. Real time
+// would add 7 s per case to the suite, so the clock is mocked: setTimeout and
+// Date only, for the duration of each case, then restored.
+async function onMockedClock<T>(run: () => Promise<T>): Promise<T> {
+  mock.timers.enable({ apis: ["setTimeout", "Date"], now: 0 });
+  try {
+    let settled = false;
+    const result = run().finally(() => { settled = true; });
+    for (let i = 0; i < 200 && !settled; i++) {
+      // Let pending promises run (setImmediate is not mocked), then advance.
+      await new Promise((resolve) => setImmediate(resolve));
+      await new Promise((resolve) => setImmediate(resolve));
+      if (!settled) mock.timers.tick(250);
+    }
+    return await result;
+  } finally {
+    mock.timers.reset();
+  }
+}
+
+console.log("5) the client's backoff and its network-error retries");
+{
+  const read = (fetch: typeof globalThis.fetch) =>
+    createSupabaseClient("http://supabase.invalid", "test-anon-key", {
+      global: { fetch },
+      auth:   { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+    }).from("visits").select("id", { count: "exact" }).order("id", { ascending: true });
+
+  // A 503 with no Retry-After: the client's own 1 s / 2 s / 4 s.
+  {
+    const at: Array<[number, string | null]> = [];
+    const fetch: typeof globalThis.fetch = async (_input, init) => {
+      at.push([Date.now(), new Headers(init?.headers).get("X-Retry-Count")]);
+      return new Response(JSON.stringify({ message: "fake 503" }), { status: 503, headers: { "content-type": "application/json" } });
+    };
+    const r = await onMockedClock(async () => await read(fetch));
+    eq("a 503 without Retry-After: four requests at 0, 1, 3 and 7 seconds, the last three marked as retries",
+       at, [[0, null], [1000, "1"], [3000, "2"], [7000, "3"]]);
+    eq("…and then the 503 is returned", [r.status, r.error?.message], [503, "fake 503"]);
+  }
+
+  // A fetch that throws (the network failed): retried the same way, then reported.
+  {
+    const at: Array<[number, string | null]> = [];
+    const fetch: typeof globalThis.fetch = async (_input, init) => {
+      at.push([Date.now(), new Headers(init?.headers).get("X-Retry-Count")]);
+      throw new TypeError("Failed to fetch");
+    };
+    const r = await onMockedClock(async () => await read(fetch));
+    eq("a network error on a read: four attempts at 0, 1, 3 and 7 seconds, the last three marked as retries",
+       at, [[0, null], [1000, "1"], [3000, "2"], [7000, "3"]]);
+    ok("…and then it is returned as an error, not thrown and not as data", r.data === null && r.error !== null && /Failed to fetch/.test(String(r.error?.message)));
+  }
+
+  // The tabs' own read, end to end: a network error reaches the fetcher as an error.
+  {
+    let calls = 0;
+    const fetch: typeof globalThis.fetch = async () => { calls++; throw new TypeError("Failed to fetch"); };
+    const r = await onMockedClock(async () => await read(fetch));
+    eq("…after exactly four attempts, with nothing retried by this test's own code", [calls, r.status], [4, 0]);
+  }
+  ok("the real clock is back after the mocked cases", Math.abs(Date.now() - new Date().getTime()) < 1000 && Date.now() > 1_700_000_000_000);
 }
