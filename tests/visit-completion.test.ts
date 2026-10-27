@@ -28,8 +28,8 @@ import {
   createCompletionGuard, noEditsSince, type CompletionCloseSource,
 } from "@/lib/visit-completion";
 import { readDraft, writeDraft, clearDraft, createDraftWriter, type VisitDraft } from "@/lib/offline-drafts";
-import { responseSaveItems } from "@/lib/visit-dirty";
-import { makeOutsideInert, type InertNode } from "@/lib/inert-outside";
+import { responseSaveItems, restoreDraftResponses } from "@/lib/visit-dirty";
+import { makeOutsideInert, KEEP_LIVE_ATTR, type InertNode } from "@/lib/inert-outside";
 import { saveVisitResponses, ResponsesNotStoredError } from "@/services/visit-responses";
 import { useCompleteVisit, useStartVisit } from "@/hooks/use-visits";
 import { VISIT_PRODUCTS_KEY } from "@/hooks/use-visit-products";
@@ -447,21 +447,21 @@ console.log("6) closing while it works, and edits made meanwhile");
 console.log("7) clearing answers, the page behind the dialog, leaving right after an edit");
 {
   // Which answers a save sends (responseSaveItems, used by the page's save).
-  eq("cleared answers are sent as null; answers never given and never touched are left out",
+  eq("cleared answers are sent as null; answers the screen never held are left out",
      responseSaveItems(
-       ["f-text", "f-num", "f-new", "f-touched", "f-restored"],
+       ["f-text", "f-num", "f-new", "f-touched", "f-server-only"],
        { "f-text": "kept", "f-num": null, "f-touched": null },
-       { "f-text": "old", "f-num": 5, "f-restored": "x" },
      ),
      [
        { field_id: "f-text", value: "kept" },
-       { field_id: "f-num", value: null },        // had 5 on the server
+       { field_id: "f-num", value: null },        // loaded with a value, then cleared
        { field_id: "f-touched", value: null },    // typed, then cleared
-       { field_id: "f-restored", value: null },   // on the server, missing from the screen's state
+       // f-new: never answered, never touched. f-server-only: a value that
+       // reached the server after the screen loaded — newer, so not cleared.
      ]);
-  eq("nothing touched and nothing saved: nothing sent", responseSaveItems(["a", "b"], {}, {}), []);
-  eq("a text field cleared to \"\" is sent as \"\" — as before", responseSaveItems(["a"], { a: "" }, { a: "x" }), [{ field_id: "a", value: "" }]);
-  eq("undefined on screen counts as cleared", responseSaveItems(["a"], { a: undefined }, { a: 1 }), [{ field_id: "a", value: null }]);
+  eq("nothing touched: nothing sent", responseSaveItems(["a", "b"], {}), []);
+  eq("a text field cleared to \"\" is sent as \"\" — as before", responseSaveItems(["a"], { a: "" }), [{ field_id: "a", value: "" }]);
+  eq("undefined on screen, for a field it held, counts as cleared", responseSaveItems(["a"], { a: undefined }), [{ field_id: "a", value: null }]);
 
   // The service writes the null, and reads back what was stored.
   const TABLE = "visit_template_responses";
@@ -513,7 +513,7 @@ console.log("7) clearing answers, the page behind the dialog, leaving right afte
       save: async () => {
         calls.push("save");
         try {
-          await saveVisitResponses("v-1", "t-1", responseSaveItems(["f-num"], { "f-num": null }, { "f-num": 5 }));
+          await saveVisitResponses("v-1", "t-1", responseSaveItems(["f-num"], { "f-num": null }));
           calls.push("stored");
           return true;
         } catch (e) {
@@ -549,18 +549,28 @@ console.log("7) clearing answers, the page behind the dialog, leaving right afte
     return n;
   };
   const dialog = el("dialog"), content = el("content"), stickyBar = el("stickyBar"), sidebar = el("sidebar");
-  const toaster = el("toaster"), alreadyInert = el("alreadyInert"), script = el("script", "SCRIPT");
+  const toastRegion = el("toastRegion", "SECTION"), toaster = el("toaster", "DIV", [toastRegion]);
+  const pageStatus = el("pageStatus"), strayLive = el("strayLive");
+  const alreadyInert = el("alreadyInert"), script = el("script", "SCRIPT");
+  toaster.attrs.add(KEEP_LIVE_ATTR);        // the toast container, opted in (providers.tsx)
+  toastRegion.attrs.add("aria-live");
+  pageStatus.attrs.add("aria-live");        // a live region on the page behind
+  strayLive.attrs.add("aria-live");         // a live region elsewhere, not opted in
   alreadyInert.attrs.add("inert");
-  const main = el("main", "MAIN", [content, stickyBar, dialog]);
+  const main = el("main", "MAIN", [content, pageStatus, stickyBar, dialog]);
   const app  = el("app", "DIV", [sidebar, main]);
-  el("body", "BODY", [app, toaster, alreadyInert, script]);
-  const all = [dialog, content, stickyBar, sidebar, main, app, toaster, alreadyInert, script];
+  el("body", "BODY", [app, toaster, strayLive, alreadyInert, script]);
+  const all = [dialog, content, pageStatus, stickyBar, sidebar, main, app, toaster, toastRegion, strayLive, alreadyInert, script];
   const inert = () => all.filter((n) => n.attrs.has("inert")).map((n) => n.name).sort();
 
   const undo = makeOutsideInert(dialog);
   eq("open: the page content, the action bar (Mark missed, Save), the sidebar and the rest of the page are inert",
-     inert(), ["alreadyInert", "content", "sidebar", "stickyBar", "toaster"]);
+     inert(), ["alreadyInert", "content", "pageStatus", "sidebar", "stickyBar", "strayLive"]);
   ok("…the dialog and its own ancestors are not", ![dialog, main, app].some((n) => n.attrs.has("inert")));
+  ok("…the toast container, opted in, is not: its toasts stay announced and closable",
+     !toaster.attrs.has("inert") && !toastRegion.attrs.has("inert"));
+  ok("…being a live region is not enough: the page's own and a stray one go inert",
+     pageStatus.attrs.has("inert") && strayLive.attrs.has("inert"));
   undo();
   eq("closed: only what it marked is unmarked", inert(), ["alreadyInert"]);
 
@@ -589,8 +599,8 @@ console.log("7) clearing answers, the page behind the dialog, leaving right afte
      page.includes("onClick={() => { if (!showComplete) missedMutation.mutate(id); }}") && page.includes("disabled={showComplete || missedMutation.isPending}"));
   ok("…nor does the page's Save button",
      page.includes("onClick={() => { if (!showComplete) handleSave(); }}") && page.includes(`disabled={showComplete || isSaving || syncStatus === "saving"}`));
-  ok("the page's save sends cleared answers (responseSaveItems against the saved answers)",
-     /function buildResponseItems\(\) \{[\s\S]{0,250}return responseSaveItems\(fieldIds, responses, savedResponses\);/.test(page) && !page.includes("responses[f.id] ?? null"));
+  ok("the page's save sends cleared answers (responseSaveItems over what the screen holds)",
+     /function buildResponseItems\(\) \{[\s\S]{0,250}return responseSaveItems\(fieldIds, responses\);/.test(page) && !page.includes("responses[f.id] ?? null"));
 
   // Leaving right after an edit: the last edit reaches the draft, locally only.
   resetStub();
@@ -652,4 +662,130 @@ console.log("7) clearing answers, the page behind the dialog, leaving right afte
        !!T(locale, "visits.responsesNotStored") &&
        (locale === "ar" ? /[؀-ۿ]/.test(T(locale, "visits.responsesNotStored")) : !/[؀-ۿ]/.test(T(locale, "visits.responsesNotStored"))));
   }
+}
+
+// ── 8) Toasts over an open dialog, a photo uploaded after the draft, and ─────
+//       values compared as they travel
+console.log("8) toasts over a dialog, a photo uploaded after the draft, values as sent");
+{
+  const src = join(import.meta.dirname, "..", "src");
+  const read = (...p: string[]) => readFileSync(join(src, ...p), "utf8");
+  const TABLE = "visit_template_responses";
+  const caught = (p: Promise<unknown>) => p.then(() => null, (e: unknown) => e);
+
+  // Toasts: the container is the only element opted out, and the completion
+  // dialog says a failed completion itself as well.
+  const providers = read("app", "(dashboard)", "providers.tsx");
+  const modal     = read("app", "(dashboard)", "visits", "_components", "CompleteModal.tsx");
+  ok("the toast container is opted out of the inert page, and nothing else is",
+     /<div data-modal-keep-live="">\s+<Toaster[\s\S]{0,200}closeButton/.test(providers) &&
+     KEEP_LIVE_ATTR === "data-modal-keep-live" &&
+     (providers.match(/data-modal-keep-live/g) ?? []).length === 1);
+  ok("the completion dialog states every stopped outcome itself, a failed completion included",
+     /\/\/ must not depend on it\.\s+setStopped\(outcome\.kind\);/.test(modal) &&
+     /stopped === "completeFailed" \? t\("visits\.unsaved\.completeFailed"\)/.test(modal) &&
+     /\{stopped && \(\s+<p role="alert"/.test(modal));
+  for (const locale of ["ar", "en"] as const) {
+    ok(`[${locale}] visits.unsaved.completeFailed exists${locale === "ar" ? " in Arabic" : " in English"}`,
+       !!T(locale, "visits.unsaved.completeFailed") &&
+       (locale === "ar" ? /[؀-ۿ]/.test(T(locale, "visits.unsaved.completeFailed")) : !/[؀-ۿ]/.test(T(locale, "visits.unsaved.completeFailed"))));
+  }
+
+  // Why the photo sequence below is reachable today, from the code.
+  const field = read("app", "(dashboard)", "visits", "_components", "TemplateFieldSection.tsx");
+  const upload = read("hooks", "use-photo-upload.ts");
+  const queue  = read("hooks", "use-offline-photo-queue.ts");
+  const draftHook = read("hooks", "use-offline-visit-draft.ts");
+  ok("reachable: removing the old photo never throws — offline its failure is only logged",
+     /const remove = useCallback\(\s+async \(path: string\): Promise<void> => \{\s+try \{\s+await deleteVisitPhoto\(path\);\s+\} catch \(err\) \{\s+\/\/ Non-fatal/.test(upload));
+  ok("reachable: replacing a photo sets the answer to null, then (offline) queues the new one",
+     /if \(photoMeta\?\.path\) \{\s+await remove\(photoMeta\.path\);\s+onChange\(field\.id, null\);\s+\}\s+if \(!isOnline\) \{[\s\S]{0,200}await enqueue\(file\)/.test(field));
+  ok("reachable: the queue writes the new photo to the server itself, then tells the screen",
+     /await saveVisitResponses\(item\.visit_id, item\.template_id, \[\s+\{ field_id: item\.field_id, value: meta \},\s+\]\);[\s\S]{0,400}onUploaded\(item\.field_id, meta\);/.test(queue));
+  ok("reachable: the draft keeps every answer, the photo's null included (no photo filtering)",
+     draftHook.includes("writer.edit(visitId, products, responses);") && !/photo/i.test(draftHook));
+
+  // The full sequence, with the real restore, save-items and save service.
+  const PHOTO = "f-photo", TEXT = "f-text", FIELDS = [PHOTO, TEXT];
+  const M1 = { path: "v/f/old.jpg", file_name: "old.jpg", mime_type: "image/jpeg", size: 10, uploaded_at: "2026-10-27T08:00:00.000Z" };
+  const M2 = { path: "v/f/new.jpg", file_name: "new.jpg", mime_type: "image/jpeg", size: 12, uploaded_at: "2026-10-28T10:00:00.000Z" };
+  // The server: its rows, and a save through the real service that the stub
+  // answers by storing what was sent.
+  const run = async (o: { uploadReachesScreen: boolean; removedAfterUpload?: boolean }) => {
+    const server: Record<string, unknown> = { [PHOTO]: M1, [TEXT]: "before" };
+    const save = async (items: Array<{ field_id: string; value: unknown }>) => {
+      resetStub();
+      const stored = items.map((i) => ({ field_id: i.field_id, value: i.value === undefined ? null : JSON.parse(JSON.stringify(i.value)) }));
+      queueResultFor(TABLE, { data: stored, error: null });
+      await saveVisitResponses("v-1", "t-1", items);
+      stored.forEach((r) => { server[r.field_id] = r.value; });
+    };
+    // 1. Offline: the photo is replaced (old one removed, answer null, new one
+    //    queued) and a text answer edited. The draft is written at 09:00.
+    let screen: Record<string, unknown> = { ...server, [PHOTO]: null, [TEXT]: "offline edit" };
+    let draft = { responses: { ...screen }, last_saved_locally_at: "2026-10-28T09:00:00.000Z" };
+    // 2. Later, online, the page is opened again: the screen loads the server.
+    screen = { ...server };
+    const loaded = { ...server };
+    // 3. Retry: the queue uploads the new photo (10:00) and writes it to the server.
+    await save([{ field_id: PHOTO, value: M2 }]);
+    if (o.uploadReachesScreen) screen = { ...screen, [PHOTO]: M2 };
+    // (Variant: the user removed the new photo afterwards, offline, at 11:00.)
+    if (o.removedAfterUpload) draft = { responses: { ...screen, [PHOTO]: null, [TEXT]: "offline edit" }, last_saved_locally_at: "2026-10-28T11:00:00.000Z" };
+    // 4. The user restores the older draft. The saved answers the page knows
+    //    are what it loaded, or a refetch made after the upload.
+    const saved = o.uploadReachesScreen ? loaded : { ...server };
+    screen = restoreDraftResponses({ draft: draft.responses, draftSavedAt: draft.last_saved_locally_at, current: screen, saved, photoFieldIds: [PHOTO] });
+    // 5. Save.
+    const items = responseSaveItems(FIELDS, screen);
+    await save(items);
+    return { screenPhoto: screen[PHOTO], sentPhoto: items.find((i) => i.field_id === PHOTO)?.value, server, wholesale: responseSaveItems(FIELDS, draft.responses).find((i) => i.field_id === PHOTO)?.value };
+  };
+
+  const a = await run({ uploadReachesScreen: true });
+  eq("restoring a draft older than the upload keeps the new photo on screen", a.screenPhoto, M2);
+  eq("…the save sends the new photo, not null", a.sentPhoto, M2);
+  eq("…and the server ends with the new photo and the draft's text edit", a.server, { [PHOTO]: M2, [TEXT]: "offline edit" });
+  eq("(restoring the draft as it was would have sent null for the photo)", a.wholesale, null);
+
+  const b = await run({ uploadReachesScreen: false });
+  eq("the upload never reached the screen, but a refetch has it: still kept", [b.screenPhoto, b.sentPhoto, b.server[PHOTO]], [M2, M2, M2]);
+
+  const c = await run({ uploadReachesScreen: true, removedAfterUpload: true });
+  eq("a photo removed AFTER the upload stays removed: the draft is newer", [c.screenPhoto, c.sentPhoto, c.server[PHOTO]], [null, null, null]);
+
+  // A new photo on an empty field, offline: the draft has no key for it.
+  eq("restoring a draft without the field keeps the photo that arrived since",
+     restoreDraftResponses({ draft: { [TEXT]: "x" }, draftSavedAt: "2026-10-28T09:00:00.000Z", current: { [PHOTO]: M2 }, saved: {}, photoFieldIds: [PHOTO] }),
+     { [PHOTO]: M2, [TEXT]: "x" });
+  eq("…and if it never reached the screen, the save leaves the server's photo alone",
+     responseSaveItems(FIELDS, { [TEXT]: "x" }), [{ field_id: TEXT, value: "x" }]);
+  eq("a photo without an upload time never overrides the draft",
+     restoreDraftResponses({ draft: { [PHOTO]: null }, draftSavedAt: "2026-10-28T09:00:00.000Z", current: { [PHOTO]: { path: "p", file_name: "f", mime_type: "image/jpeg", size: 1 } }, saved: {}, photoFieldIds: [PHOTO] }),
+     { [PHOTO]: null });
+  eq("answers the draft does not mention keep what the screen or the server has",
+     restoreDraftResponses({ draft: { [TEXT]: "draft" }, draftSavedAt: "2026-10-28T09:00:00.000Z", current: { "f-later": "typed since" }, saved: { "f-other": "from another device" }, photoFieldIds: [PHOTO] }),
+     { [TEXT]: "draft", "f-later": "typed since", "f-other": "from another device" });
+  eq("non-photo fields: the draft wins, as before",
+     restoreDraftResponses({ draft: { [TEXT]: "draft" }, draftSavedAt: "2026-10-28T09:00:00.000Z", current: { [TEXT]: "screen" }, saved: { [TEXT]: "server" }, photoFieldIds: [PHOTO] }),
+     { [TEXT]: "draft" });
+  const page = read("app", "(dashboard)", "visits", "[id]", "page.tsx");
+  ok("the page restores through restoreDraftResponses, with its photo fields",
+     /setResponses\(restoreDraftResponses\(\{[\s\S]{0,300}photoFieldIds: \(template\?\.fields \?\? \[\]\)\.filter\(\(f\) => f\.type === "photo"\)/.test(page) &&
+     !page.includes("setResponses(pendingDraft.responses as FieldResponses)"));
+
+  // Values compared in the form they travel in.
+  resetStub();
+  queueResultFor(TABLE, { data: [{ field_id: "gps", value: { latitude: 24.7, longitude: 46.7 } }], error: null });
+  eq("an object with a key set to undefined: sent without it, and matched without it",
+     [await caught(saveVisitResponses("v-1", "t-1", [{ field_id: "gps", value: { latitude: 24.7, longitude: 46.7, accuracy: undefined } }])), recordedCalls()[0]?.upsert?.values],
+     [null, [{ visit_id: "v-1", template_id: "t-1", field_id: "gps", value: { latitude: 24.7, longitude: 46.7 } }]]);
+  resetStub();
+  queueResultFor(TABLE, { data: [{ field_id: "n", value: null }], error: null });
+  eq("a non-finite number travels as null, as it always has, and is matched as null",
+     await caught(saveVisitResponses("v-1", "t-1", [{ field_id: "n", value: Infinity }])), null);
+  resetStub();
+  queueResultFor(TABLE, { data: [{ field_id: "n", value: 4 }], error: null });
+  ok("a real difference still fails the save",
+     (await caught(saveVisitResponses("v-1", "t-1", [{ field_id: "n", value: 5 }]))) instanceof ResponsesNotStoredError);
 }

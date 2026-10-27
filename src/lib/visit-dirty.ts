@@ -133,30 +133,81 @@ export function diffVisitEdits({
   };
 }
 
+const has = (o: object, k: string) => Object.prototype.hasOwnProperty.call(o, k);
+
 /**
  * The form answers a save sends.
  *
- * Every answer holding a value, and an explicit null for every answer that is
- * now empty but may have a value on the server: one the server returned
- * (`savedResponses`), or one this screen has held — a key in `responses`
- * (loaded, typed, or restored from a draft). The null is what clears the
- * saved answer; leaving the field out, as saves used to, kept the old value
- * on the server while the screen showed it empty.
+ * Every answer holding a value, and an explicit null for every answer this
+ * screen has held and is now empty — a key in `responses` (loaded from the
+ * server, typed, or restored from a draft). The null is what clears the saved
+ * answer; leaving the field out, as saves used to, kept the old value on the
+ * server while the screen showed it empty.
  *
- * Fields never answered and never touched are left out, so a save does not
- * create empty rows for them.
+ * An answer the screen has never held is left out, empty or not on the
+ * server. If the server has a value the screen never saw, it arrived after
+ * the screen loaded — a queued photo upload, another device — and is newer
+ * than anything here, so a null must not overwrite it. Fields never answered
+ * and never touched are left out too, so a save creates no empty rows.
  */
 export function responseSaveItems(
-  fieldIds:       string[],
-  responses:      Record<string, unknown>,
-  savedResponses: Record<string, unknown>,
+  fieldIds:  string[],
+  responses: Record<string, unknown>,
 ): Array<{ field_id: string; value: unknown }> {
-  const has = (o: object, k: string) => Object.prototype.hasOwnProperty.call(o, k);
   const items: Array<{ field_id: string; value: unknown }> = [];
   for (const id of fieldIds) {
     const value = responses[id];
     if (value !== null && value !== undefined) items.push({ field_id: id, value });
-    else if (has(responses, id) || has(savedResponses, id)) items.push({ field_id: id, value: null });
+    else if (has(responses, id)) items.push({ field_id: id, value: null });
   }
   return items;
+}
+
+/** When a photo answer was uploaded, if it says (PhotoMeta.uploaded_at). */
+function photoUploadedAt(v: unknown): number | null {
+  if (typeof v !== "object" || v === null || typeof (v as { path?: unknown }).path !== "string") return null;
+  const at = Date.parse(String((v as { uploaded_at?: unknown }).uploaded_at));
+  return Number.isNaN(at) ? null : at;
+}
+
+/**
+ * The answers to show when the user restores a local draft.
+ *
+ * Restoring used to replace the screen's answers with the draft's wholesale.
+ * Two things in that were newer than the draft got lost:
+ *
+ *   • Answers the draft does not mention — they reached the screen or the
+ *     server after the draft was written. They are kept.
+ *   • A photo uploaded after the draft was written. Replacing a photo offline
+ *     leaves null in the draft while the new photo waits in the upload queue;
+ *     the queue uploads it later and writes its reference to the server
+ *     directly. Restoring the draft's null over it, then saving, cleared that
+ *     reference. Now a photo field keeps the newest photo uploaded after the
+ *     draft was written, from the screen or the server, whatever the draft
+ *     holds for it.
+ *
+ * Otherwise the draft wins, as before: it is the user's own unsaved work. A
+ * photo the user removed after the newest upload stays removed, because the
+ * draft holding that null was written after the upload.
+ */
+export function restoreDraftResponses(input: {
+  draft:         Record<string, unknown>;
+  /** The draft's last_saved_locally_at. */
+  draftSavedAt:  string;
+  current:       Record<string, unknown>;
+  saved:         Record<string, unknown>;
+  photoFieldIds: string[];
+}): Record<string, unknown> {
+  const restored: Record<string, unknown> = { ...input.saved, ...input.current, ...input.draft };
+  const draftAt = Date.parse(input.draftSavedAt);
+  for (const id of input.photoFieldIds) {
+    let newest: unknown = undefined;
+    let newestAt = Number.isNaN(draftAt) ? Infinity : draftAt;
+    for (const candidate of [input.current[id], input.saved[id]]) {
+      const at = photoUploadedAt(candidate);
+      if (at !== null && at > newestAt) { newest = candidate; newestAt = at; }
+    }
+    if (newest !== undefined) restored[id] = newest;
+  }
+  return restored;
 }

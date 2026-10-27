@@ -41,7 +41,7 @@ import {
   deriveVisitProductPlan,
   deriveVisitFieldPlan,
 } from "@/lib/visit-plan";
-import { diffVisitEdits, responseSaveItems } from "@/lib/visit-dirty";
+import { diffVisitEdits, responseSaveItems, restoreDraftResponses } from "@/lib/visit-dirty";
 import {
   TemplateFieldSection,
   type FieldResponses,
@@ -904,7 +904,7 @@ export default function VisitDetailPage() {
   function buildResponseItems() {
     if (!template?.fields) return [];
     const fieldIds = template.fields.filter((f) => f.type !== "section").map((f) => f.id);
-    return responseSaveItems(fieldIds, responses, savedResponses);
+    return responseSaveItems(fieldIds, responses);
   }
 
   /**
@@ -952,7 +952,15 @@ export default function VisitDetailPage() {
   function handleRestoreDraft() {
     if (!pendingDraft) return;
     setEntries(pendingDraft.products as Entries);
-    setResponses(pendingDraft.responses as FieldResponses);
+    // Merged, not replaced: keeps answers newer than the draft, including a
+    // photo the upload queue sent after the draft was written.
+    setResponses(restoreDraftResponses({
+      draft:         pendingDraft.responses,
+      draftSavedAt:  pendingDraft.last_saved_locally_at,
+      current:       draftDataRef.current.responses,
+      saved:         savedResponses,
+      photoFieldIds: (template?.fields ?? []).filter((f) => f.type === "photo").map((f) => f.id),
+    }) as FieldResponses);
     confirmRestore();
     toast.success(t("offline.restoredOk"));
   }

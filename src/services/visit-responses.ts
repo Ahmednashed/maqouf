@@ -70,7 +70,11 @@ export class ResponsesNotStoredError extends Error {
  * to send is the caller's choice — see responseSaveItems.
  *
  * The written rows are read back from the same request and compared with what
- * was sent; any difference throws ResponsesNotStoredError.
+ * was sent; any difference throws ResponsesNotStoredError. "What was sent" is
+ * each value after JSON conversion, the form it travels in: an object key set
+ * to undefined is dropped and a non-finite number becomes null on the way, so
+ * comparing against the in-memory value would report those as not stored on
+ * every save. The rows sent are those same converted values.
  */
 export async function saveVisitResponses(
   visitId:    string,
@@ -85,7 +89,7 @@ export async function saveVisitResponses(
     visit_id:    visitId,
     template_id: templateId,
     field_id:    r.field_id,
-    value:       r.value ?? null,
+    value:       asSent(r.value),
   }));
 
   const { data, error } = await supabase
@@ -102,4 +106,10 @@ export async function saveVisitResponses(
     .filter((r) => !stored.has(r.field_id) || !valuesEqual(stored.get(r.field_id), r.value))
     .map((r) => r.field_id);
   if (notStored.length) throw new ResponsesNotStoredError(notStored);
+}
+
+/** A value as JSON carries it; undefined (nothing recorded) is null. */
+function asSent(value: unknown): unknown {
+  const json = value === undefined ? undefined : JSON.stringify(value);
+  return json === undefined ? null : (JSON.parse(json) as unknown);
 }

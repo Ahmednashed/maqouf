@@ -56,12 +56,17 @@ export function Providers({ children }: { children: React.ReactNode }) {
       {children}
 
       {/* ── Toaster: RTL-aware positioning ──────────────────────── */}
-      <Toaster
-        position={locale === "ar" ? "bottom-right" : "bottom-left"}
-        richColors
-        closeButton
-        duration={3500}
-      />
+      {/* Opted out of the inert page behind an open Modal: dialogs report
+          their own success or failure as toasts, which must stay announced
+          and closable while the dialog is open. See inert-outside.ts. */}
+      <div data-modal-keep-live="">
+        <Toaster
+          position={locale === "ar" ? "bottom-right" : "bottom-left"}
+          richColors
+          closeButton
+          duration={3500}
+        />
+      </div>
     </QueryClientProvider>
   );
 }

@@ -87,7 +87,7 @@ export function CompleteModal({
   const [acked, setAcked]           = useState(false);
   const [working, setWorking]       = useState(false);
   /** Why the last attempt stopped, shown until the next one. */
-  const [stopped, setStopped]       = useState<"saveFailed" | "offline" | "changedDuringSave" | null>(null);
+  const [stopped, setStopped]       = useState<"saveFailed" | "offline" | "changedDuringSave" | "completeFailed" | null>(null);
   // Holds the dialog open while an operation runs. Kept in a ref and checked
   // in the close handler, so it holds from the very first moment — before the
   // re-render that disables the buttons.
@@ -142,10 +142,10 @@ export function CompleteModal({
         onDone(outcome.revision);
         return;
       }
-      if (outcome.kind === "saveFailed" || outcome.kind === "offline" || outcome.kind === "changedDuringSave") {
-        setStopped(outcome.kind);
-      }
-      // completeFailed: the mutation's own error toast has said why.
+      // Every other outcome is said inside the dialog as well. A failed
+      // completion also raises the mutation's error toast, but the dialog
+      // must not depend on it.
+      setStopped(outcome.kind);
     } finally {
       guard.end();
       setWorking(false);
@@ -262,6 +262,7 @@ export function CompleteModal({
             <AlertTriangle className="w-4 h-4 shrink-0 mt-px" />
             {stopped === "saveFailed" ? t("visits.unsaved.saveFailed")
              : stopped === "changedDuringSave" ? t("visits.unsaved.changedDuringSave")
+             : stopped === "completeFailed" ? t("visits.unsaved.completeFailed")
              : t("visits.unsaved.offlineBlocked")}
           </p>
         )}
