@@ -181,6 +181,8 @@ export function Modal({
       ref={rootRef}
       className="fixed inset-0 z-50 flex items-center justify-center p-4"
       onClick={requestClose}
+      // A press on the backdrop would otherwise move focus to the page body.
+      onMouseDown={(e) => { if (!panelRef.current?.contains(e.target as Node)) e.preventDefault(); }}
     >
       <div className="absolute inset-0 bg-ink-900/40 backdrop-blur-sm animate-fade-in" />
 

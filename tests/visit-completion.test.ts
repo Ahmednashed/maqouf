@@ -581,6 +581,8 @@ console.log("7) clearing answers, the page behind the dialog, leaving right afte
      /document\.removeEventListener\("focusin", onFocusIn\);\s+[\s\S]{0,200}opener\.focus\(\)/.test(shared));
   ok("going busy keeps focus on the Modal when the focused control is disabled",
      /if \(!busy \|\| !panel\) return;[\s\S]{0,200}if \(!active \|\| !panel\.contains\(active\) \|\| active\.disabled\) panel\.focus\(\);\s+\}, \[busy\]\);/.test(shared));
+  ok("a press on the backdrop does not move focus out of the Modal",
+     shared.includes("onMouseDown={(e) => { if (!panelRef.current?.contains(e.target as Node)) e.preventDefault(); }}"));
   ok("Tab with every control disabled stays on the Modal", /if \(items\.length === 0\) \{[\s\S]{0,80}e\.preventDefault\(\);\s+return;/.test(shared));
   ok("Escape is still ignored while busy — unchanged", shared.includes(`if (e.key !== "Escape" || busyRef.current) return;`));
   ok("Mark missed does nothing while the completion dialog is open",
