@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import {
   fetchVisitResponses,
   saveVisitResponses,
+  ResponsesNotStoredError,
   type VisitTemplateResponse,
   type ResponseUpsertItem,
 } from "@/services/visit-responses";
@@ -45,7 +46,11 @@ export function useSaveVisitResponses(visitId: string) {
       toast.success(t("visits.responsesSaved"));
     },
     onError: (err: Error) => {
-      toast.error(err.message || t("visits.errorSave"));
+      toast.error(
+        err instanceof ResponsesNotStoredError
+          ? t("visits.responsesNotStored")
+          : err.message || t("visits.errorSave"),
+      );
     },
     onSettled: () => {
       qc.invalidateQueries({ queryKey: VISIT_RESPONSES_KEY(visitId) });

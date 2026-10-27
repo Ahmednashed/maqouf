@@ -22,6 +22,8 @@ export interface RecordedCall {
   limit?: number;
   /** The abort signal attached with `abortSignal`, when there was one. */
   signal?: AbortSignal;
+  /** For an `upsert`: the rows sent and the options passed with them. */
+  upsert?: { values: unknown; options?: unknown };
 }
 
 export interface StubResult {
@@ -92,6 +94,7 @@ interface Chain extends PromiseLike<StubResult> {
   single(): Chain;
   maybeSingle(): Chain;
   insert(values: unknown): Chain;
+  upsert(values: unknown, options?: unknown): Chain;
   update(values: unknown): Chain;
   delete(): Chain;
 }
@@ -123,6 +126,11 @@ function chain(table: string): Chain {
     single() { return self; },
     maybeSingle() { return self; },
     insert() { if (!recorded) { calls.push(call); recorded = true; } return self; },
+    upsert(values, options) {
+      call.upsert = { values, options };
+      if (!recorded) { calls.push(call); recorded = true; }
+      return self;
+    },
     update() { if (!recorded) { calls.push(call); recorded = true; } return self; },
     delete() { if (!recorded) { calls.push(call); recorded = true; } return self; },
     then(onFulfilled, onRejected) {

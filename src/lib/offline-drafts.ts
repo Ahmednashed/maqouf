@@ -114,3 +114,69 @@ export function clearDraft(visitId: string): void {
     // ignore
   }
 }
+
+// ─── Debounced writes ─────────────────────────────────────────────────────────
+
+/**
+ * Writes the latest edit to the draft once edits pause for `delayMs`, and can
+ * write it at once when the page is being left (flush). Only ever writes to
+ * localStorage — never to the server.
+ *
+ * Leaving the page used to cancel a pending write, so the last edit made
+ * within the delay of navigating away was lost.
+ *
+ * A pending edit is never written over a draft stored after it was made: that
+ * draft is newer (another tab), and overwriting it would lose its work.
+ */
+export interface DraftWriter {
+  /** Record an edit. It is written after `delayMs` without further edits. */
+  edit(visitId: string, products: DraftProducts, responses: DraftResponses): void;
+  /** Write a pending edit now. Returns whether anything was written. */
+  flush(): boolean;
+  /** Drop a pending edit without writing it: the server has it, or the draft was cleared. */
+  cancel(): void;
+  hasPending(): boolean;
+}
+
+export function createDraftWriter(
+  delayMs:   number,
+  onWritten: () => void = () => {},
+  now:       () => number = Date.now,
+): DraftWriter {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  let pending: { visitId: string; products: DraftProducts; responses: DraftResponses; editedAt: number } | null = null;
+
+  function stop() {
+    if (timer) clearTimeout(timer);
+    timer = null;
+  }
+
+  function write(): boolean {
+    stop();
+    const p = pending;
+    pending = null;
+    if (!p) return false;
+    const stored = readDraft(p.visitId);
+    if (stored && Date.parse(stored.last_saved_locally_at) > p.editedAt) return false;
+    writeDraft({
+      visit_id:              p.visitId,
+      products:              p.products,
+      responses:             p.responses,
+      last_saved_locally_at: new Date(now()).toISOString(),
+      dirty:                 true,
+    });
+    onWritten();
+    return true;
+  }
+
+  return {
+    edit(visitId, products, responses) {
+      pending = { visitId, products, responses, editedAt: now() };
+      stop();
+      timer = setTimeout(write, delayMs);
+    },
+    flush:      write,
+    cancel()    { stop(); pending = null; },
+    hasPending: () => pending !== null,
+  };
+}

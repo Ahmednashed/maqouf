@@ -19,6 +19,7 @@ import {
   readDraft,
   writeDraft,
   clearDraft,
+  createDraftWriter,
   type VisitDraft,
   type DraftProducts,
   type DraftResponses,
@@ -150,8 +151,11 @@ export function useOfflineVisitDraft(
     typeof navigator !== "undefined" ? !navigator.onLine : false
   );
 
-  // Refs for debounce + latest draft snapshot
-  const debounceRef   = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Debounced draft writes, plus the latest snapshot for the clean copy a
+  // successful save writes.
+  const writerRef     = useRef<ReturnType<typeof createDraftWriter> | null>(null);
+  if (!writerRef.current) writerRef.current = createDraftWriter(DEBOUNCE_MS, () => setSyncStatus("draft"));
+  const writer        = writerRef.current;
   const syncedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const latestDataRef = useRef<{ products: DraftProducts; responses: DraftResponses } | null>(null);
   // One more for every local edit. A save or a completion records the value it
@@ -170,13 +174,23 @@ export function useOfflineVisitDraft(
     setStrandedDraft(state === "stranded" ? draft : null);
   }, [visitId, isReadOnly]);
 
-  // ── Cleanup timers on unmount ─────────────────────────────────────────────
+  // ── Leaving the page ──────────────────────────────────────────────────────
+  // An edit made less than DEBOUNCE_MS before leaving is written to the draft
+  // now rather than dropped: on unmount (navigating inside the app), and when
+  // the page is hidden or unloaded (another app, tab closed, reload), where
+  // unmount never runs. Local only — nothing is sent to the server.
   useEffect(() => {
+    const onHidden = () => { if (document.visibilityState === "hidden") writer.flush(); };
+    const onPageHide = () => { writer.flush(); };
+    document.addEventListener("visibilitychange", onHidden);
+    window.addEventListener("pagehide", onPageHide);
     return () => {
-      if (debounceRef.current)    clearTimeout(debounceRef.current);
+      document.removeEventListener("visibilitychange", onHidden);
+      window.removeEventListener("pagehide", onPageHide);
+      writer.flush();
       if (syncedTimerRef.current) clearTimeout(syncedTimerRef.current);
     };
-  }, []);
+  }, [writer]);
 
   // ── Auto-save (debounced 500 ms) ──────────────────────────────────────────
   const updateDraft = useCallback(
@@ -189,20 +203,9 @@ export function useOfflineVisitDraft(
       // Immediately signal "unsaved" so the UI dot appears right away.
       setSyncStatus("unsaved");
 
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-      debounceRef.current = setTimeout(() => {
-        if (!latestDataRef.current) return;
-        writeDraft({
-          visit_id:              visitId,
-          products:              latestDataRef.current.products,
-          responses:             latestDataRef.current.responses,
-          last_saved_locally_at: new Date().toISOString(),
-          dirty:                 true,
-        });
-        setSyncStatus("draft");
-      }, DEBOUNCE_MS);
+      writer.edit(visitId, products, responses);
     },
-    [visitId],
+    [visitId, writer],
   );
 
   // ── Server-save status transitions ────────────────────────────────────────
@@ -220,7 +223,9 @@ export function useOfflineVisitDraft(
       return;
     }
     // Write a clean (non-dirty) copy to localStorage as a read-only backup.
-    // It stays until the visit is completed.
+    // It stays until the visit is completed. A pending dirty write of the same
+    // edits is dropped — it would mark them unsaved again.
+    writer.cancel();
     if (latestDataRef.current) {
       writeDraft({
         visit_id:              visitId,
@@ -236,7 +241,7 @@ export function useOfflineVisitDraft(
     // permanently clutter the bar.
     if (syncedTimerRef.current) clearTimeout(syncedTimerRef.current);
     syncedTimerRef.current = setTimeout(() => setSyncStatus("idle"), SYNCED_SHOW_MS);
-  }, [visitId]);
+  }, [visitId, writer]);
 
   const markFailed = useCallback(() => {
     // Draft is already in localStorage — no extra write needed.
@@ -263,10 +268,10 @@ export function useOfflineVisitDraft(
 
   // ── Clear on completion ───────────────────────────────────────────────────
   const clearLocalDraft = useCallback(() => {
-    if (debounceRef.current) clearTimeout(debounceRef.current);
+    writer.cancel();
     clearDraft(visitId);
     setSyncStatus("idle");
-  }, [visitId]);
+  }, [visitId, writer]);
 
   return {
     isOnline,

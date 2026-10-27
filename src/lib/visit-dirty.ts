@@ -116,8 +116,8 @@ export function diffVisitEdits({
     const local = responses[id];
     const saved = savedResponses[id];
     // Both sides holding "nothing recorded" is not an edit, even when they
-    // spell it differently. saveVisitResponses drops null/undefined, so a
-    // field that was never answered has no saved row at all; typing into it
+    // spell it differently. A field that was never answered has no saved row
+    // at all (see responseSaveItems); typing into it
     // and clearing it again left local "" against saved undefined, which
     // compared unequal and pinned the visit as dirty with no way back except
     // saving. isAnswered() already treats all three as unanswered, so this
@@ -131,4 +131,32 @@ export function diffVisitEdits({
     changedProducts,
     changedResponses,
   };
+}
+
+/**
+ * The form answers a save sends.
+ *
+ * Every answer holding a value, and an explicit null for every answer that is
+ * now empty but may have a value on the server: one the server returned
+ * (`savedResponses`), or one this screen has held — a key in `responses`
+ * (loaded, typed, or restored from a draft). The null is what clears the
+ * saved answer; leaving the field out, as saves used to, kept the old value
+ * on the server while the screen showed it empty.
+ *
+ * Fields never answered and never touched are left out, so a save does not
+ * create empty rows for them.
+ */
+export function responseSaveItems(
+  fieldIds:       string[],
+  responses:      Record<string, unknown>,
+  savedResponses: Record<string, unknown>,
+): Array<{ field_id: string; value: unknown }> {
+  const has = (o: object, k: string) => Object.prototype.hasOwnProperty.call(o, k);
+  const items: Array<{ field_id: string; value: unknown }> = [];
+  for (const id of fieldIds) {
+    const value = responses[id];
+    if (value !== null && value !== undefined) items.push({ field_id: id, value });
+    else if (has(responses, id) || has(savedResponses, id)) items.push({ field_id: id, value: null });
+  }
+  return items;
 }

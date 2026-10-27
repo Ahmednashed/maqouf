@@ -3,6 +3,7 @@
 import { useEffect, useId, useRef } from "react";
 import { X } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
+import { makeOutsideInert } from "@/lib/inert-outside";
 
 /**
  * The one modal shell.
@@ -36,8 +37,8 @@ export interface ModalProps {
    * the square uses the standard brand tint.
    */
   iconBg?: string;
-  /** Panel width: `md` = 28rem, `lg` = 32rem, `xl` = 42rem. */
-  size?: "md" | "lg" | "xl";
+  /** Panel width: `sm` = 24rem, `md` = 28rem, `lg` = 32rem, `xl` = 42rem. */
+  size?: "sm" | "md" | "lg" | "xl";
   /**
    * A mutation is in flight. Escape, the backdrop and the close button all
    * go inert so a half-written save can't be dismissed out from under the
@@ -62,6 +63,7 @@ export function Modal({
   scrollable = false,
   children,
 }: ModalProps) {
+  const rootRef  = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const titleId  = useId();
 
@@ -85,7 +87,28 @@ export function Modal({
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [onClose]);
 
-  /** Focus the dialog on open and hand focus back to the opener on close. */
+  /**
+   * Everything outside the dialog is inert while it is open: not clickable,
+   * not focusable, hidden from assistive technology.
+   *
+   * Declared before the focus effect so its cleanup runs first: the opener
+   * that focus is handed back to is inside one of these inert subtrees.
+   */
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root) return;
+    return makeOutsideInert(root);
+  }, []);
+
+  /**
+   * Focus the dialog on open, keep it inside while open, and hand it back to
+   * the opener on close.
+   *
+   * Focus that lands outside the panel — Tab from a control that has just
+   * been disabled, which leaves focus on the page body — is brought back, so
+   * the page behind can never be reached from the keyboard. The listener is
+   * removed before focus is handed back, or it would pull it in again.
+   */
   useEffect(() => {
     const panel = panelRef.current;
     if (!panel) return;
@@ -94,12 +117,29 @@ export function Modal({
     const first  = panel.querySelector<HTMLElement>(FOCUSABLE);
     (first ?? panel).focus();
 
+    function onFocusIn(e: FocusEvent) {
+      if (panel && e.target instanceof Node && !panel.contains(e.target)) panel.focus();
+    }
+    document.addEventListener("focusin", onFocusIn);
+
     return () => {
+      document.removeEventListener("focusin", onFocusIn);
       // The opener is often unmounted by now (a row that got filtered away),
       // so only restore focus if it is still in the document.
       if (opener && document.contains(opener)) opener.focus();
     };
   }, []);
+
+  /**
+   * Going busy disables the control that started it, and a disabled control
+   * drops focus to the page body. Keep it on the dialog instead.
+   */
+  useEffect(() => {
+    const panel = panelRef.current;
+    if (!busy || !panel) return;
+    const active = document.activeElement as (HTMLElement & { disabled?: boolean }) | null;
+    if (!active || !panel.contains(active) || active.disabled) panel.focus();
+  }, [busy]);
 
   /** Keep Tab inside the dialog. */
   function onPanelKeyDown(e: React.KeyboardEvent) {
@@ -108,12 +148,19 @@ export function Modal({
     if (!panel) return;
 
     const items = Array.from(panel.querySelectorAll<HTMLElement>(FOCUSABLE));
-    if (items.length === 0) return;
+    if (items.length === 0) {
+      // Everything is disabled (busy): stay on the panel.
+      e.preventDefault();
+      return;
+    }
 
     const first = items[0];
     const last  = items[items.length - 1];
 
-    if (e.shiftKey && document.activeElement === first) {
+    if (document.activeElement === panel) {
+      e.preventDefault();
+      (e.shiftKey ? last : first).focus();
+    } else if (e.shiftKey && document.activeElement === first) {
       e.preventDefault();
       last.focus();
     } else if (!e.shiftKey && document.activeElement === last) {
@@ -131,6 +178,7 @@ export function Modal({
 
   return (
     <div
+      ref={rootRef}
       className="fixed inset-0 z-50 flex items-center justify-center p-4"
       onClick={requestClose}
     >
@@ -147,7 +195,7 @@ export function Modal({
         className={cn(
           "relative w-full bg-white rounded-2xl shadow-modal border border-ink-100",
           "animate-slide-up outline-none",
-          size === "xl" ? "max-w-2xl" : size === "lg" ? "max-w-lg" : "max-w-md",
+          size === "xl" ? "max-w-2xl" : size === "lg" ? "max-w-lg" : size === "sm" ? "max-w-sm" : "max-w-md",
           scrollable && "flex flex-col max-h-[90vh]"
         )}
       >

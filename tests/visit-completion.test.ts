@@ -17,6 +17,7 @@
 // the visit page, which cannot be rendered in this runner.
 
 import { readFileSync } from "node:fs";
+import { mock } from "node:test";
 import { join } from "node:path";
 import { createElement } from "react";
 import { renderToString } from "react-dom/server";
@@ -26,7 +27,10 @@ import {
   completionBlock, completionDialogView, saveThenComplete, classifyStoredDraft, syncPrompt, describeStrandedDraft,
   createCompletionGuard, noEditsSince, type CompletionCloseSource,
 } from "@/lib/visit-completion";
-import { readDraft, writeDraft, type VisitDraft } from "@/lib/offline-drafts";
+import { readDraft, writeDraft, clearDraft, createDraftWriter, type VisitDraft } from "@/lib/offline-drafts";
+import { responseSaveItems } from "@/lib/visit-dirty";
+import { makeOutsideInert, type InertNode } from "@/lib/inert-outside";
+import { saveVisitResponses, ResponsesNotStoredError } from "@/services/visit-responses";
 import { useCompleteVisit, useStartVisit } from "@/hooks/use-visits";
 import { VISIT_PRODUCTS_KEY } from "@/hooks/use-visit-products";
 import { translations } from "@/lib/i18n/translations";
@@ -287,7 +291,7 @@ console.log("5) wiring");
      !(/function StrandedDraftBanner[\s\S]*?\r?\n\}\r?\n/.exec(page)?.[0] ?? "handleSave").match(/handleSave|mutate|writeDraft|onSave/));
   ok("Sync now is a button the user presses — nothing calls handleSave on reconnect",
      (page.match(/^(?!\s*(\/\*|\*|\/\/)).*handleSave.*$/gm) ?? []).map((l) => l.trim()).sort().join(" | ") ===
-     ["async function handleSave(): Promise<boolean> {", "onClick={handleSave}", "onSaveNow={handleSave}", "onSync={() => { void handleSave(); }}"].sort().join(" | "));
+     ["async function handleSave(): Promise<boolean> {", "onClick={() => { if (!showComplete) handleSave(); }}", "onSaveNow={handleSave}", "onSync={() => { void handleSave(); }}"].sort().join(" | "));
   ok("the restore prompt is still only for an open visit", page.includes("{pendingDraft && !isReadOnly && ("));
   ok("edits are tracked once the product rows have loaded, even when there are none",
      page.includes("if (prodInitialized.current || productsLoading || !visit) return;") &&
@@ -313,18 +317,18 @@ console.log("6) closing while it works, and edits made meanwhile");
 {
   type Deferred<T> = { promise: Promise<T>; resolve: (v: T) => void };
   const deferred = <T,>(): Deferred<T> => { let resolve!: (v: T) => void; const promise = new Promise<T>((r) => { resolve = r; }); return { promise, resolve }; };
-  const SOURCES: CompletionCloseSource[] = ["backdrop", "closeButton", "cancel", "escape"];
+  const SOURCES: CompletionCloseSource[] = ["cancel", "dismiss"];
 
   // The guard on its own.
   {
     const g = createCompletionGuard();
     let closed = 0;
-    eq("idle: every way of closing closes", SOURCES.map((src) => g.requestClose(src, () => { closed++; })), [true, true, true, true]);
-    eq("…each once", closed, 4);
+    eq("idle: every way of closing closes", SOURCES.map((src) => g.requestClose(src, () => { closed++; })), [true, true]);
+    eq("…each once", closed, 2);
     closed = 0;
     eq("an operation starts", g.begin(), true);
     eq("a second press while it runs is refused", g.begin(), false);
-    eq("running: backdrop, X, Cancel and Escape are all refused", SOURCES.map((src) => g.requestClose(src, () => { closed++; })), [false, false, false, false]);
+    eq("running: Cancel, and Escape / backdrop / X, are all refused", SOURCES.map((src) => g.requestClose(src, () => { closed++; })), [false, false]);
     eq("…and the dialog's close callback is never called", closed, 0);
     g.end();
     eq("finished: closing works again", [g.requestClose("cancel", () => { closed++; }), closed], [true, 1]);
@@ -345,7 +349,7 @@ console.log("6) closing while it works, and edits made meanwhile");
     }).finally(() => g.end());
     await tick(5);
     eq("while the save is pending, nothing has been completed", calls, ["save:start"]);
-    eq("…and every attempt to close is refused", SOURCES.map((src) => g.requestClose(src, () => { closed++; })), [false, false, false, false]);
+    eq("…and every attempt to close is refused", SOURCES.map((src) => g.requestClose(src, () => { closed++; })), [false, false]);
     save.resolve(true);
     const outcome = await run;
     eq("completion is sent only after the save has finished", calls, ["save:start", "save:end", "complete"]);
@@ -413,12 +417,13 @@ console.log("6) closing while it works, and edits made meanwhile");
   const root = join(import.meta.dirname, "..", "src");
   const modal = readFileSync(join(root, "app", "(dashboard)", "visits", "_components", "CompleteModal.tsx"), "utf8");
   const draftHook = readFileSync(join(root, "hooks", "use-offline-visit-draft.ts"), "utf8");
-  ok("no close path calls onClose directly any more", !/onClick=\{onClose\}/.test(modal) && (modal.match(/\bonClose\b/g) ?? []).filter(Boolean).length === 3);
-  eq("backdrop, X and Cancel each go through the guarded handler",
-     ["backdrop", "closeButton", "cancel"].map((src) => modal.includes(`onClick={() => requestClose("${src}")}`)), [true, true, true]);
+  ok("no close path calls onClose directly any more",
+     !/onClick=\{onClose\}/.test(modal) && !/onClose=\{onClose\}/.test(modal) && (modal.match(/\bonClose\b/g) ?? []).length === 4);
+  ok("Escape, the backdrop and the header X (the Modal's onClose) and Cancel each go through the guarded handler",
+     modal.includes(`onClose={() => requestClose("dismiss")}`) && modal.includes(`onClick={() => requestClose("cancel")}`));
   ok("the handler asks the guard, not the button state", /function requestClose\(source: CompletionCloseSource\) \{\s+guard\.requestClose\(source, onClose\);/.test(modal));
-  ok("the dialog has no Escape or other keyboard close path", !/Escape|onKeyDown|keydown/.test(modal));
-  ok("X and Cancel are also disabled while busy (the visible half)", (modal.match(/disabled=\{busy\}/g) ?? []).length === 2);
+  ok("the dialog adds no keyboard close path of its own (Escape is the Modal's, through the guard)", !/Escape|onKeyDown|keydown/.test(modal));
+  ok("Cancel, the notes and the acknowledgement are disabled while busy", (modal.match(/disabled=\{busy\}/g) ?? []).length === 3);
   ok("the operation takes the guard before anything else, and releases it at the end",
      /if \(blocked \|\| busy \|\| !guard\.begin\(\)\) return;/.test(modal) && /\} finally \{\s+guard\.end\(\);/.test(modal));
   ok("the busy state is shown and announced", /\{busy && \([\s\S]{0,120}role="status"[\s\S]{0,300}visits\.completing\.saving/.test(modal) && modal.includes("aria-busy={busy}"));
@@ -431,5 +436,218 @@ console.log("6) closing while it works, and edits made meanwhile");
       ok(`[${locale}] ${k} exists${locale === "ar" ? " in Arabic" : " in English"}`,
          !!T(locale, k) && (locale === "ar" ? /[\u0600-\u06FF]/.test(T(locale, k)) : !/[\u0600-\u06FF]/.test(T(locale, k))));
     }
+  }
+}
+
+// ── 7) Clearing answers, the page behind the dialog, leaving after an edit ───
+// A cleared answer must reach the server, and a save that leaves an older
+// value there must stop the completion. The completion dialog is the shared
+// Modal, which makes the page behind it inert. An edit made just before the
+// page is left is written to the local draft — never to the server.
+console.log("7) clearing answers, the page behind the dialog, leaving right after an edit");
+{
+  // Which answers a save sends (responseSaveItems, used by the page's save).
+  eq("cleared answers are sent as null; answers never given and never touched are left out",
+     responseSaveItems(
+       ["f-text", "f-num", "f-new", "f-touched", "f-restored"],
+       { "f-text": "kept", "f-num": null, "f-touched": null },
+       { "f-text": "old", "f-num": 5, "f-restored": "x" },
+     ),
+     [
+       { field_id: "f-text", value: "kept" },
+       { field_id: "f-num", value: null },        // had 5 on the server
+       { field_id: "f-touched", value: null },    // typed, then cleared
+       { field_id: "f-restored", value: null },   // on the server, missing from the screen's state
+     ]);
+  eq("nothing touched and nothing saved: nothing sent", responseSaveItems(["a", "b"], {}, {}), []);
+  eq("a text field cleared to \"\" is sent as \"\" — as before", responseSaveItems(["a"], { a: "" }, { a: "x" }), [{ field_id: "a", value: "" }]);
+  eq("undefined on screen counts as cleared", responseSaveItems(["a"], { a: undefined }, { a: 1 }), [{ field_id: "a", value: null }]);
+
+  // The service writes the null, and reads back what was stored.
+  const TABLE = "visit_template_responses";
+  const sent = [{ field_id: "f-text", value: "kept" }, { field_id: "f-num", value: null }];
+  const caught = (p: Promise<unknown>) => p.then(() => null, (e: unknown) => e);
+
+  resetStub();
+  queueResultFor(TABLE, { data: [{ field_id: "f-num", value: null }, { field_id: "f-text", value: "kept" }], error: null });
+  eq("stored as sent: the save resolves", await caught(saveVisitResponses("v-1", "t-1", sent)), null);
+  const call = recordedCalls()[0];
+  eq("the cleared answer is written as null, on the (visit, field) key", call?.upsert, {
+    values: [
+      { visit_id: "v-1", template_id: "t-1", field_id: "f-text", value: "kept" },
+      { visit_id: "v-1", template_id: "t-1", field_id: "f-num", value: null },
+    ],
+    options: { onConflict: "visit_id,field_id" },
+  });
+  eq("…and the written rows come back from the same request", [recordedCalls().length, call?.table, call?.columns], [1, TABLE, "field_id, value"]);
+
+  resetStub();
+  queueResultFor(TABLE, { data: [{ field_id: "f-text", value: "kept" }, { field_id: "f-num", value: 5 }], error: null });
+  const stale = await caught(saveVisitResponses("v-1", "t-1", sent));
+  ok("the old value came back: the save fails, naming the field",
+     stale instanceof ResponsesNotStoredError && JSON.stringify(stale.fieldIds) === '["f-num"]');
+
+  resetStub();
+  queueResultFor(TABLE, { data: [{ field_id: "f-text", value: "kept" }], error: null });
+  const missing = await caught(saveVisitResponses("v-1", "t-1", sent));
+  ok("a row that did not come back at all: the save fails too",
+     missing instanceof ResponsesNotStoredError && JSON.stringify(missing.fieldIds) === '["f-num"]');
+
+  resetStub();
+  queueResultFor(TABLE, { data: [{ field_id: "gps", value: { lng: 46.7, lat: 24.7 } }], error: null });
+  eq("an object answer stored with its keys reordered (jsonb) still matches",
+     await caught(saveVisitResponses("v-1", "t-1", [{ field_id: "gps", value: { lat: 24.7, lng: 46.7 } }])), null);
+
+  resetStub();
+  const dbError = { message: "permission denied", code: "42501" };
+  queueResultFor(TABLE, { data: null, error: dbError });
+  eq("a database error is passed on", await caught(saveVisitResponses("v-1", "t-1", sent)), dbError);
+
+  // Save, then complete — with the real save service in the save step.
+  const completeAfter = async (stored: unknown[]) => {
+    resetStub();
+    queueResultFor(TABLE, { data: stored, error: null });
+    const calls: string[] = [];
+    const outcome = await saveThenComplete({
+      dirty: true, isOnline: () => true, revision: () => 1,
+      save: async () => {
+        calls.push("save");
+        try {
+          await saveVisitResponses("v-1", "t-1", responseSaveItems(["f-num"], { "f-num": null }, { "f-num": 5 }));
+          calls.push("stored");
+          return true;
+        } catch (e) {
+          calls.push(e instanceof ResponsesNotStoredError ? "notStored" : "error");
+          return false;
+        }
+      },
+      complete: async () => { calls.push("complete"); },
+    });
+    return { outcome, calls };
+  };
+  eq("a cleared answer stored as null: saved first, then completed",
+     await completeAfter([{ field_id: "f-num", value: null }]),
+     { outcome: { kind: "completed", savedFirst: true, revision: 1 }, calls: ["save", "stored", "complete"] });
+  eq("the old value still on the server: NOT completed",
+     await completeAfter([{ field_id: "f-num", value: 5 }]),
+     { outcome: { kind: "saveFailed" }, calls: ["save", "notStored"] });
+  ok("a clear is an update, never a delete (merchandisers may not delete answers)",
+     recordedCalls().length === 1 && recordedCalls().every((c) => c.upsert !== undefined));
+
+  // The page behind the dialog: everything outside it is inert.
+  type Fake = InertNode & { name: string; attrs: Set<string>; kids: Fake[]; parent: Fake | null };
+  const el = (name: string, tagName = "DIV", kids: Fake[] = []): Fake => {
+    const n: Fake = {
+      name, tagName, attrs: new Set(), kids, parent: null,
+      get parentElement() { return n.parent; },
+      get children() { return n.kids; },
+      hasAttribute: (a) => n.attrs.has(a),
+      setAttribute: (a) => { n.attrs.add(a); },
+      removeAttribute: (a) => { n.attrs.delete(a); },
+    };
+    kids.forEach((k) => { k.parent = n; });
+    return n;
+  };
+  const dialog = el("dialog"), content = el("content"), stickyBar = el("stickyBar"), sidebar = el("sidebar");
+  const toaster = el("toaster"), alreadyInert = el("alreadyInert"), script = el("script", "SCRIPT");
+  alreadyInert.attrs.add("inert");
+  const main = el("main", "MAIN", [content, stickyBar, dialog]);
+  const app  = el("app", "DIV", [sidebar, main]);
+  el("body", "BODY", [app, toaster, alreadyInert, script]);
+  const all = [dialog, content, stickyBar, sidebar, main, app, toaster, alreadyInert, script];
+  const inert = () => all.filter((n) => n.attrs.has("inert")).map((n) => n.name).sort();
+
+  const undo = makeOutsideInert(dialog);
+  eq("open: the page content, the action bar (Mark missed, Save), the sidebar and the rest of the page are inert",
+     inert(), ["alreadyInert", "content", "sidebar", "stickyBar", "toaster"]);
+  ok("…the dialog and its own ancestors are not", ![dialog, main, app].some((n) => n.attrs.has("inert")));
+  undo();
+  eq("closed: only what it marked is unmarked", inert(), ["alreadyInert"]);
+
+  // Wiring of the dialog and the page.
+  const src = join(import.meta.dirname, "..", "src");
+  const modal     = readFileSync(join(src, "app", "(dashboard)", "visits", "_components", "CompleteModal.tsx"), "utf8");
+  const shared    = readFileSync(join(src, "components", "ui", "Modal.tsx"), "utf8");
+  const page      = readFileSync(join(src, "app", "(dashboard)", "visits", "[id]", "page.tsx"), "utf8");
+  const draftHook = readFileSync(join(src, "hooks", "use-offline-visit-draft.ts"), "utf8");
+  ok("the completion dialog is the shared Modal, told when it is busy, with no overlay of its own",
+     /<Modal\s+onClose=\{\(\) => requestClose\("dismiss"\)\}[\s\S]{0,200}busy=\{busy\}/.test(modal) && !modal.includes("fixed inset-0"));
+  ok("the Modal is a labelled modal dialog", /role="dialog"\s+aria-modal="true"\s+aria-labelledby=\{titleId\}/.test(shared));
+  ok("the Modal makes the page behind inert, before it moves focus (so focus can go back on close)",
+     shared.indexOf("return makeOutsideInert(root);") > 0 && shared.indexOf("return makeOutsideInert(root);") < shared.indexOf("(first ?? panel).focus();"));
+  ok("focus that lands outside the Modal is brought back",
+     shared.includes(`document.addEventListener("focusin", onFocusIn);`) &&
+     /function onFocusIn\(e: FocusEvent\) \{\s+if \(panel && e\.target instanceof Node && !panel\.contains\(e\.target\)\) panel\.focus\(\);/.test(shared) &&
+     /document\.removeEventListener\("focusin", onFocusIn\);\s+[\s\S]{0,200}opener\.focus\(\)/.test(shared));
+  ok("going busy keeps focus on the Modal when the focused control is disabled",
+     /if \(!busy \|\| !panel\) return;[\s\S]{0,200}if \(!active \|\| !panel\.contains\(active\) \|\| active\.disabled\) panel\.focus\(\);\s+\}, \[busy\]\);/.test(shared));
+  ok("Tab with every control disabled stays on the Modal", /if \(items\.length === 0\) \{[\s\S]{0,80}e\.preventDefault\(\);\s+return;/.test(shared));
+  ok("Escape is still ignored while busy — unchanged", shared.includes(`if (e.key !== "Escape" || busyRef.current) return;`));
+  ok("Mark missed does nothing while the completion dialog is open",
+     page.includes("onClick={() => { if (!showComplete) missedMutation.mutate(id); }}") && page.includes("disabled={showComplete || missedMutation.isPending}"));
+  ok("…nor does the page's Save button",
+     page.includes("onClick={() => { if (!showComplete) handleSave(); }}") && page.includes(`disabled={showComplete || isSaving || syncStatus === "saving"}`));
+  ok("the page's save sends cleared answers (responseSaveItems against the saved answers)",
+     /function buildResponseItems\(\) \{[\s\S]{0,250}return responseSaveItems\(fieldIds, responses, savedResponses\);/.test(page) && !page.includes("responses[f.id] ?? null"));
+
+  // Leaving right after an edit: the last edit reaches the draft, locally only.
+  resetStub();
+  mock.timers.enable({ apis: ["setTimeout"] });
+  try {
+    let clock = Date.parse("2026-10-28T09:00:00.000Z");
+    const now = () => clock;
+    let written = 0;
+    const id = "v-leave";
+    clearDraft(id);
+    const w = createDraftWriter(500, () => { written++; }, now);
+    const qtyIn = () => readDraft(id)?.products.p1?.qty_found;
+
+    w.edit(id, { p1: { qty_found: "7", notes: "" } }, { f1: "a" });
+    clock += 100; mock.timers.tick(100);
+    eq("100 ms after an edit nothing is written yet", [readDraft(id), w.hasPending()], [null, true]);
+    eq("leaving now writes it", w.flush(), true);
+    eq("…the whole edit, marked unsaved", readDraft(id), {
+      visit_id: id, products: { p1: { qty_found: "7", notes: "" } }, responses: { f1: "a" },
+      last_saved_locally_at: new Date(clock).toISOString(), dirty: true,
+    });
+    clock += 1000; mock.timers.tick(1000);
+    eq("…once: the timer no longer fires", [written, w.hasPending(), w.flush()], [1, false, false]);
+
+    w.edit(id, { p1: { qty_found: "8", notes: "" } }, {});
+    clock += 500; mock.timers.tick(500);
+    eq("staying: written after the pause, as before", [qtyIn(), written], ["8", 2]);
+
+    w.edit(id, { p1: { qty_found: "9", notes: "" } }, {});
+    clock += 50;
+    writeDraft({ visit_id: id, products: { p1: { qty_found: "99", notes: "" } }, responses: {}, last_saved_locally_at: new Date(clock).toISOString(), dirty: true });
+    clock += 10;
+    eq("a draft stored after the edit (another tab) is not overwritten on leaving", [w.flush(), qtyIn()], [false, "99"]);
+
+    w.edit(id, { p1: { qty_found: "10", notes: "" } }, {});
+    w.cancel();   // markSynced: the server has these edits
+    clock += 600; mock.timers.tick(600);
+    eq("a save that took the edit cancels the pending write", [w.flush(), qtyIn()], [false, "99"]);
+
+    w.edit(id, { p1: { qty_found: "11", notes: "" } }, {});
+    w.cancel(); clearDraft(id);   // clearLocalDraft after completion
+    eq("a draft cleared after completion is not written back on leaving", [w.flush(), readDraft(id)], [false, null]);
+  } finally {
+    mock.timers.reset();
+  }
+  eq("nothing in any of that reached the server", recordedCalls().length, 0);
+
+  ok("the hook writes a pending edit on unmount, on pagehide and when the page is hidden",
+     /return \(\) => \{[\s\S]{0,200}window\.removeEventListener\("pagehide", onPageHide\);\s+writer\.flush\(\);/.test(draftHook) &&
+     draftHook.includes('const onHidden = () => { if (document.visibilityState === "hidden") writer.flush(); };') &&
+     draftHook.includes('window.addEventListener("pagehide", onPageHide);'));
+  ok("every edit goes through the writer", /editRevisionRef\.current \+= 1;[\s\S]{0,150}writer\.edit\(visitId, products, responses\);/.test(draftHook));
+  ok("a successful save and clearing the draft cancel the pending write",
+     /writer\.cancel\(\);\s+if \(latestDataRef\.current\) \{/.test(draftHook) && /const clearLocalDraft = useCallback\(\(\) => \{\s+writer\.cancel\(\);\s+clearDraft\(visitId\);/.test(draftHook));
+  ok("the draft hook talks to no server", !/@\/services|supabase|fetch\(/.test(draftHook));
+
+  for (const locale of ["ar", "en"] as const) {
+    ok(`[${locale}] visits.responsesNotStored exists${locale === "ar" ? " in Arabic" : " in English"}`,
+       !!T(locale, "visits.responsesNotStored") &&
+       (locale === "ar" ? /[؀-ۿ]/.test(T(locale, "visits.responsesNotStored")) : !/[؀-ۿ]/.test(T(locale, "visits.responsesNotStored"))));
   }
 }

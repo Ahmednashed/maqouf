@@ -41,7 +41,7 @@ import {
   deriveVisitProductPlan,
   deriveVisitFieldPlan,
 } from "@/lib/visit-plan";
-import { diffVisitEdits } from "@/lib/visit-dirty";
+import { diffVisitEdits, responseSaveItems } from "@/lib/visit-dirty";
 import {
   TemplateFieldSection,
   type FieldResponses,
@@ -900,11 +900,11 @@ export default function VisitDetailPage() {
     return visitProducts.map((p) => saveItemFor(p, entries[p.product_id]));
   }
 
+  // Cleared answers are sent as null so the saved value is cleared too.
   function buildResponseItems() {
     if (!template?.fields) return [];
-    return template.fields
-      .filter((f) => f.type !== "section")
-      .map((f) => ({ field_id: f.id, value: responses[f.id] ?? null }));
+    const fieldIds = template.fields.filter((f) => f.type !== "section").map((f) => f.id);
+    return responseSaveItems(fieldIds, responses, savedResponses);
   }
 
   /**
@@ -1395,9 +1395,11 @@ export default function VisitDetailPage() {
             {/* Action buttons */}
             <div className="flex gap-3 pb-safe pt-1.5">
               {/* Mark missed */}
+              {/* Nothing here runs while the completion dialog is open: the
+                  dialog makes this bar inert, and these checks hold anyway. */}
               <button
-                onClick={() => missedMutation.mutate(id)}
-                disabled={missedMutation.isPending}
+                onClick={() => { if (!showComplete) missedMutation.mutate(id); }}
+                disabled={showComplete || missedMutation.isPending}
                 title={t("visits.markMissed")}
                 className="w-12 h-12 rounded-xl border border-ink-200 flex items-center justify-center text-ink-400 hover:text-rose-500 hover:border-rose-300 hover:bg-rose-50 transition-all shrink-0"
               >
@@ -1406,8 +1408,8 @@ export default function VisitDetailPage() {
 
               {/* Save (disabled inline when server is busy; offline shows info toast) */}
               <button
-                onClick={handleSave}
-                disabled={isSaving || syncStatus === "saving"}
+                onClick={() => { if (!showComplete) handleSave(); }}
+                disabled={showComplete || isSaving || syncStatus === "saving"}
                 className="flex-1 h-12 rounded-xl border-2 border-brand-500 text-brand-600 text-[14px] font-semibold hover:bg-brand-50 disabled:opacity-60 transition-all flex items-center justify-center gap-2"
               >
                 {syncStatus === "saving" ? (

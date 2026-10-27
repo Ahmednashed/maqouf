@@ -157,8 +157,12 @@ export function noEditsSince(revision: number | null | undefined, current: numbe
 
 // ─── Closing the dialog while it works ────────────────────────────────────────
 
-/** Every way the completion dialog can be asked to close. */
-export type CompletionCloseSource = "backdrop" | "closeButton" | "cancel" | "escape";
+/**
+ * Every way the completion dialog can be asked to close: its Cancel button,
+ * and "dismiss" — Escape, the backdrop or the header X, which the shared
+ * Modal reports as one onClose.
+ */
+export type CompletionCloseSource = "cancel" | "dismiss";
 
 /**
  * Holds the completion dialog open while "Save and complete" or "Complete"

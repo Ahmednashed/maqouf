@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/client";
+import { valuesEqual } from "@/lib/visit-dirty";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -41,13 +42,35 @@ export async function fetchVisitResponses(
 
 export interface ResponseUpsertItem {
   field_id: string;
+  /** null clears a saved answer (the row stays, with no value). */
   value:    unknown;
+}
+
+/**
+ * The save went through, but the rows the database returned do not hold what
+ * was sent — so the server may still have an older answer. The visit must not
+ * be completed on the strength of this save.
+ */
+export class ResponsesNotStoredError extends Error {
+  fieldIds: string[];
+  constructor(fieldIds: string[]) {
+    super(`${fieldIds.length} answer(s) were not stored as sent`);
+    this.name     = "ResponsesNotStoredError";
+    this.fieldIds = fieldIds;
+  }
 }
 
 /**
  * Upsert template-field responses for a visit.
  * Uses (visit_id, field_id) as the conflict target so re-saving is safe.
- * Skips rows where value is null/undefined to avoid cluttering the table.
+ *
+ * A null value is written as null, which is how a cleared answer reaches the
+ * server: the row is updated rather than deleted, because merchandisers may
+ * update their visit's answers but not delete them (RLS). Which empty fields
+ * to send is the caller's choice — see responseSaveItems.
+ *
+ * The written rows are read back from the same request and compared with what
+ * was sent; any difference throws ResponsesNotStoredError.
  */
 export async function saveVisitResponses(
   visitId:    string,
@@ -58,20 +81,25 @@ export async function saveVisitResponses(
 
   const supabase = createClient();
 
-  const rows = items
-    .filter((r) => r.value !== null && r.value !== undefined)
-    .map((r) => ({
-      visit_id:    visitId,
-      template_id: templateId,
-      field_id:    r.field_id,
-      value:       r.value,
-    }));
+  const rows = items.map((r) => ({
+    visit_id:    visitId,
+    template_id: templateId,
+    field_id:    r.field_id,
+    value:       r.value ?? null,
+  }));
 
-  if (!rows.length) return;
-
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from("visit_template_responses")
-    .upsert(rows, { onConflict: "visit_id,field_id" });
+    .upsert(rows, { onConflict: "visit_id,field_id" })
+    .select("field_id, value");
 
   if (error) throw error;
+
+  const stored = new Map(
+    ((data ?? []) as Array<{ field_id: string; value: unknown }>).map((r) => [r.field_id, r.value]),
+  );
+  const notStored = rows
+    .filter((r) => !stored.has(r.field_id) || !valuesEqual(stored.get(r.field_id), r.value))
+    .map((r) => r.field_id);
+  if (notStored.length) throw new ResponsesNotStoredError(notStored);
 }

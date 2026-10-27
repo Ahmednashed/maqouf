@@ -725,6 +725,7 @@ export const translations = {
     "visits.recur.createdOk":        "تم إنشاء الجدول المتكرر",
     "visits.recur.reconcileWarning": "تم حفظ الجدول، لكن تعذّر توليد الزيارات الآن. ستتم المحاولة تلقائياً لاحقاً.",
     "visits.responsesSaved":            "تم حفظ الإجابات",
+    "visits.responsesNotStored":        "لم يؤكّد الخادم حفظ بعض الإجابات كما أُدخلت، فقد تبقى قيمة قديمة. ما زالت التعديلات على هذا الجهاز؛ حاول الحفظ مرة أخرى.",
     "visits.noOptions":                 "لا توجد خيارات",
     // Photo upload (visit execution)
     "visits.addPhoto":          "إضافة صورة",
@@ -2065,6 +2066,7 @@ export const translations = {
     "visits.recur.createdOk":        "Recurring schedule created",
     "visits.recur.reconcileWarning": "Schedule saved, but visits could not be generated right now. This will be retried automatically.",
     "visits.responsesSaved":            "Responses saved",
+    "visits.responsesNotStored":        "The server did not confirm some answers as entered, so an older value may remain. Your changes are still on this device — try saving again.",
     "visits.noOptions":                 "No options configured",
     // Photo upload (visit execution)
     "visits.addPhoto":          "Add Photo",
