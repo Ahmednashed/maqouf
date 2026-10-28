@@ -28,7 +28,7 @@ import {
   createCompletionGuard, noEditsSince, type CompletionCloseSource,
 } from "@/lib/visit-completion";
 import { readDraft, writeDraft, clearDraft, createDraftWriter, draftOverPending, draftResponseTimes, type VisitDraft } from "@/lib/offline-drafts";
-import { responseSaveItems, restoreDraftResponses, initialResponses } from "@/lib/visit-dirty";
+import { responseSaveItems, restoreDraftResponses, restoreDraftAnswers, initialResponses } from "@/lib/visit-dirty";
 import { makeOutsideInert, KEEP_LIVE_ATTR, type InertNode } from "@/lib/inert-outside";
 import { saveVisitResponses, ResponsesNotStoredError } from "@/services/visit-responses";
 import { useCompleteVisit, useStartVisit } from "@/hooks/use-visits";
@@ -738,7 +738,8 @@ console.log("8) toasts over a dialog, a photo uploaded after the draft, values a
     // 4. The user restores the older draft. The saved answers the page knows
     //    are what it loaded, or a refetch made after the upload.
     const saved = o.uploadReachesScreen ? loaded : { ...server };
-    screen = restoreDraftResponses({ draft: draft.responses, draftSavedAt: draft.last_saved_locally_at, current: screen, saved, photoFieldIds: [PHOTO] });
+    const times = Object.fromEntries(Object.keys(draft.responses).map((k) => [k, draft.last_saved_locally_at]));
+    screen = restoreDraftResponses({ draft: draft.responses, responseTimes: times, current: screen, saved, photoFieldIds: [PHOTO] });
     // 5. Save.
     const items = responseSaveItems(FIELDS, screen);
     await save(items);
@@ -759,22 +760,22 @@ console.log("8) toasts over a dialog, a photo uploaded after the draft, values a
 
   // A new photo on an empty field, offline: the draft has no key for it.
   eq("restoring a draft without the field keeps the photo that arrived since",
-     restoreDraftResponses({ draft: { [TEXT]: "x" }, draftSavedAt: "2026-10-28T09:00:00.000Z", current: { [PHOTO]: M2 }, saved: {}, photoFieldIds: [PHOTO] }),
+     restoreDraftResponses({ draft: { [TEXT]: "x" }, current: { [PHOTO]: M2 }, saved: {}, photoFieldIds: [PHOTO] }),
      { [PHOTO]: M2, [TEXT]: "x" });
   eq("…and if it never reached the screen, the save leaves the server's photo alone",
      responseSaveItems(FIELDS, { [TEXT]: "x" }), [{ field_id: TEXT, value: "x" }]);
-  eq("a photo without an upload time never overrides the draft",
-     restoreDraftResponses({ draft: { [PHOTO]: null }, draftSavedAt: "2026-10-28T09:00:00.000Z", current: { [PHOTO]: { path: "p", file_name: "f", mime_type: "image/jpeg", size: 1 } }, saved: {}, photoFieldIds: [PHOTO] }),
+  eq("a photo without an upload time never overrides a draft answer with its own time",
+     restoreDraftResponses({ draft: { [PHOTO]: null }, responseTimes: { [PHOTO]: "2026-10-28T09:00:00.000Z" }, current: { [PHOTO]: { path: "p", file_name: "f", mime_type: "image/jpeg", size: 1 } }, saved: {}, photoFieldIds: [PHOTO] }),
      { [PHOTO]: null });
   eq("answers the draft does not mention keep what the screen or the server has",
-     restoreDraftResponses({ draft: { [TEXT]: "draft" }, draftSavedAt: "2026-10-28T09:00:00.000Z", current: { "f-later": "typed since" }, saved: { "f-other": "from another device" }, photoFieldIds: [PHOTO] }),
+     restoreDraftResponses({ draft: { [TEXT]: "draft" }, current: { "f-later": "typed since" }, saved: { "f-other": "from another device" }, photoFieldIds: [PHOTO] }),
      { [TEXT]: "draft", "f-later": "typed since", "f-other": "from another device" });
   eq("non-photo fields: the draft wins, as before",
-     restoreDraftResponses({ draft: { [TEXT]: "draft" }, draftSavedAt: "2026-10-28T09:00:00.000Z", current: { [TEXT]: "screen" }, saved: { [TEXT]: "server" }, photoFieldIds: [PHOTO] }),
+     restoreDraftResponses({ draft: { [TEXT]: "draft" }, current: { [TEXT]: "screen" }, saved: { [TEXT]: "server" }, photoFieldIds: [PHOTO] }),
      { [TEXT]: "draft" });
   const page = read("app", "(dashboard)", "visits", "[id]", "page.tsx");
-  ok("the page restores through restoreDraftResponses, with its photo fields",
-     /setResponses\(restoreDraftResponses\(\{[\s\S]{0,300}photoFieldIds: \(template\?\.fields \?\? \[\]\)\.filter\(\(f\) => f\.type === "photo"\)/.test(page) &&
+  ok("the page restores through restoreDraftAnswers, with its photo fields",
+     /const photoFields = \(template\?\.fields \?\? \[\]\)\.filter\(\(f\) => f\.type === "photo"\);\s+const \{ responses: restored, keptPhotos \} = restoreDraftAnswers\(\{[\s\S]{0,300}photoFieldIds: photoFields\.map\(\(f\) => f\.id\),\s+\}\);\s+setResponses\(restored as FieldResponses\);/.test(page) &&
      !page.includes("setResponses(pendingDraft.responses as FieldResponses)"));
 
   // Values compared in the form they travel in.
@@ -815,7 +816,7 @@ console.log("9) the server's answers arriving late");
       get responses() { return responses; },
       get editsReady() { return initialized; },
       type(id: string, v: unknown) { responses = { ...responses, [id]: v }; },
-      restore(draft: Record<string, unknown>) { responses = restoreDraftResponses({ draft, draftSavedAt: "2026-10-28T09:00:00.000Z", current: responses, saved: {}, photoFieldIds: [] }); },
+      restore(draft: Record<string, unknown>) { responses = restoreDraftResponses({ draft, current: responses, saved: {}, photoFieldIds: [] }); },
       async load(server: Promise<Record<string, unknown>>) { const rows = await server; responses = copy(rows, responses); initialized = true; },
     };
   };
@@ -921,7 +922,7 @@ console.log("10) editing while an older draft waits");
       templateLoads(serverAnswers: Record<string, unknown>) { screen.responses = initialResponses(serverAnswers, screen.responses); },
       restore() {
         screen.products = pending!.products as typeof screen.products;
-        screen.responses = restoreDraftResponses({ draft: pending!.responses, draftSavedAt: pending!.last_saved_locally_at, current: screen.responses, saved: {}, photoFieldIds: [] });
+        screen.responses = restoreDraftResponses({ draft: pending!.responses, current: screen.responses, saved: {}, photoFieldIds: [] });
         pending = null; touched = { products: new Set(), responses: new Set() };
       },
       discard() {
@@ -994,10 +995,10 @@ console.log("10) editing while an older draft waits");
   const touchedNone = { products: new Set<string>(), responses: new Set<string>() };
   eq("draftOverPending: nothing touched → the waiting draft as it is, with its time",
      draftOverPending(oldDraft, { products: { p1: { qty_found: "", notes: "" } }, responses: {} }, touchedNone),
-     { products: oldDraft.products, responses: oldDraft.responses, responseTimes: { f1: OLD_AT, f2: OLD_AT }, savedAt: OLD_AT });
+     { products: oldDraft.products, responses: oldDraft.responses, responseTimes: {}, savedAt: OLD_AT });
   eq("draftOverPending: a touched answer goes on top with this session's time, and the draft time is then the write's",
      draftOverPending(oldDraft, { products: {}, responses: { f1: "typed now" } }, { products: new Set(), responses: new Set(["f1"]) }, { f1: "2026-10-28T10:30:00.000Z" }),
-     { products: oldDraft.products, responses: { f1: "typed now", f2: 9 }, responseTimes: { f1: "2026-10-28T10:30:00.000Z", f2: OLD_AT } });
+     { products: oldDraft.products, responses: { f1: "typed now", f2: 9 }, responseTimes: { f1: "2026-10-28T10:30:00.000Z" } });
   eq("the writer writes a given time instead of its own",
      (() => { clearDraft(ID); const w = createDraftWriter(500, () => {}, () => Date.parse("2026-10-28T12:00:00.000Z")); w.edit(ID, {}, {}, { savedAt: OLD_AT }); w.flush(); return readDraft(ID)!.last_saved_locally_at; })(),
      OLD_AT);
@@ -1073,7 +1074,7 @@ console.log("11) a photo answer's own time");
         pending = { ...pending, products: m.products, responses: m.responses, response_times: m.responseTimes, last_saved_locally_at: m.savedAt ?? iso() };
       },
       restore() {                                                 // handleRestoreDraft + confirmRestore
-        screen = restoreDraftResponses({ draft: pending!.responses, draftSavedAt: pending!.last_saved_locally_at, responseTimes: pending!.response_times, current: screen, saved: loaded, photoFieldIds: [PHOTO] });
+        screen = restoreDraftResponses({ draft: pending!.responses, responseTimes: pending!.response_times, current: screen, saved: loaded, photoFieldIds: [PHOTO] });
         times = { ...draftResponseTimes(pending!), ...times };
         pending = null; touched = { products: new Set(), responses: new Set() };
       },
@@ -1103,21 +1104,26 @@ console.log("11) a photo answer's own time");
       const p = page();
       p.setAnswer(TEXT, "edited at 10:00");
       eq(`[${format}] the waiting draft's time moved to 10:00, its photo answer's did not`,
-         [p.pending!.last_saved_locally_at, p.pending!.response_times![PHOTO]], ["2026-10-28T10:00:00.000Z", "2026-10-28T08:00:00.000Z"]);
+         [p.pending!.last_saved_locally_at, p.pending!.response_times![PHOTO]],
+         ["2026-10-28T10:00:00.000Z", format === "with response_times" ? "2026-10-28T08:00:00.000Z" : undefined]);
       p.restore();
       eq(`[${format}] restoring keeps the photo uploaded at 09:00, and the text edit`, [p.screen[PHOTO], p.screen[TEXT]], [M2, "edited at 10:00"]);
       await p.save();
       eq(`[${format}] …and saving leaves it on the server`, server[PHOTO], M2);
-      eq(`[${format}] (by the draft-wide time alone, the null would have won)`,
-         restoreDraftResponses({ draft: { [PHOTO]: null }, draftSavedAt: "2026-10-28T10:00:00.000Z", current: { [PHOTO]: M2 }, saved: { [PHOTO]: M2 }, photoFieldIds: [PHOTO] })[PHOTO], null);
+      eq(`[${format}] (the draft-wide time, 10:00, is after the upload; it is not what decides)`,
+         restoreDraftAnswers({ draft: { [PHOTO]: null }, responseTimes: format === "with response_times" ? { [PHOTO]: "2026-10-28T08:00:00.000Z" } : undefined, current: { [PHOTO]: M2 }, saved: { [PHOTO]: M2 }, photoFieldIds: [PHOTO] }),
+         { responses: { [PHOTO]: M2 }, keptPhotos: [PHOTO] });
     }
 
     // After a reload: the edit is written, the page is loaded again, then restore and save.
     reset(OLD, { [PHOTO]: M2, [TEXT]: "server" });
     at("2026-10-28T10:00:00.000Z");
     { const p = page(); p.setAnswer(TEXT, "edited at 10:00"); clock += 600; p.leave(); }
-    eq(`[${format}] after the reload the stored draft has the photo answer at 08:00 and the text at 10:00`,
-       readDraft(ID)!.response_times, { [PHOTO]: "2026-10-28T08:00:00.000Z", [TEXT]: "2026-10-28T10:00:00.000Z" });
+    eq(`[${format}] after the reload the stored draft keeps the photo answer's own time (none for the older format) and the text at 10:00`,
+       readDraft(ID)!.response_times,
+       format === "with response_times"
+         ? { [PHOTO]: "2026-10-28T08:00:00.000Z", [TEXT]: "2026-10-28T10:00:00.000Z" }
+         : { [TEXT]: "2026-10-28T10:00:00.000Z" });
     at("2026-10-28T11:00:00.000Z");
     {
       const p = page();
@@ -1168,10 +1174,10 @@ console.log("11) a photo answer's own time");
   }
   // A photo answer copied from the server (never set here) never beats a newer upload.
   eq("an answer without its own time is not treated as newer than any upload",
-     restoreDraftResponses({ draft: { [PHOTO]: M1 }, draftSavedAt: "2026-10-28T12:00:00.000Z", responseTimes: {}, current: {}, saved: { [PHOTO]: M2 }, photoFieldIds: [PHOTO] })[PHOTO], M2);
-  eq("draftResponseTimes: an older draft's answers all take its time",
+     restoreDraftResponses({ draft: { [PHOTO]: M1 }, responseTimes: {}, current: {}, saved: { [PHOTO]: M2 }, photoFieldIds: [PHOTO] })[PHOTO], M2);
+  eq("draftResponseTimes: a draft written before answers had times gives none (its single time is not each answer's)",
      draftResponseTimes({ visit_id: ID, products: {}, responses: { a: 1, b: null }, last_saved_locally_at: "2026-10-28T08:00:00.000Z", dirty: true }),
-     { a: "2026-10-28T08:00:00.000Z", b: "2026-10-28T08:00:00.000Z" });
+     {});
   clearDraft(ID);
 
   // The hook's and the page's wiring.
@@ -1187,5 +1193,170 @@ console.log("11) a photo answer's own time");
   ok("restoring takes over the draft's answer times",
      /const confirmRestore = useCallback\(\(\) => \{[\s\S]{0,200}responseTimesRef\.current = \{ \.\.\.draftResponseTimes\(pendingRef\.current\), \.\.\.responseTimesRef\.current \};/.test(hook));
   ok("the page restores with the draft's answer times",
-     /restoreDraftResponses\(\{[\s\S]{0,150}responseTimes: pendingDraft\.response_times,/.test(pageSrc));
+     /restoreDraftAnswers\(\{[\s\S]{0,150}responseTimes: pendingDraft\.response_times,/.test(pageSrc));
+}
+
+// ── 12) Drafts written before answers had times ─────────────────────────────
+// A draft in localStorage from before e06633b has no response_times, and its
+// single time can be later than a photo uploaded since: 7eff610 moved it on
+// every edit merged over a waiting draft, and earlier code stamped the time
+// of writing. Taking that time as the photo answer's time made restoring put
+// a stale null — or an older photo — back over the newer photo, and saving
+// then wrote it to the server. Such a draft's photo answer is now ambiguous:
+// it never replaces a photo already on the screen or the server, unless the
+// user removes or replaces that photo in this session.
+console.log("12) drafts written before answers had times");
+{
+  const ID = "v-legacy", TABLE = "visit_template_responses";
+  const PHOTO = "f-photo", TEXT = "f-text", NOTE = "f-note", FIELDS = [PHOTO, TEXT, NOTE];
+  const M1 = { path: "v/f/old.jpg", file_name: "old.jpg", mime_type: "image/jpeg", size: 10, uploaded_at: "2026-10-28T07:00:00.000Z" };
+  const M2 = { path: "v/f/new.jpg", file_name: "new.jpg", mime_type: "image/jpeg", size: 12, uploaded_at: "2026-10-28T09:00:00.000Z" };
+  const M3 = { path: "v/f/mine.jpg", file_name: "mine.jpg", mime_type: "image/jpeg", size: 14, uploaded_at: "2026-10-28T10:00:00.000Z" };
+  let clock = 0;
+  const at = (iso: string) => { clock = Date.parse(iso); };
+  const iso = () => new Date(clock).toISOString();
+  const server: Record<string, unknown> = {};
+  const saveToServer = async (items: Array<{ field_id: string; value: unknown }>) => {
+    resetStub();
+    const stored = items.map((i) => ({ field_id: i.field_id, value: i.value === undefined ? null : JSON.parse(JSON.stringify(i.value)) }));
+    queueResultFor(TABLE, { data: stored, error: null });
+    await saveVisitResponses(ID, "t-1", items);
+    stored.forEach((r) => { server[r.field_id] = r.value; });
+  };
+  // One page load, as the hook and the page run it (see section 11).
+  const page = () => {
+    const stored = readDraft(ID);
+    let pending: VisitDraft | null = classifyStoredDraft(stored, false) === "restorable" ? stored : null;
+    let touched = { products: new Set<string>(), responses: new Set<string>() };
+    let times: Record<string, string> = {};
+    const writer = createDraftWriter(500, () => {}, () => clock);
+    const loaded = { ...server };
+    let screen: Record<string, unknown> = { ...loaded };
+    let kept: string[] = [];
+    return {
+      get screen() { return screen; },
+      get kept() { return kept; },
+      setAnswer(id: string, v: unknown) {
+        screen = { ...screen, [id]: v };
+        touched.responses.add(id);
+        times = { ...times, [id]: iso() };
+        if (!pending) { writer.edit(ID, {}, screen, { responseTimes: times }); return; }
+        const m = draftOverPending(pending, { products: {}, responses: screen }, touched, times);
+        writer.edit(ID, m.products, m.responses, { savedAt: m.savedAt, responseTimes: m.responseTimes });
+        pending = { ...pending, products: m.products, responses: m.responses, response_times: m.responseTimes, last_saved_locally_at: m.savedAt ?? iso() };
+      },
+      restore() {
+        const r = restoreDraftAnswers({ draft: pending!.responses, responseTimes: pending!.response_times, current: screen, saved: loaded, photoFieldIds: [PHOTO] });
+        screen = r.responses; kept = r.keptPhotos;
+        times = { ...draftResponseTimes(pending!), ...times };
+        pending = null; touched = { products: new Set(), responses: new Set() };
+      },
+      async save() { await saveToServer(responseSaveItems(FIELDS, screen)); },
+      leave() { writer.flush(); },
+    };
+  };
+  const reset = (draft: VisitDraft | null, serverRows: Record<string, unknown>) => {
+    clearDraft(ID);
+    if (draft) writeDraft(draft);
+    for (const k of Object.keys(server)) delete server[k];
+    Object.assign(server, serverRows);
+  };
+  // As written by 7eff610: no response_times, its single time moved to 10:00
+  // by a text edit after the 09:00 upload.
+  const legacy = (photo: unknown): VisitDraft => ({
+    visit_id: ID, products: {}, responses: { [PHOTO]: photo, [TEXT]: "edited at 10:00", [NOTE]: "draft note" },
+    last_saved_locally_at: "2026-10-28T10:00:00.000Z", dirty: true,
+  });
+
+  for (const [label, photo] of [["null", null], ["an older photo", M1]] as const) {
+    // Restored in the page load that finds it.
+    reset(legacy(photo), { [PHOTO]: M2, [TEXT]: "server", [NOTE]: "server note" });
+    at("2026-10-28T11:00:00.000Z");
+    {
+      const p = page();
+      p.restore();
+      eq(`legacy draft with ${label}: restoring keeps the photo on the server`, p.screen[PHOTO], M2);
+      eq(`…the rest of the draft is restored`, [p.screen[TEXT], p.screen[NOTE]], ["edited at 10:00", "draft note"]);
+      eq(`…and the page is told the draft's photo value was set aside`, p.kept, [PHOTO]);
+      await p.save();
+      eq(`…saving keeps the photo on the server, and saves the rest`, [server[PHOTO], server[TEXT], server[NOTE]], [M2, "edited at 10:00", "draft note"]);
+    }
+    // An edit is merged over it while it waits, the page is reloaded, then restore and save.
+    reset(legacy(photo), { [PHOTO]: M2, [TEXT]: "server", [NOTE]: "server note" });
+    at("2026-10-28T11:00:00.000Z");
+    { const p = page(); p.setAnswer(TEXT, "edited at 11:00"); clock += 600; p.leave(); }
+    eq(`legacy draft with ${label}, edited while waiting: no time is invented for its photo answer`,
+       readDraft(ID)!.response_times, { [TEXT]: "2026-10-28T11:00:00.000Z" });
+    at("2026-10-28T12:00:00.000Z");
+    {
+      const p = page();
+      p.restore();
+      await p.save();
+      eq(`…reloaded, restored and saved: the photo on the server is kept, the draft's edits are saved`,
+         [p.screen[PHOTO], server[PHOTO], server[TEXT], server[NOTE], p.kept], [M2, M2, "edited at 11:00", "draft note", [PHOTO]]);
+    }
+  }
+
+  // The user removes the kept photo on purpose after restoring: that is an
+  // edit of their own, with its own time, and it is saved — also after a reload.
+  reset(legacy(null), { [PHOTO]: M2, [TEXT]: "server" });
+  at("2026-10-28T11:00:00.000Z");
+  {
+    const p = page();
+    p.restore();
+    at("2026-10-28T11:05:00.000Z");
+    p.setAnswer(PHOTO, null);
+    await p.save();
+    eq("removing the kept photo after restoring: the removal is saved", [p.screen[PHOTO], server[PHOTO]], [null, null]);
+  }
+  reset(legacy(null), { [PHOTO]: M2, [TEXT]: "server" });
+  at("2026-10-28T11:00:00.000Z");
+  {
+    const p = page();
+    p.restore();
+    at("2026-10-28T11:05:00.000Z");
+    p.setAnswer(PHOTO, null); clock += 600; p.leave();   // not saved; the page is reloaded
+  }
+  eq("…left unsaved, the removal is in the draft with its own time", readDraft(ID)!.response_times?.[PHOTO], "2026-10-28T11:05:00.000Z");
+  at("2026-10-28T12:00:00.000Z");
+  {
+    const p = page();
+    p.restore();
+    await p.save();
+    eq("…reloaded, restored and saved: still removed (11:05 is after the 09:00 upload)", [p.screen[PHOTO], server[PHOTO], p.kept], [null, null, []]);
+  }
+
+  // A legacy draft whose photo the server does not have: nothing to protect,
+  // the draft's value is restored as before.
+  reset(legacy(M1), { [TEXT]: "server" });
+  {
+    const p = page();
+    p.restore();
+    eq("legacy draft, no photo on the server: the draft's photo is restored, nothing set aside", [p.screen[PHOTO], p.kept], [M1, []]);
+  }
+
+  // Drafts with response_times behave as before.
+  const timed = (photo: unknown, photoAt: string): VisitDraft => ({
+    visit_id: ID, products: {}, responses: { [PHOTO]: photo, [TEXT]: "t" },
+    response_times: { [PHOTO]: photoAt, [TEXT]: "2026-10-28T10:30:00.000Z" }, last_saved_locally_at: "2026-10-28T10:30:00.000Z", dirty: true,
+  });
+  const restoreTimed = (d: VisitDraft) => restoreDraftAnswers({ draft: d.responses, responseTimes: d.response_times, current: { [PHOTO]: M2 }, saved: { [PHOTO]: M2 }, photoFieldIds: [PHOTO] });
+  eq("new format: a null set before the upload gives way to it (and says so)", restoreTimed(timed(null, "2026-10-28T08:00:00.000Z")), { responses: { [PHOTO]: M2, [TEXT]: "t" }, keptPhotos: [PHOTO] });
+  eq("new format: a removal after the upload stands", restoreTimed(timed(null, "2026-10-28T09:30:00.000Z")), { responses: { [PHOTO]: null, [TEXT]: "t" }, keptPhotos: [] });
+  eq("new format: the user's own newer photo stands", restoreTimed(timed(M3, "2026-10-28T10:00:00.000Z")), { responses: { [PHOTO]: M3, [TEXT]: "t" }, keptPhotos: [] });
+  eq("new format: an answer copied from the server (no own time) gives way to the photo there",
+     restoreDraftAnswers({ draft: { [PHOTO]: M1 }, responseTimes: { [TEXT]: "2026-10-28T10:30:00.000Z" }, current: {}, saved: { [PHOTO]: M2 }, photoFieldIds: [PHOTO] }).responses[PHOTO], M2);
+  eq("the same photo on both sides is not reported as set aside",
+     restoreDraftAnswers({ draft: { [PHOTO]: M2 }, current: { [PHOTO]: M2 }, saved: { [PHOTO]: M2 }, photoFieldIds: [PHOTO] }).keptPhotos, []);
+  clearDraft(ID);
+
+  // The notice.
+  const pageSrc = readFileSync(join(import.meta.dirname, "..", "src", "app", "(dashboard)", "visits", "[id]", "page.tsx"), "utf8");
+  ok("restoring says which photos were kept instead of the draft's value",
+     /if \(keptPhotos\.length\) \{[\s\S]{0,400}toast\.warning\(t\("offline\.restoreKeptPhotos"\)\.replace\("\{fields\}", names\)/.test(pageSrc));
+  for (const locale of ["ar", "en"] as const) {
+    const s = T(locale, "offline.restoreKeptPhotos");
+    ok(`[${locale}] offline.restoreKeptPhotos exists, names the fields${locale === "ar" ? ", in Arabic" : ", in English"}`,
+       !!s && s.includes("{fields}") && (locale === "ar" ? /[؀-ۿ]/.test(s) : !/[؀-ۿ]/.test(s)));
+  }
 }

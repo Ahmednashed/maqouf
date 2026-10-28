@@ -1335,6 +1335,7 @@ export const translations = {
     "offline.strandedDiscardCancel":   "إلغاء",
     "offline.completeOfflineDisabled": "لا يمكن إكمال الزيارة بدون اتصال بالإنترنت",
     "offline.restoredOk":              "تم استعادة المسودة بنجاح",
+    "offline.restoreKeptPhotos":       "أُبقيت الصورة الموجودة حالياً في: {fields}، بدل قيمة الصورة في المسودة، لأن المسودة لا تثبت أنها أحدث منها. إن أردت حذفها أو استبدالها فافعل ذلك من الحقل نفسه.",
     "offline.discardedOk":             "تم تجاهل المسودة",
     // Offline photo queue
     "photo.queued":            "في انتظار الرفع",
@@ -2674,6 +2675,7 @@ export const translations = {
     "offline.strandedDiscardCancel":   "Cancel",
     "offline.completeOfflineDisabled": "Cannot complete while offline",
     "offline.restoredOk":              "Draft restored",
+    "offline.restoreKeptPhotos":       "Kept the photo already in: {fields}, instead of the draft's value for it, because the draft cannot show it is newer. To remove or replace that photo, do it in the field itself.",
     "offline.discardedOk":             "Draft discarded",
     // Offline photo queue
     "photo.queued":            "Queued for upload",

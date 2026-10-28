@@ -178,9 +178,14 @@ export function initialResponses(
   return { ...server, ...onScreen };
 }
 
+/** A stored photo reference (PhotoMeta): it has a storage path. */
+function isPhoto(v: unknown): boolean {
+  return typeof v === "object" && v !== null && typeof (v as { path?: unknown }).path === "string";
+}
+
 /** When a photo answer was uploaded, if it says (PhotoMeta.uploaded_at). */
 function photoUploadedAt(v: unknown): number | null {
-  if (typeof v !== "object" || v === null || typeof (v as { path?: unknown }).path !== "string") return null;
+  if (!isPhoto(v)) return null;
   const at = Date.parse(String((v as { uploaded_at?: unknown }).uploaded_at));
   return Number.isNaN(at) ? null : at;
 }
@@ -201,44 +206,54 @@ function photoUploadedAt(v: unknown): number | null {
  *     draft was written, from the screen or the server, whatever the draft
  *     holds for it.
  *
- * Otherwise the draft wins, as before: it is the user's own unsaved work. A
- * photo the user removed after the newest upload stays removed, because the
- * draft holding that null was written after the upload.
+ * Otherwise the draft wins, as before: it is the user's own unsaved work.
+ *
+ * Which photo wins is decided by the photo answer's own time in the draft
+ * (response_times), never by the draft-wide time, which moves with every
+ * edit of any answer:
+ *
+ *   • With its own time, the draft's photo answer stands unless a photo was
+ *     uploaded after it. A photo removed on purpose after the upload stays
+ *     removed.
+ *   • Without one — copied from the server rather than set here, or from a
+ *     draft written before answers had times — the draft's value is
+ *     ambiguous: it may be older than the photo now on the server. It never
+ *     replaces a photo on the screen or the server. The user can still
+ *     remove or replace that photo afterwards, as an edit of their own.
+ *
+ * `keptPhotos` lists the photo fields where the draft's value was set aside
+ * for the photo already there, so the page can say so.
  */
-export function restoreDraftResponses(input: {
+export function restoreDraftAnswers(input: {
   draft:         Record<string, unknown>;
-  /** The draft's last_saved_locally_at. */
-  draftSavedAt:  string;
-  /**
-   * The draft's response_times, when it has them: then a photo answer is as
-   * old as its own entry, and one without an entry was never set on this
-   * device, so any photo uploaded beats it. The draft-wide time moves with
-   * every edit, so without them a text edit made a stale photo answer look
-   * newer than a photo uploaded since. Drafts without them (written before
-   * they existed) fall back to draftSavedAt for every answer, as before.
-   */
+  /** The draft's response_times (absent in drafts written before them). */
   responseTimes?: Record<string, string>;
   current:       Record<string, unknown>;
   saved:         Record<string, unknown>;
   photoFieldIds: string[];
-}): Record<string, unknown> {
+}): { responses: Record<string, unknown>; keptPhotos: string[] } {
   const restored: Record<string, unknown> = { ...input.saved, ...input.current, ...input.draft };
-  const draftAt = Date.parse(input.draftSavedAt);
-  const answerAt = (id: string): number => {
-    if (!input.responseTimes) return Number.isNaN(draftAt) ? Infinity : draftAt;
-    const own = input.responseTimes[id];
-    if (own === undefined) return -Infinity;
-    const at = Date.parse(own);
-    return Number.isNaN(at) ? Infinity : at;
-  };
+  const keptPhotos: string[] = [];
   for (const id of input.photoFieldIds) {
-    let newest: unknown = undefined;
-    let newestAt = answerAt(id);
+    const ownAt = Date.parse(String(input.responseTimes?.[id]));
+    const timed = !Number.isNaN(ownAt);
+    let kept: unknown = undefined;
+    let keptAt = timed ? ownAt : -Infinity;
     for (const candidate of [input.current[id], input.saved[id]]) {
-      const at = photoUploadedAt(candidate);
-      if (at !== null && at > newestAt) { newest = candidate; newestAt = at; }
+      if (!isPhoto(candidate)) continue;
+      const at = photoUploadedAt(candidate) ?? -Infinity;
+      // Timed: only a photo uploaded after the answer. Untimed: any photo,
+      // the newest first.
+      if (timed ? at > keptAt : kept === undefined || at > keptAt) { kept = candidate; keptAt = at; }
     }
-    if (newest !== undefined) restored[id] = newest;
+    if (kept === undefined) continue;
+    if (has(input.draft, id) && !valuesEqual(kept, input.draft[id])) keptPhotos.push(id);
+    restored[id] = kept;
   }
-  return restored;
+  return { responses: restored, keptPhotos };
+}
+
+/** restoreDraftAnswers, the answers only. */
+export function restoreDraftResponses(input: Parameters<typeof restoreDraftAnswers>[0]): Record<string, unknown> {
+  return restoreDraftAnswers(input).responses;
 }

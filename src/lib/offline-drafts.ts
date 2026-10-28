@@ -56,18 +56,22 @@ export interface VisitDraft {
    * the server. Restoring compares a photo answer's time with a photo
    * uploaded since (restoreDraftResponses); the draft-wide time above moves
    * with every edit, so it cannot say when the photo itself was changed.
-   * Absent in drafts written before it existed: draftResponseTimes then
-   * gives every answer the draft-wide time, as restoring always assumed.
+   * Absent in drafts written before it existed. Their answers have no time
+   * of their own, and the draft-wide time cannot stand in for one: it may
+   * have moved past a photo uploaded since (an edit of another answer), so a
+   * stale photo value would look newer than the photo on the server.
    */
   response_times?: Record<string, string>;
 }
 
-/** Per-answer times of a draft (see VisitDraft.response_times). */
+/**
+ * Per-answer times of a draft (see VisitDraft.response_times). A draft
+ * written before they existed has none: none of its answers counts as set at
+ * a known time, so none of them replaces a photo already on the server when
+ * it is restored (restoreDraftAnswers).
+ */
 export function draftResponseTimes(draft: VisitDraft): Record<string, string> {
-  if (draft.response_times) return draft.response_times;
-  const times: Record<string, string> = {};
-  for (const id of Object.keys(draft.responses ?? {})) times[id] = draft.last_saved_locally_at;
-  return times;
+  return draft.response_times ?? {};
 }
 
 // ─── Key ─────────────────────────────────────────────────────────────────────
@@ -225,10 +229,10 @@ export function createDraftWriter(
  *
  * `savedAt` keeps the waiting draft's time when no answer was touched: the
  * answers in it are still the ones written then. `responseTimes` keeps each
- * waiting answer's own time (draftResponseTimes, so an older draft's answers
- * keep the time they had) and takes this session's time for the answers
- * touched now — a text edit no longer makes an untouched photo answer look
- * newer than a photo uploaded since.
+ * waiting answer's own time — none for the answers of a draft written before
+ * they existed — and takes this session's time for the answers touched now:
+ * a text edit no longer makes an untouched photo answer look newer than a
+ * photo uploaded since.
  */
 export function draftOverPending(
   pending:      VisitDraft,

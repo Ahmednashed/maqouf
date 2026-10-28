@@ -41,7 +41,7 @@ import {
   deriveVisitProductPlan,
   deriveVisitFieldPlan,
 } from "@/lib/visit-plan";
-import { diffVisitEdits, responseSaveItems, restoreDraftResponses, initialResponses } from "@/lib/visit-dirty";
+import { diffVisitEdits, responseSaveItems, restoreDraftAnswers, initialResponses } from "@/lib/visit-dirty";
 import {
   TemplateFieldSection,
   type FieldResponses,
@@ -959,16 +959,26 @@ export default function VisitDetailPage() {
     setEntries(pendingDraft.products as Entries);
     // Merged, not replaced: keeps answers newer than the draft, including a
     // photo the upload queue sent after the draft was written.
-    setResponses(restoreDraftResponses({
+    const photoFields = (template?.fields ?? []).filter((f) => f.type === "photo");
+    const { responses: restored, keptPhotos } = restoreDraftAnswers({
       draft:         pendingDraft.responses,
-      draftSavedAt:  pendingDraft.last_saved_locally_at,
       responseTimes: pendingDraft.response_times,
       current:       draftDataRef.current.responses,
       saved:         savedResponses,
-      photoFieldIds: (template?.fields ?? []).filter((f) => f.type === "photo").map((f) => f.id),
-    }) as FieldResponses);
+      photoFieldIds: photoFields.map((f) => f.id),
+    });
+    setResponses(restored as FieldResponses);
     confirmRestore();
     toast.success(t("offline.restoredOk"));
+    // A photo already there was kept instead of the draft's value for it:
+    // say which, and that removing or replacing it is still up to the user.
+    if (keptPhotos.length) {
+      const names = photoFields
+        .filter((f) => keptPhotos.includes(f.id))
+        .map((f) => (locale === "ar" ? f.label_ar : f.label_en))
+        .join(locale === "ar" ? "، " : ", ");
+      toast.warning(t("offline.restoreKeptPhotos").replace("{fields}", names), { duration: 10_000 });
+    }
   }
 
   /** Discard the pending draft — keep server data. */
