@@ -962,6 +962,7 @@ export default function VisitDetailPage() {
     setResponses(restoreDraftResponses({
       draft:         pendingDraft.responses,
       draftSavedAt:  pendingDraft.last_saved_locally_at,
+      responseTimes: pendingDraft.response_times,
       current:       draftDataRef.current.responses,
       saved:         savedResponses,
       photoFieldIds: (template?.fields ?? []).filter((f) => f.type === "photo").map((f) => f.id),

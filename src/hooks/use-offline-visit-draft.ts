@@ -21,6 +21,7 @@ import {
   clearDraft,
   createDraftWriter,
   draftOverPending,
+  draftResponseTimes,
   type VisitDraft,
   type DraftProducts,
   type DraftResponses,
@@ -169,6 +170,9 @@ export function useOfflineVisitDraft(
   // it waits, nothing may replace it — see draftOverPending.
   const pendingRef = useRef<VisitDraft | null>(null);
   const touchedRef = useRef({ products: new Set<string>(), responses: new Set<string>() });
+  // When each answer on screen was set on this device (VisitDraft.response_times):
+  // stamped on every answer edit, and taken over from a draft when it is restored.
+  const responseTimesRef = useRef<Record<string, string>>({});
   const setPending = useCallback((draft: VisitDraft | null) => {
     pendingRef.current = draft;
     setPendingDraft(draft);
@@ -212,24 +216,28 @@ export function useOfflineVisitDraft(
       latestDataRef.current = { products, responses };
       editRevisionRef.current += 1;
       if (touched?.productId) touchedRef.current.products.add(touched.productId);
-      if (touched?.fieldId)   touchedRef.current.responses.add(touched.fieldId);
+      if (touched?.fieldId) {
+        touchedRef.current.responses.add(touched.fieldId);
+        responseTimesRef.current = { ...responseTimesRef.current, [touched.fieldId]: new Date().toISOString() };
+      }
 
       // Immediately signal "unsaved" so the UI dot appears right away.
       setSyncStatus("unsaved");
 
       const pending = pendingRef.current;
       if (!pending) {
-        writer.edit(visitId, products, responses);
+        writer.edit(visitId, products, responses, { responseTimes: responseTimesRef.current });
         return;
       }
       // An older draft is waiting: put this session's edits on top of it, and
       // offer that combined draft in the restore prompt.
-      const merged = draftOverPending(pending, { products, responses }, touchedRef.current);
-      writer.edit(visitId, merged.products, merged.responses, merged.savedAt);
+      const merged = draftOverPending(pending, { products, responses }, touchedRef.current, responseTimesRef.current);
+      writer.edit(visitId, merged.products, merged.responses, { savedAt: merged.savedAt, responseTimes: merged.responseTimes });
       setPending({
         ...pending,
         products:              merged.products,
         responses:             merged.responses,
+        response_times:        merged.responseTimes,
         last_saved_locally_at: merged.savedAt ?? new Date().toISOString(),
       });
     },
@@ -282,6 +290,10 @@ export function useOfflineVisitDraft(
 
   // ── Restore prompt actions ────────────────────────────────────────────────
   const confirmRestore = useCallback(() => {
+    // The screen now holds the draft's answers: they keep the draft's times.
+    if (pendingRef.current) {
+      responseTimesRef.current = { ...draftResponseTimes(pendingRef.current), ...responseTimesRef.current };
+    }
     setPending(null);
     // Data now in page state is from the draft → still dirty
     setSyncStatus("draft");
@@ -295,7 +307,7 @@ export function useOfflineVisitDraft(
     clearDraft(visitId);
     setPending(null);
     if (editedHere && latestDataRef.current) {
-      writer.edit(visitId, latestDataRef.current.products, latestDataRef.current.responses);
+      writer.edit(visitId, latestDataRef.current.products, latestDataRef.current.responses, { responseTimes: responseTimesRef.current });
       writer.flush();
       return;
     }

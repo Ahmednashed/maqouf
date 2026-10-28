@@ -50,6 +50,24 @@ export interface VisitDraft {
    *         and will be cleared when the visit is completed.
    */
   dirty: boolean;
+  /**
+   * When each answer was last set on this device, by field id — only answers
+   * the user set (typed, picked, removed, restored), not values copied from
+   * the server. Restoring compares a photo answer's time with a photo
+   * uploaded since (restoreDraftResponses); the draft-wide time above moves
+   * with every edit, so it cannot say when the photo itself was changed.
+   * Absent in drafts written before it existed: draftResponseTimes then
+   * gives every answer the draft-wide time, as restoring always assumed.
+   */
+  response_times?: Record<string, string>;
+}
+
+/** Per-answer times of a draft (see VisitDraft.response_times). */
+export function draftResponseTimes(draft: VisitDraft): Record<string, string> {
+  if (draft.response_times) return draft.response_times;
+  const times: Record<string, string> = {};
+  for (const id of Object.keys(draft.responses ?? {})) times[id] = draft.last_saved_locally_at;
+  return times;
 }
 
 // ─── Key ─────────────────────────────────────────────────────────────────────
@@ -132,9 +150,10 @@ export interface DraftWriter {
   /**
    * Record an edit. It is written after `delayMs` without further edits.
    * `savedAt`, when given, is written as last_saved_locally_at instead of
-   * the time of writing (see draftOverPending).
+   * the time of writing (see draftOverPending); `responseTimes` as the
+   * draft's response_times.
    */
-  edit(visitId: string, products: DraftProducts, responses: DraftResponses, savedAt?: string): void;
+  edit(visitId: string, products: DraftProducts, responses: DraftResponses, extra?: { savedAt?: string; responseTimes?: Record<string, string> }): void;
   /** Write a pending edit now. Returns whether anything was written. */
   flush(): boolean;
   /** Drop a pending edit without writing it: the server has it, or the draft was cleared. */
@@ -148,7 +167,7 @@ export function createDraftWriter(
   now:       () => number = Date.now,
 ): DraftWriter {
   let timer: ReturnType<typeof setTimeout> | null = null;
-  let pending: { visitId: string; products: DraftProducts; responses: DraftResponses; editedAt: number; savedAt?: string } | null = null;
+  let pending: { visitId: string; products: DraftProducts; responses: DraftResponses; editedAt: number; savedAt?: string; responseTimes?: Record<string, string> } | null = null;
 
   function stop() {
     if (timer) clearTimeout(timer);
@@ -168,14 +187,15 @@ export function createDraftWriter(
       responses:             p.responses,
       last_saved_locally_at: p.savedAt ?? new Date(now()).toISOString(),
       dirty:                 true,
+      ...(p.responseTimes ? { response_times: p.responseTimes } : {}),
     });
     onWritten();
     return true;
   }
 
   return {
-    edit(visitId, products, responses, savedAt) {
-      pending = { visitId, products, responses, editedAt: now(), savedAt };
+    edit(visitId, products, responses, extra) {
+      pending = { visitId, products, responses, editedAt: now(), savedAt: extra?.savedAt, responseTimes: extra?.responseTimes };
       stop();
       timer = setTimeout(write, delayMs);
     },
@@ -204,19 +224,27 @@ export function createDraftWriter(
  * restores the draft.
  *
  * `savedAt` keeps the waiting draft's time when no answer was touched: the
- * answers in it are still the ones written then, and restoring compares a
- * photo's upload time against it (restoreDraftResponses).
+ * answers in it are still the ones written then. `responseTimes` keeps each
+ * waiting answer's own time (draftResponseTimes, so an older draft's answers
+ * keep the time they had) and takes this session's time for the answers
+ * touched now — a text edit no longer makes an untouched photo answer look
+ * newer than a photo uploaded since.
  */
 export function draftOverPending(
-  pending: VisitDraft,
-  screen:  { products: DraftProducts; responses: DraftResponses },
-  touched: { products: ReadonlySet<string>; responses: ReadonlySet<string> },
-): { products: DraftProducts; responses: DraftResponses; savedAt?: string } {
+  pending:      VisitDraft,
+  screen:       { products: DraftProducts; responses: DraftResponses },
+  touched:      { products: ReadonlySet<string>; responses: ReadonlySet<string> },
+  sessionTimes: Record<string, string> = {},
+): { products: DraftProducts; responses: DraftResponses; responseTimes: Record<string, string>; savedAt?: string } {
   const products: DraftProducts = { ...pending.products };
   for (const id of touched.products) if (id in screen.products) products[id] = screen.products[id];
   const responses: DraftResponses = { ...pending.responses };
-  for (const id of touched.responses) responses[id] = screen.responses[id];
+  const responseTimes: Record<string, string> = { ...draftResponseTimes(pending) };
+  for (const id of touched.responses) {
+    responses[id] = screen.responses[id];
+    if (sessionTimes[id]) responseTimes[id] = sessionTimes[id];
+  }
   return touched.responses.size === 0
-    ? { products, responses, savedAt: pending.last_saved_locally_at }
-    : { products, responses };
+    ? { products, responses, responseTimes, savedAt: pending.last_saved_locally_at }
+    : { products, responses, responseTimes };
 }

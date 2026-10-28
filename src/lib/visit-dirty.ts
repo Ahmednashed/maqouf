@@ -209,15 +209,31 @@ export function restoreDraftResponses(input: {
   draft:         Record<string, unknown>;
   /** The draft's last_saved_locally_at. */
   draftSavedAt:  string;
+  /**
+   * The draft's response_times, when it has them: then a photo answer is as
+   * old as its own entry, and one without an entry was never set on this
+   * device, so any photo uploaded beats it. The draft-wide time moves with
+   * every edit, so without them a text edit made a stale photo answer look
+   * newer than a photo uploaded since. Drafts without them (written before
+   * they existed) fall back to draftSavedAt for every answer, as before.
+   */
+  responseTimes?: Record<string, string>;
   current:       Record<string, unknown>;
   saved:         Record<string, unknown>;
   photoFieldIds: string[];
 }): Record<string, unknown> {
   const restored: Record<string, unknown> = { ...input.saved, ...input.current, ...input.draft };
   const draftAt = Date.parse(input.draftSavedAt);
+  const answerAt = (id: string): number => {
+    if (!input.responseTimes) return Number.isNaN(draftAt) ? Infinity : draftAt;
+    const own = input.responseTimes[id];
+    if (own === undefined) return -Infinity;
+    const at = Date.parse(own);
+    return Number.isNaN(at) ? Infinity : at;
+  };
   for (const id of input.photoFieldIds) {
     let newest: unknown = undefined;
-    let newestAt = Number.isNaN(draftAt) ? Infinity : draftAt;
+    let newestAt = answerAt(id);
     for (const candidate of [input.current[id], input.saved[id]]) {
       const at = photoUploadedAt(candidate);
       if (at !== null && at > newestAt) { newest = candidate; newestAt = at; }

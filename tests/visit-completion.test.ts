@@ -27,7 +27,7 @@ import {
   completionBlock, completionDialogView, saveThenComplete, classifyStoredDraft, syncPrompt, describeStrandedDraft,
   createCompletionGuard, noEditsSince, type CompletionCloseSource,
 } from "@/lib/visit-completion";
-import { readDraft, writeDraft, clearDraft, createDraftWriter, draftOverPending, type VisitDraft } from "@/lib/offline-drafts";
+import { readDraft, writeDraft, clearDraft, createDraftWriter, draftOverPending, draftResponseTimes, type VisitDraft } from "@/lib/offline-drafts";
 import { responseSaveItems, restoreDraftResponses, initialResponses } from "@/lib/visit-dirty";
 import { makeOutsideInert, KEEP_LIVE_ATTR, type InertNode } from "@/lib/inert-outside";
 import { saveVisitResponses, ResponsesNotStoredError } from "@/services/visit-responses";
@@ -653,7 +653,7 @@ console.log("7) clearing answers, the page behind the dialog, leaving right afte
      draftHook.includes('const onHidden = () => { if (document.visibilityState === "hidden") writer.flush(); };') &&
      draftHook.includes('window.addEventListener("pagehide", onPageHide);'));
   ok("every edit goes through the writer",
-     /editRevisionRef\.current \+= 1;[\s\S]{0,500}writer\.edit\(visitId, products, responses\);[\s\S]{0,400}writer\.edit\(visitId, merged\.products, merged\.responses, merged\.savedAt\);/.test(draftHook));
+     /editRevisionRef\.current \+= 1;[\s\S]{0,700}writer\.edit\(visitId, products, responses, \{ responseTimes: responseTimesRef\.current \}\);[\s\S]{0,500}writer\.edit\(visitId, merged\.products, merged\.responses, \{ savedAt: merged\.savedAt, responseTimes: merged\.responseTimes \}\);/.test(draftHook));
   ok("a successful save and clearing the draft cancel the pending write",
      /else writer\.cancel\(\);\s+if \(latestDataRef\.current && !pendingRef\.current\) \{/.test(draftHook) &&
      /const clearLocalDraft = useCallback\(\(\) => \{\s+writer\.cancel\(\);[\s\S]{0,200}clearDraft\(visitId\);/.test(draftHook));
@@ -705,7 +705,8 @@ console.log("8) toasts over a dialog, a photo uploaded after the draft, values a
   ok("reachable: the queue writes the new photo to the server itself, then tells the screen",
      /await saveVisitResponses\(item\.visit_id, item\.template_id, \[\s+\{ field_id: item\.field_id, value: meta \},\s+\]\);[\s\S]{0,400}onUploaded\(item\.field_id, meta\);/.test(queue));
   ok("reachable: the draft keeps every answer, the photo's null included (no photo filtering)",
-     draftHook.includes("writer.edit(visitId, products, responses);") && !/photo/i.test(draftHook));
+     draftHook.includes("writer.edit(visitId, products, responses, { responseTimes: responseTimesRef.current });") &&
+     !/isPhotoMeta|type === "photo"|PhotoMeta/.test(draftHook));
 
   // The full sequence, with the real restore, save-items and save service.
   const PHOTO = "f-photo", TEXT = "f-text", FIELDS = [PHOTO, TEXT];
@@ -914,7 +915,7 @@ console.log("10) editing while an older draft waits");
         touched.products.add(id);
         if (!pending) { writer.edit(ID, screen.products, screen.responses); return; }
         const m = draftOverPending(pending, screen, touched);
-        writer.edit(ID, m.products, m.responses, m.savedAt);
+        writer.edit(ID, m.products, m.responses, { savedAt: m.savedAt, responseTimes: m.responseTimes });
         pending = { ...pending, products: m.products, responses: m.responses, last_saved_locally_at: m.savedAt ?? new Date(opts.now()).toISOString() };
       },
       templateLoads(serverAnswers: Record<string, unknown>) { screen.responses = initialResponses(serverAnswers, screen.responses); },
@@ -993,12 +994,12 @@ console.log("10) editing while an older draft waits");
   const touchedNone = { products: new Set<string>(), responses: new Set<string>() };
   eq("draftOverPending: nothing touched → the waiting draft as it is, with its time",
      draftOverPending(oldDraft, { products: { p1: { qty_found: "", notes: "" } }, responses: {} }, touchedNone),
-     { products: oldDraft.products, responses: oldDraft.responses, savedAt: OLD_AT });
-  eq("draftOverPending: a touched answer goes on top, and the time is then the write's",
-     draftOverPending(oldDraft, { products: {}, responses: { f1: "typed now" } }, { products: new Set(), responses: new Set(["f1"]) }),
-     { products: oldDraft.products, responses: { f1: "typed now", f2: 9 } });
+     { products: oldDraft.products, responses: oldDraft.responses, responseTimes: { f1: OLD_AT, f2: OLD_AT }, savedAt: OLD_AT });
+  eq("draftOverPending: a touched answer goes on top with this session's time, and the draft time is then the write's",
+     draftOverPending(oldDraft, { products: {}, responses: { f1: "typed now" } }, { products: new Set(), responses: new Set(["f1"]) }, { f1: "2026-10-28T10:30:00.000Z" }),
+     { products: oldDraft.products, responses: { f1: "typed now", f2: 9 }, responseTimes: { f1: "2026-10-28T10:30:00.000Z", f2: OLD_AT } });
   eq("the writer writes a given time instead of its own",
-     (() => { clearDraft(ID); const w = createDraftWriter(500, () => {}, () => Date.parse("2026-10-28T12:00:00.000Z")); w.edit(ID, {}, {}, OLD_AT); w.flush(); return readDraft(ID)!.last_saved_locally_at; })(),
+     (() => { clearDraft(ID); const w = createDraftWriter(500, () => {}, () => Date.parse("2026-10-28T12:00:00.000Z")); w.edit(ID, {}, {}, { savedAt: OLD_AT }); w.flush(); return readDraft(ID)!.last_saved_locally_at; })(),
      OLD_AT);
   clearDraft(ID);
 
@@ -1006,20 +1007,185 @@ console.log("10) editing while an older draft waits");
   const hook = readFileSync(join(import.meta.dirname, "..", "src", "hooks", "use-offline-visit-draft.ts"), "utf8");
   const pageSrc = readFileSync(join(import.meta.dirname, "..", "src", "app", "(dashboard)", "visits", "[id]", "page.tsx"), "utf8");
   ok("edits while a draft waits are merged over it, and the prompt offers the merged draft",
-     /const pending = pendingRef\.current;\s+if \(!pending\) \{\s+writer\.edit\(visitId, products, responses\);\s+return;\s+\}[\s\S]{0,200}const merged = draftOverPending\(pending, \{ products, responses \}, touchedRef\.current\);\s+writer\.edit\(visitId, merged\.products, merged\.responses, merged\.savedAt\);\s+setPending\(\{/.test(hook));
+     /const pending = pendingRef\.current;\s+if \(!pending\) \{\s+writer\.edit\(visitId, products, responses, \{ responseTimes: responseTimesRef\.current \}\);\s+return;\s+\}[\s\S]{0,200}const merged = draftOverPending\(pending, \{ products, responses \}, touchedRef\.current, responseTimesRef\.current\);\s+writer\.edit\(visitId, merged\.products, merged\.responses, \{ savedAt: merged\.savedAt, responseTimes: merged\.responseTimes \}\);\s+setPending\(\{/.test(hook));
   ok("what was touched is recorded from the page's edit handlers",
      pageSrc.includes("updateDraft(next as DraftProducts, draftDataRef.current.responses, { productId });") &&
      pageSrc.includes("updateDraft(draftDataRef.current.entries as DraftProducts, next, { fieldId });") &&
      hook.includes("if (touched?.productId) touchedRef.current.products.add(touched.productId);") &&
-     hook.includes("if (touched?.fieldId)   touchedRef.current.responses.add(touched.fieldId);"));
+     /if \(touched\?\.fieldId\) \{\s+touchedRef\.current\.responses\.add\(touched\.fieldId\);/.test(hook));
   ok("the waiting draft is tracked in a ref kept in step with the prompt, and cleared with it",
      /const setPending = useCallback\(\(draft: VisitDraft \| null\) => \{\s+pendingRef\.current = draft;\s+setPendingDraft\(draft\);\s+if \(!draft\) touchedRef\.current = \{ products: new Set\(\), responses: new Set\(\) \};/.test(hook) &&
      !/\bsetPendingDraft\((?!draft\))/.test(hook));
   ok("discarding writes this session's edits back as the draft at once",
-     /const discardDraft = useCallback\(\(\) => \{\s+const editedHere = [\s\S]{0,200}clearDraft\(visitId\);\s+setPending\(null\);\s+if \(editedHere && latestDataRef\.current\) \{\s+writer\.edit\(visitId, latestDataRef\.current\.products, latestDataRef\.current\.responses\);\s+writer\.flush\(\);/.test(hook));
+     /const discardDraft = useCallback\(\(\) => \{\s+const editedHere = [\s\S]{0,200}clearDraft\(visitId\);\s+setPending\(null\);\s+if \(editedHere && latestDataRef\.current\) \{\s+writer\.edit\(visitId, latestDataRef\.current\.products, latestDataRef\.current\.responses, \{ responseTimes: responseTimesRef\.current \}\);\s+writer\.flush\(\);/.test(hook));
   ok("a successful save does not replace a waiting draft with its clean copy, and writes the merged edits into it",
      /if \(pendingRef\.current\) writer\.flush\(\);\s+else writer\.cancel\(\);\s+if \(latestDataRef\.current && !pendingRef\.current\) \{/.test(hook));
   ok("completing does not delete a waiting draft — it is kept, to be shown read-only for the closed visit",
      /const clearLocalDraft = useCallback\(\(\) => \{\s+writer\.cancel\(\);\s+if \(pendingRef\.current\) \{\s+writeDraft\(\{ \.\.\.pendingRef\.current, dirty: true \}\);/.test(hook));
   eq("…which the closed visit then classifies as stranded", classifyStoredDraft({ ...oldDraft }, true), "stranded");
+}
+
+// ── 11) A photo answer's own time, not the draft's ──────────────────────────
+// A draft's last_saved_locally_at moves with every edit. Restoring used it to
+// decide whether the draft's photo answer is newer than a photo uploaded
+// since — so editing a text answer made a stale photo answer (null from an
+// offline replacement) look newer than the replacement photo, and restoring
+// then saving cleared it. Each answer now carries its own time
+// (response_times). Driven through the real draft module, restore, save items
+// and save service, across page loads; the hook's wiring is checked below.
+console.log("11) a photo answer's own time");
+{
+  const ID = "v-photo-times", TABLE = "visit_template_responses";
+  const PHOTO = "f-photo", TEXT = "f-text", FIELDS = [PHOTO, TEXT];
+  const M1 = { path: "v/f/old.jpg", file_name: "old.jpg", mime_type: "image/jpeg", size: 10, uploaded_at: "2026-10-28T07:00:00.000Z" };
+  const M2 = { path: "v/f/new.jpg", file_name: "new.jpg", mime_type: "image/jpeg", size: 12, uploaded_at: "2026-10-28T09:00:00.000Z" };
+  let clock = 0;
+  const at = (iso: string) => { clock = Date.parse(iso); };
+  const iso = () => new Date(clock).toISOString();
+  const server: Record<string, unknown> = {};
+  const saveToServer = async (items: Array<{ field_id: string; value: unknown }>) => {
+    resetStub();
+    const stored = items.map((i) => ({ field_id: i.field_id, value: i.value === undefined ? null : JSON.parse(JSON.stringify(i.value)) }));
+    queueResultFor(TABLE, { data: stored, error: null });
+    await saveVisitResponses(ID, "t-1", items);
+    stored.forEach((r) => { server[r.field_id] = r.value; });
+  };
+
+  // One page load, as use-offline-visit-draft and the visit page run it.
+  const page = () => {
+    const stored = readDraft(ID);
+    let pending: VisitDraft | null = classifyStoredDraft(stored, false) === "restorable" ? stored : null;
+    let touched = { products: new Set<string>(), responses: new Set<string>() };
+    let times: Record<string, string> = {};
+    const writer = createDraftWriter(500, () => {}, () => clock);
+    const loaded = { ...server };
+    let screen: Record<string, unknown> = { ...loaded };          // the server's answers, copied in
+    return {
+      get screen() { return screen; },
+      get pending() { return pending; },
+      setAnswer(id: string, v: unknown) {                        // handleResponseChange → updateDraft
+        screen = { ...screen, [id]: v };
+        touched.responses.add(id);
+        times = { ...times, [id]: iso() };
+        if (!pending) { writer.edit(ID, {}, screen, { responseTimes: times }); return; }
+        const m = draftOverPending(pending, { products: {}, responses: screen }, touched, times);
+        writer.edit(ID, m.products, m.responses, { savedAt: m.savedAt, responseTimes: m.responseTimes });
+        pending = { ...pending, products: m.products, responses: m.responses, response_times: m.responseTimes, last_saved_locally_at: m.savedAt ?? iso() };
+      },
+      restore() {                                                 // handleRestoreDraft + confirmRestore
+        screen = restoreDraftResponses({ draft: pending!.responses, draftSavedAt: pending!.last_saved_locally_at, responseTimes: pending!.response_times, current: screen, saved: loaded, photoFieldIds: [PHOTO] });
+        times = { ...draftResponseTimes(pending!), ...times };
+        pending = null; touched = { products: new Set(), responses: new Set() };
+      },
+      async save() { await saveToServer(responseSaveItems(FIELDS, screen)); },
+      leave() { writer.flush(); },
+    };
+  };
+  const reset = (draft: VisitDraft | null, serverRows: Record<string, unknown>) => {
+    clearDraft(ID);
+    if (draft) writeDraft(draft);
+    for (const k of Object.keys(server)) delete server[k];
+    Object.assign(server, serverRows);
+  };
+
+  // The sequence: an older draft holds null for the photo (replaced offline at
+  // 08:00); the replacement is uploaded at 09:00 and its reference saved; at
+  // 10:00 the user edits a text answer while the draft still waits.
+  for (const format of ["with response_times", "written before response_times"] as const) {
+    const OLD: VisitDraft = format === "with response_times"
+      ? { visit_id: ID, products: {}, responses: { [PHOTO]: null, [TEXT]: "offline" }, response_times: { [PHOTO]: "2026-10-28T08:00:00.000Z", [TEXT]: "2026-10-28T08:00:00.000Z" }, last_saved_locally_at: "2026-10-28T08:00:00.000Z", dirty: true }
+      : { visit_id: ID, products: {}, responses: { [PHOTO]: null, [TEXT]: "offline" }, last_saved_locally_at: "2026-10-28T08:00:00.000Z", dirty: true };
+
+    // In memory: restore in the same page load.
+    reset(OLD, { [PHOTO]: M2, [TEXT]: "server" });
+    at("2026-10-28T10:00:00.000Z");
+    {
+      const p = page();
+      p.setAnswer(TEXT, "edited at 10:00");
+      eq(`[${format}] the waiting draft's time moved to 10:00, its photo answer's did not`,
+         [p.pending!.last_saved_locally_at, p.pending!.response_times![PHOTO]], ["2026-10-28T10:00:00.000Z", "2026-10-28T08:00:00.000Z"]);
+      p.restore();
+      eq(`[${format}] restoring keeps the photo uploaded at 09:00, and the text edit`, [p.screen[PHOTO], p.screen[TEXT]], [M2, "edited at 10:00"]);
+      await p.save();
+      eq(`[${format}] …and saving leaves it on the server`, server[PHOTO], M2);
+      eq(`[${format}] (by the draft-wide time alone, the null would have won)`,
+         restoreDraftResponses({ draft: { [PHOTO]: null }, draftSavedAt: "2026-10-28T10:00:00.000Z", current: { [PHOTO]: M2 }, saved: { [PHOTO]: M2 }, photoFieldIds: [PHOTO] })[PHOTO], null);
+    }
+
+    // After a reload: the edit is written, the page is loaded again, then restore and save.
+    reset(OLD, { [PHOTO]: M2, [TEXT]: "server" });
+    at("2026-10-28T10:00:00.000Z");
+    { const p = page(); p.setAnswer(TEXT, "edited at 10:00"); clock += 600; p.leave(); }
+    eq(`[${format}] after the reload the stored draft has the photo answer at 08:00 and the text at 10:00`,
+       readDraft(ID)!.response_times, { [PHOTO]: "2026-10-28T08:00:00.000Z", [TEXT]: "2026-10-28T10:00:00.000Z" });
+    at("2026-10-28T11:00:00.000Z");
+    {
+      const p = page();
+      p.restore();
+      await p.save();
+      eq(`[${format}] reloaded, restored and saved: the photo from 09:00 is kept`, [p.screen[PHOTO], server[PHOTO], server[TEXT]], [M2, M2, "edited at 10:00"]);
+    }
+  }
+
+  // The counterpart: the user removes the photo on purpose after it was uploaded.
+  const WAITING: VisitDraft = { visit_id: ID, products: {}, responses: { [PHOTO]: null, [TEXT]: "offline" }, response_times: { [PHOTO]: "2026-10-28T08:00:00.000Z", [TEXT]: "2026-10-28T08:00:00.000Z" }, last_saved_locally_at: "2026-10-28T08:00:00.000Z", dirty: true };
+  // …while a draft waits, in memory.
+  reset(WAITING, { [PHOTO]: M2, [TEXT]: "server" });
+  {
+    const p = page();
+    at("2026-10-28T10:00:00.000Z"); p.setAnswer(PHOTO, null);       // removed, on purpose
+    at("2026-10-28T10:05:00.000Z"); p.setAnswer(TEXT, "later text");
+    p.restore();
+    await p.save();
+    eq("removed on purpose after the upload (in memory): the removal is the newest, and is saved", [p.screen[PHOTO], server[PHOTO]], [null, null]);
+  }
+  // …while a draft waits, then a reload.
+  reset(WAITING, { [PHOTO]: M2, [TEXT]: "server" });
+  {
+    const p = page();
+    at("2026-10-28T10:00:00.000Z"); p.setAnswer(PHOTO, null);
+    at("2026-10-28T10:05:00.000Z"); p.setAnswer(TEXT, "later text"); clock += 600; p.leave();
+  }
+  at("2026-10-28T11:00:00.000Z");
+  {
+    const p = page();
+    p.restore();
+    await p.save();
+    eq("removed on purpose after the upload, then reloaded: still removed, and saved", [p.screen[PHOTO], server[PHOTO], server[TEXT]], [null, null, "later text"]);
+  }
+  // …with no waiting draft at all, then a reload.
+  reset(null, { [PHOTO]: M2, [TEXT]: "server" });
+  {
+    const p = page();
+    at("2026-10-28T10:00:00.000Z"); p.setAnswer(PHOTO, null); clock += 600; p.leave();
+  }
+  at("2026-10-28T11:00:00.000Z");
+  {
+    const p = page();
+    p.restore();
+    await p.save();
+    eq("removed on purpose with no older draft, then reloaded: the removal wins over the uploaded photo", [p.screen[PHOTO], server[PHOTO]], [null, null]);
+  }
+  // A photo answer copied from the server (never set here) never beats a newer upload.
+  eq("an answer without its own time is not treated as newer than any upload",
+     restoreDraftResponses({ draft: { [PHOTO]: M1 }, draftSavedAt: "2026-10-28T12:00:00.000Z", responseTimes: {}, current: {}, saved: { [PHOTO]: M2 }, photoFieldIds: [PHOTO] })[PHOTO], M2);
+  eq("draftResponseTimes: an older draft's answers all take its time",
+     draftResponseTimes({ visit_id: ID, products: {}, responses: { a: 1, b: null }, last_saved_locally_at: "2026-10-28T08:00:00.000Z", dirty: true }),
+     { a: "2026-10-28T08:00:00.000Z", b: "2026-10-28T08:00:00.000Z" });
+  clearDraft(ID);
+
+  // The hook's and the page's wiring.
+  const hook = readFileSync(join(import.meta.dirname, "..", "src", "hooks", "use-offline-visit-draft.ts"), "utf8");
+  const pageSrc = readFileSync(join(import.meta.dirname, "..", "src", "app", "(dashboard)", "visits", "[id]", "page.tsx"), "utf8");
+  ok("every answer edit stamps that answer's time",
+     /if \(touched\?\.fieldId\) \{\s+touchedRef\.current\.responses\.add\(touched\.fieldId\);\s+responseTimesRef\.current = \{ \.\.\.responseTimesRef\.current, \[touched\.fieldId\]: new Date\(\)\.toISOString\(\) \};/.test(hook));
+  ok("every draft write carries the answer times",
+     hook.includes("writer.edit(visitId, products, responses, { responseTimes: responseTimesRef.current });") &&
+     hook.includes("draftOverPending(pending, { products, responses }, touchedRef.current, responseTimesRef.current);") &&
+     hook.includes("writer.edit(visitId, merged.products, merged.responses, { savedAt: merged.savedAt, responseTimes: merged.responseTimes });") &&
+     hook.includes("writer.edit(visitId, latestDataRef.current.products, latestDataRef.current.responses, { responseTimes: responseTimesRef.current });"));
+  ok("restoring takes over the draft's answer times",
+     /const confirmRestore = useCallback\(\(\) => \{[\s\S]{0,200}responseTimesRef\.current = \{ \.\.\.draftResponseTimes\(pendingRef\.current\), \.\.\.responseTimesRef\.current \};/.test(hook));
+  ok("the page restores with the draft's answer times",
+     /restoreDraftResponses\(\{[\s\S]{0,150}responseTimes: pendingDraft\.response_times,/.test(pageSrc));
 }
