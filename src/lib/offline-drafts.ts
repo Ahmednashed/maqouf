@@ -129,8 +129,12 @@ export function clearDraft(visitId: string): void {
  * draft is newer (another tab), and overwriting it would lose its work.
  */
 export interface DraftWriter {
-  /** Record an edit. It is written after `delayMs` without further edits. */
-  edit(visitId: string, products: DraftProducts, responses: DraftResponses): void;
+  /**
+   * Record an edit. It is written after `delayMs` without further edits.
+   * `savedAt`, when given, is written as last_saved_locally_at instead of
+   * the time of writing (see draftOverPending).
+   */
+  edit(visitId: string, products: DraftProducts, responses: DraftResponses, savedAt?: string): void;
   /** Write a pending edit now. Returns whether anything was written. */
   flush(): boolean;
   /** Drop a pending edit without writing it: the server has it, or the draft was cleared. */
@@ -144,7 +148,7 @@ export function createDraftWriter(
   now:       () => number = Date.now,
 ): DraftWriter {
   let timer: ReturnType<typeof setTimeout> | null = null;
-  let pending: { visitId: string; products: DraftProducts; responses: DraftResponses; editedAt: number } | null = null;
+  let pending: { visitId: string; products: DraftProducts; responses: DraftResponses; editedAt: number; savedAt?: string } | null = null;
 
   function stop() {
     if (timer) clearTimeout(timer);
@@ -162,7 +166,7 @@ export function createDraftWriter(
       visit_id:              p.visitId,
       products:              p.products,
       responses:             p.responses,
-      last_saved_locally_at: new Date(now()).toISOString(),
+      last_saved_locally_at: p.savedAt ?? new Date(now()).toISOString(),
       dirty:                 true,
     });
     onWritten();
@@ -170,8 +174,8 @@ export function createDraftWriter(
   }
 
   return {
-    edit(visitId, products, responses) {
-      pending = { visitId, products, responses, editedAt: now() };
+    edit(visitId, products, responses, savedAt) {
+      pending = { visitId, products, responses, editedAt: now(), savedAt };
       stop();
       timer = setTimeout(write, delayMs);
     },
@@ -179,4 +183,40 @@ export function createDraftWriter(
     cancel()    { stop(); pending = null; },
     hasPending: () => pending !== null,
   };
+}
+
+// ─── Editing while an older draft waits ───────────────────────────────────────
+
+/**
+ * What an edit writes while an older draft is still waiting for the user to
+ * restore or discard it.
+ *
+ * Writing the screen's state as usual would replace that draft. The screen
+ * holds the server's values plus this session's edits — or less: if the
+ * visit's template failed to load, its answers were never copied in, so the
+ * draft's answers were replaced with nothing. A product edit in that state
+ * erased the waiting answers, and the restore prompt (which waits for the
+ * template) never offered them.
+ *
+ * Instead, only the products and answers touched in this session are put on
+ * top of the waiting draft; everything else in it stays as it was. Nothing
+ * here changes the screen — the waiting answers reach it only if the user
+ * restores the draft.
+ *
+ * `savedAt` keeps the waiting draft's time when no answer was touched: the
+ * answers in it are still the ones written then, and restoring compares a
+ * photo's upload time against it (restoreDraftResponses).
+ */
+export function draftOverPending(
+  pending: VisitDraft,
+  screen:  { products: DraftProducts; responses: DraftResponses },
+  touched: { products: ReadonlySet<string>; responses: ReadonlySet<string> },
+): { products: DraftProducts; responses: DraftResponses; savedAt?: string } {
+  const products: DraftProducts = { ...pending.products };
+  for (const id of touched.products) if (id in screen.products) products[id] = screen.products[id];
+  const responses: DraftResponses = { ...pending.responses };
+  for (const id of touched.responses) responses[id] = screen.responses[id];
+  return touched.responses.size === 0
+    ? { products, responses, savedAt: pending.last_saved_locally_at }
+    : { products, responses };
 }

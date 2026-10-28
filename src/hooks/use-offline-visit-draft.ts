@@ -20,6 +20,7 @@ import {
   writeDraft,
   clearDraft,
   createDraftWriter,
+  draftOverPending,
   type VisitDraft,
   type DraftProducts,
   type DraftResponses,
@@ -96,7 +97,7 @@ export interface UseOfflineVisitDraftReturn {
    * Call this on every user edit (setEntries / setResponses).
    * The hook writes to localStorage after a 500 ms idle window.
    */
-  updateDraft:     (products: DraftProducts, responses: DraftResponses) => void;
+  updateDraft:     (products: DraftProducts, responses: DraftResponses, touched?: { productId?: string; fieldId?: string }) => void;
   /**
    * Call at the start of a server-save attempt. Returns the edit revision the
    * save is about to send; pass it back to markSynced.
@@ -163,6 +164,17 @@ export function useOfflineVisitDraft(
   const editRevisionRef = useRef(0);
   const editRevision    = useCallback(() => editRevisionRef.current, []);
 
+  // A stored draft the user has not yet restored or discarded, mirrored in a
+  // ref for the callbacks, and what this session has edited meanwhile. While
+  // it waits, nothing may replace it — see draftOverPending.
+  const pendingRef = useRef<VisitDraft | null>(null);
+  const touchedRef = useRef({ products: new Set<string>(), responses: new Set<string>() });
+  const setPending = useCallback((draft: VisitDraft | null) => {
+    pendingRef.current = draft;
+    setPendingDraft(draft);
+    if (!draft) touchedRef.current = { products: new Set(), responses: new Set() };
+  }, []);
+
   // ── Load draft on mount ───────────────────────────────────────────────────
   // Re-run when the visit turns out to be closed: unsaved work for a closed
   // visit is not restorable, but it must not disappear either.
@@ -170,9 +182,9 @@ export function useOfflineVisitDraft(
     if (!visitId) return;
     const draft = readDraft(visitId);
     const state = classifyStoredDraft(draft, isReadOnly);
-    setPendingDraft(state === "restorable" ? draft : null);
+    setPending(state === "restorable" ? draft : null);
     setStrandedDraft(state === "stranded" ? draft : null);
-  }, [visitId, isReadOnly]);
+  }, [visitId, isReadOnly, setPending]);
 
   // ── Leaving the page ──────────────────────────────────────────────────────
   // An edit made less than DEBOUNCE_MS before leaving is written to the draft
@@ -194,18 +206,34 @@ export function useOfflineVisitDraft(
 
   // ── Auto-save (debounced 500 ms) ──────────────────────────────────────────
   const updateDraft = useCallback(
-    (products: DraftProducts, responses: DraftResponses) => {
+    (products: DraftProducts, responses: DraftResponses, touched?: { productId?: string; fieldId?: string }) => {
       // Always keep the latest snapshot in a ref so the timeout closure
       // uses the most recent data even if multiple edits fire quickly.
       latestDataRef.current = { products, responses };
       editRevisionRef.current += 1;
+      if (touched?.productId) touchedRef.current.products.add(touched.productId);
+      if (touched?.fieldId)   touchedRef.current.responses.add(touched.fieldId);
 
       // Immediately signal "unsaved" so the UI dot appears right away.
       setSyncStatus("unsaved");
 
-      writer.edit(visitId, products, responses);
+      const pending = pendingRef.current;
+      if (!pending) {
+        writer.edit(visitId, products, responses);
+        return;
+      }
+      // An older draft is waiting: put this session's edits on top of it, and
+      // offer that combined draft in the restore prompt.
+      const merged = draftOverPending(pending, { products, responses }, touchedRef.current);
+      writer.edit(visitId, merged.products, merged.responses, merged.savedAt);
+      setPending({
+        ...pending,
+        products:              merged.products,
+        responses:             merged.responses,
+        last_saved_locally_at: merged.savedAt ?? new Date().toISOString(),
+      });
     },
-    [visitId, writer],
+    [visitId, writer, setPending],
   );
 
   // ── Server-save status transitions ────────────────────────────────────────
@@ -224,9 +252,13 @@ export function useOfflineVisitDraft(
     }
     // Write a clean (non-dirty) copy to localStorage as a read-only backup.
     // It stays until the visit is completed. A pending dirty write of the same
-    // edits is dropped — it would mark them unsaved again.
-    writer.cancel();
-    if (latestDataRef.current) {
+    // edits is dropped — it would mark them unsaved again. A draft still
+    // waiting for restore or discard is kept instead, with this session's
+    // edits on top (written now): the clean copy would replace it, and
+    // dropping the pending write would leave it older than what was saved.
+    if (pendingRef.current) writer.flush();
+    else writer.cancel();
+    if (latestDataRef.current && !pendingRef.current) {
       writeDraft({
         visit_id:              visitId,
         products:              latestDataRef.current.products,
@@ -250,16 +282,25 @@ export function useOfflineVisitDraft(
 
   // ── Restore prompt actions ────────────────────────────────────────────────
   const confirmRestore = useCallback(() => {
-    setPendingDraft(null);
+    setPending(null);
     // Data now in page state is from the draft → still dirty
     setSyncStatus("draft");
-  }, []);
+  }, [setPending]);
 
+  // Discards the waiting draft, not this session's edits: those are written
+  // back as the draft at once, or leaving now would lose them.
   const discardDraft = useCallback(() => {
+    const editedHere = touchedRef.current.products.size + touchedRef.current.responses.size > 0;
+    writer.cancel();
     clearDraft(visitId);
-    setPendingDraft(null);
+    setPending(null);
+    if (editedHere && latestDataRef.current) {
+      writer.edit(visitId, latestDataRef.current.products, latestDataRef.current.responses);
+      writer.flush();
+      return;
+    }
     setSyncStatus("idle");
-  }, [visitId]);
+  }, [visitId, writer, setPending]);
 
   const discardStrandedDraft = useCallback(() => {
     clearDraft(visitId);
@@ -267,8 +308,16 @@ export function useOfflineVisitDraft(
   }, [visitId]);
 
   // ── Clear on completion ───────────────────────────────────────────────────
+  // A draft still waiting for restore or discard is not removed: the user
+  // never decided on it. It is kept as stored, and once the visit is closed
+  // it is shown read-only (stranded) like any unsaved work for a closed visit.
   const clearLocalDraft = useCallback(() => {
     writer.cancel();
+    if (pendingRef.current) {
+      writeDraft({ ...pendingRef.current, dirty: true });
+      setSyncStatus("idle");
+      return;
+    }
     clearDraft(visitId);
     setSyncStatus("idle");
   }, [visitId, writer]);

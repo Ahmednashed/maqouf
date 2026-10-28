@@ -877,7 +877,7 @@ export default function VisitDetailPage() {
           [productId]: { ...(prev[productId] ?? { qty_found: "", notes: "" }), [field]: value },
         };
         // Pass next entries + current responses (from ref, always fresh)
-        updateDraft(next as DraftProducts, draftDataRef.current.responses);
+        updateDraft(next as DraftProducts, draftDataRef.current.responses, { productId });
         return next;
       });
     },
@@ -892,7 +892,7 @@ export default function VisitDetailPage() {
       setResponses((prev) => {
         const next = { ...prev, [fieldId]: value };
         // Pass current entries (from ref) + next responses
-        updateDraft(draftDataRef.current.entries as DraftProducts, next);
+        updateDraft(draftDataRef.current.entries as DraftProducts, next, { fieldId });
         return next;
       });
     },

@@ -27,7 +27,7 @@ import {
   completionBlock, completionDialogView, saveThenComplete, classifyStoredDraft, syncPrompt, describeStrandedDraft,
   createCompletionGuard, noEditsSince, type CompletionCloseSource,
 } from "@/lib/visit-completion";
-import { readDraft, writeDraft, clearDraft, createDraftWriter, type VisitDraft } from "@/lib/offline-drafts";
+import { readDraft, writeDraft, clearDraft, createDraftWriter, draftOverPending, type VisitDraft } from "@/lib/offline-drafts";
 import { responseSaveItems, restoreDraftResponses, initialResponses } from "@/lib/visit-dirty";
 import { makeOutsideInert, KEEP_LIVE_ATTR, type InertNode } from "@/lib/inert-outside";
 import { saveVisitResponses, ResponsesNotStoredError } from "@/services/visit-responses";
@@ -652,9 +652,11 @@ console.log("7) clearing answers, the page behind the dialog, leaving right afte
      /return \(\) => \{[\s\S]{0,200}window\.removeEventListener\("pagehide", onPageHide\);\s+writer\.flush\(\);/.test(draftHook) &&
      draftHook.includes('const onHidden = () => { if (document.visibilityState === "hidden") writer.flush(); };') &&
      draftHook.includes('window.addEventListener("pagehide", onPageHide);'));
-  ok("every edit goes through the writer", /editRevisionRef\.current \+= 1;[\s\S]{0,150}writer\.edit\(visitId, products, responses\);/.test(draftHook));
+  ok("every edit goes through the writer",
+     /editRevisionRef\.current \+= 1;[\s\S]{0,500}writer\.edit\(visitId, products, responses\);[\s\S]{0,400}writer\.edit\(visitId, merged\.products, merged\.responses, merged\.savedAt\);/.test(draftHook));
   ok("a successful save and clearing the draft cancel the pending write",
-     /writer\.cancel\(\);\s+if \(latestDataRef\.current\) \{/.test(draftHook) && /const clearLocalDraft = useCallback\(\(\) => \{\s+writer\.cancel\(\);\s+clearDraft\(visitId\);/.test(draftHook));
+     /else writer\.cancel\(\);\s+if \(latestDataRef\.current && !pendingRef\.current\) \{/.test(draftHook) &&
+     /const clearLocalDraft = useCallback\(\(\) => \{\s+writer\.cancel\(\);[\s\S]{0,200}clearDraft\(visitId\);/.test(draftHook));
   ok("the draft hook talks to no server", !/@\/services|supabase|fetch\(/.test(draftHook));
 
   for (const locale of ["ar", "en"] as const) {
@@ -876,4 +878,148 @@ console.log("9) the server's answers arriving late");
      src.includes("if (prodInitialized.current || productsLoading || !visit) return;"));
   ok("the form itself can show before the server's answers (it waits only for the template) — why the merge is needed",
      /\{templateId && template && template\.fields\.length > 0 && \(\s+<TemplateFieldSection/.test(src) && !/responsesLoading && \(\s+<TemplateFieldSection/.test(src));
+}
+
+// ── 10) Editing while an older draft waits (the template failed to load) ─────
+// The visit page offers a stored draft only once the template and the
+// server's answers are on screen (editsReady). If the template fails to load,
+// that never happens, but product rows still load and can be edited. Each
+// edit used to write the whole screen — answers {} because they were never
+// copied in — over the waiting draft. Driven here through the real draft
+// module (writer, storage, merge) the way the hook drives it; the hook's own
+// wiring is checked in its source below.
+console.log("10) editing while an older draft waits");
+{
+  const ID = "v-waiting";
+  const OLD_AT = "2026-10-28T08:00:00.000Z";
+  const oldDraft: VisitDraft = {
+    visit_id: ID, products: { p1: { qty_found: "4", notes: "" }, p2: { qty_found: "1", notes: "shelf" } },
+    responses: { f1: "answer typed offline", f2: 9 }, last_saved_locally_at: OLD_AT, dirty: true,
+  };
+
+  // One page session: the hook's state (pending draft, what was touched),
+  // the screen's edit state, and its writes — as use-offline-visit-draft does.
+  const session = (opts: { now: () => number }) => {
+    const stored = readDraft(ID);
+    let pending: VisitDraft | null = classifyStoredDraft(stored, false) === "restorable" ? stored : null;
+    let touched = { products: new Set<string>(), responses: new Set<string>() };
+    const writer = createDraftWriter(500, () => {}, opts.now);
+    // Server values on screen: products loaded; answers only if the template did.
+    const screen = { products: { p1: { qty_found: "", notes: "" }, p2: { qty_found: "", notes: "" } } as Record<string, { qty_found: string; notes: string }>, responses: {} as Record<string, unknown> };
+    const s = {
+      get pending() { return pending; },
+      screen,
+      editProduct(id: string, qty: string) {
+        screen.products = { ...screen.products, [id]: { ...screen.products[id], qty_found: qty } };
+        touched.products.add(id);
+        if (!pending) { writer.edit(ID, screen.products, screen.responses); return; }
+        const m = draftOverPending(pending, screen, touched);
+        writer.edit(ID, m.products, m.responses, m.savedAt);
+        pending = { ...pending, products: m.products, responses: m.responses, last_saved_locally_at: m.savedAt ?? new Date(opts.now()).toISOString() };
+      },
+      templateLoads(serverAnswers: Record<string, unknown>) { screen.responses = initialResponses(serverAnswers, screen.responses); },
+      restore() {
+        screen.products = pending!.products as typeof screen.products;
+        screen.responses = restoreDraftResponses({ draft: pending!.responses, draftSavedAt: pending!.last_saved_locally_at, current: screen.responses, saved: {}, photoFieldIds: [] });
+        pending = null; touched = { products: new Set(), responses: new Set() };
+      },
+      discard() {
+        const editedHere = touched.products.size + touched.responses.size > 0;
+        writer.cancel(); clearDraft(ID); pending = null; touched = { products: new Set(), responses: new Set() };
+        if (editedHere) { writer.edit(ID, screen.products, screen.responses); writer.flush(); }
+      },
+      leave() { writer.flush(); },   // unmount / pagehide
+    };
+    return s;
+  };
+  let clock = Date.parse("2026-10-28T10:00:00.000Z");
+  const now = () => clock;
+
+  // A. An older draft with answers; the template fails; a product is edited; the user leaves.
+  writeDraft(oldDraft);
+  {
+    const s = session({ now });
+    s.editProduct("p1", "5");                 // template never loads in this session
+    clock += 600; s.leave();
+  }
+  const afterA = readDraft(ID)!;
+  eq("A. template failed, product edited, page left: the old answers are still in the draft", afterA.responses, oldDraft.responses);
+  eq("…and so is the new product edit, next to the draft's other product", afterA.products, { p1: { qty_found: "5", notes: "" }, p2: { qty_found: "1", notes: "shelf" } });
+  eq("…the draft keeps its time (its answers are still those of 08:00), and is still offered", [afterA.last_saved_locally_at, classifyStoredDraft(afterA, false)], [OLD_AT, "restorable"]);
+
+  // C1. Reload; the template loads this time; the user restores.
+  {
+    const s = session({ now });
+    s.templateLoads({ f1: "server value" });
+    s.restore();
+    eq("C. later the template loads and the user restores: old answers and the product edit are both on screen",
+       [s.screen.responses, s.screen.products.p1.qty_found, s.screen.products.p2.notes], [{ f1: "answer typed offline", f2: 9 }, "5", "shelf"]);
+    eq("…and the restored values went nowhere but the screen (nothing written by restoring)", readDraft(ID)!.responses, oldDraft.responses);
+  }
+
+  // C2. Same start, but the user discards the old draft after editing a product.
+  writeDraft(oldDraft);
+  {
+    const s = session({ now });
+    s.templateLoads({ f1: "server value" });
+    s.editProduct("p2", "7");                 // edited while the prompt was up
+    s.discard();
+    const d = readDraft(ID)!;
+    eq("C. discarding: the old answers go, the server's stay on screen", s.screen.responses, { f1: "server value" });
+    eq("…but this session's product edit is kept in the draft, written at once", [d.products.p2.qty_found, d.responses, d.dirty], ["7", { f1: "server value" }, true]);
+  }
+
+  // B. No older draft: the template fails, a product is edited, the user leaves.
+  clearDraft(ID);
+  {
+    const s = session({ now });
+    eq("B. no older draft: nothing waits", s.pending, null);
+    s.editProduct("p1", "3");
+    clock += 600; s.leave();
+  }
+  const afterB = readDraft(ID)!;
+  eq("B. the product edit is in the draft despite the template failing", [afterB.products.p1.qty_found, afterB.dirty], ["3", true]);
+  {
+    const s = session({ now });
+    s.templateLoads({ f1: "server value" });
+    s.restore();
+    eq("…and restoring it later keeps the server's answers (the draft has none to impose)", [s.screen.products.p1.qty_found, s.screen.responses], ["3", { f1: "server value" }]);
+  }
+
+  // A late answer from the server never replaces what is on screen.
+  eq("late server answers fill in, never overwrite", initialResponses({ f1: "server", f2: 1 }, { f1: "typed" }), { f1: "typed", f2: 1 });
+
+  // The merge itself.
+  const touchedNone = { products: new Set<string>(), responses: new Set<string>() };
+  eq("draftOverPending: nothing touched → the waiting draft as it is, with its time",
+     draftOverPending(oldDraft, { products: { p1: { qty_found: "", notes: "" } }, responses: {} }, touchedNone),
+     { products: oldDraft.products, responses: oldDraft.responses, savedAt: OLD_AT });
+  eq("draftOverPending: a touched answer goes on top, and the time is then the write's",
+     draftOverPending(oldDraft, { products: {}, responses: { f1: "typed now" } }, { products: new Set(), responses: new Set(["f1"]) }),
+     { products: oldDraft.products, responses: { f1: "typed now", f2: 9 } });
+  eq("the writer writes a given time instead of its own",
+     (() => { clearDraft(ID); const w = createDraftWriter(500, () => {}, () => Date.parse("2026-10-28T12:00:00.000Z")); w.edit(ID, {}, {}, OLD_AT); w.flush(); return readDraft(ID)!.last_saved_locally_at; })(),
+     OLD_AT);
+  clearDraft(ID);
+
+  // The hook's wiring.
+  const hook = readFileSync(join(import.meta.dirname, "..", "src", "hooks", "use-offline-visit-draft.ts"), "utf8");
+  const pageSrc = readFileSync(join(import.meta.dirname, "..", "src", "app", "(dashboard)", "visits", "[id]", "page.tsx"), "utf8");
+  ok("edits while a draft waits are merged over it, and the prompt offers the merged draft",
+     /const pending = pendingRef\.current;\s+if \(!pending\) \{\s+writer\.edit\(visitId, products, responses\);\s+return;\s+\}[\s\S]{0,200}const merged = draftOverPending\(pending, \{ products, responses \}, touchedRef\.current\);\s+writer\.edit\(visitId, merged\.products, merged\.responses, merged\.savedAt\);\s+setPending\(\{/.test(hook));
+  ok("what was touched is recorded from the page's edit handlers",
+     pageSrc.includes("updateDraft(next as DraftProducts, draftDataRef.current.responses, { productId });") &&
+     pageSrc.includes("updateDraft(draftDataRef.current.entries as DraftProducts, next, { fieldId });") &&
+     hook.includes("if (touched?.productId) touchedRef.current.products.add(touched.productId);") &&
+     hook.includes("if (touched?.fieldId)   touchedRef.current.responses.add(touched.fieldId);"));
+  ok("the waiting draft is tracked in a ref kept in step with the prompt, and cleared with it",
+     /const setPending = useCallback\(\(draft: VisitDraft \| null\) => \{\s+pendingRef\.current = draft;\s+setPendingDraft\(draft\);\s+if \(!draft\) touchedRef\.current = \{ products: new Set\(\), responses: new Set\(\) \};/.test(hook) &&
+     !/\bsetPendingDraft\((?!draft\))/.test(hook));
+  ok("discarding writes this session's edits back as the draft at once",
+     /const discardDraft = useCallback\(\(\) => \{\s+const editedHere = [\s\S]{0,200}clearDraft\(visitId\);\s+setPending\(null\);\s+if \(editedHere && latestDataRef\.current\) \{\s+writer\.edit\(visitId, latestDataRef\.current\.products, latestDataRef\.current\.responses\);\s+writer\.flush\(\);/.test(hook));
+  ok("a successful save does not replace a waiting draft with its clean copy, and writes the merged edits into it",
+     /if \(pendingRef\.current\) writer\.flush\(\);\s+else writer\.cancel\(\);\s+if \(latestDataRef\.current && !pendingRef\.current\) \{/.test(hook));
+  ok("completing does not delete a waiting draft — it is kept, to be shown read-only for the closed visit",
+     /const clearLocalDraft = useCallback\(\(\) => \{\s+writer\.cancel\(\);\s+if \(pendingRef\.current\) \{\s+writeDraft\(\{ \.\.\.pendingRef\.current, dirty: true \}\);/.test(hook));
+  eq("…which the closed visit then classifies as stranded", classifyStoredDraft({ ...oldDraft }, true), "stranded");
 }
