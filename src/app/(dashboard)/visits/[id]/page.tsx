@@ -41,7 +41,7 @@ import {
   deriveVisitProductPlan,
   deriveVisitFieldPlan,
 } from "@/lib/visit-plan";
-import { diffVisitEdits, responseSaveItems, restoreDraftResponses } from "@/lib/visit-dirty";
+import { diffVisitEdits, responseSaveItems, restoreDraftResponses, initialResponses } from "@/lib/visit-dirty";
 import {
   TemplateFieldSection,
   type FieldResponses,
@@ -844,7 +844,10 @@ export default function VisitDetailPage() {
     visitResponses.forEach((r) => {
       initial[r.field_id] = r.value;
     });
-    setResponses(initial);
+    // Merged under what is already on screen: the form shows once the
+    // template has loaded, possibly before these answers, and anything typed
+    // in between must not be replaced by the server copy arriving late.
+    setResponses((onScreen) => initialResponses(initial, onScreen) as FieldResponses);
     respInitialized.current = true;
   }, [template?.fields, visitResponses, responsesLoading]);
 
@@ -950,7 +953,9 @@ export default function VisitDetailPage() {
 
   /** Restore the pending draft into page state, then clear the prompt. */
   function handleRestoreDraft() {
-    if (!pendingDraft) return;
+    // Only once the server's answers are on screen (the prompt is not shown
+    // before): restoring earlier would be undone when they arrive.
+    if (!pendingDraft || !editsReady) return;
     setEntries(pendingDraft.products as Entries);
     // Merged, not replaced: keeps answers newer than the draft, including a
     // photo the upload queue sent after the draft was written.
@@ -1123,7 +1128,9 @@ export default function VisitDetailPage() {
       )}
 
       {/* ── Draft restore prompt ─────────────────────────────────────────── */}
-      {pendingDraft && !isReadOnly && (
+      {/* Offered once the screen holds the server's values (editsReady): a
+          restore made before they load would be replaced when they arrive. */}
+      {pendingDraft && !isReadOnly && editsReady && (
         <RestorePromptBanner
           savedAt={pendingDraft.last_saved_locally_at}
           locale={locale}

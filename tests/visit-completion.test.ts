@@ -28,7 +28,7 @@ import {
   createCompletionGuard, noEditsSince, type CompletionCloseSource,
 } from "@/lib/visit-completion";
 import { readDraft, writeDraft, clearDraft, createDraftWriter, type VisitDraft } from "@/lib/offline-drafts";
-import { responseSaveItems, restoreDraftResponses } from "@/lib/visit-dirty";
+import { responseSaveItems, restoreDraftResponses, initialResponses } from "@/lib/visit-dirty";
 import { makeOutsideInert, KEEP_LIVE_ATTR, type InertNode } from "@/lib/inert-outside";
 import { saveVisitResponses, ResponsesNotStoredError } from "@/services/visit-responses";
 import { useCompleteVisit, useStartVisit } from "@/hooks/use-visits";
@@ -292,7 +292,7 @@ console.log("5) wiring");
   ok("Sync now is a button the user presses — nothing calls handleSave on reconnect",
      (page.match(/^(?!\s*(\/\*|\*|\/\/)).*handleSave.*$/gm) ?? []).map((l) => l.trim()).sort().join(" | ") ===
      ["async function handleSave(): Promise<boolean> {", "onClick={() => { if (!showComplete) handleSave(); }}", "onSaveNow={handleSave}", "onSync={() => { void handleSave(); }}"].sort().join(" | "));
-  ok("the restore prompt is still only for an open visit", page.includes("{pendingDraft && !isReadOnly && ("));
+  ok("the restore prompt is still only for an open visit", page.includes("{pendingDraft && !isReadOnly && editsReady && ("));
   ok("edits are tracked once the product rows have loaded, even when there are none",
      page.includes("if (prodInitialized.current || productsLoading || !visit) return;") &&
      !page.includes("if (visitProducts.length > 0 && !prodInitialized.current)") &&
@@ -788,4 +788,92 @@ console.log("8) toasts over a dialog, a photo uploaded after the draft, values a
   queueResultFor(TABLE, { data: [{ field_id: "n", value: 4 }], error: null });
   ok("a real difference still fails the save",
      (await caught(saveVisitResponses("v-1", "t-1", [{ field_id: "n", value: 5 }]))) instanceof ResponsesNotStoredError);
+}
+
+// ── 9) The server's answers arriving after the screen is usable ─────────────
+// The visit page copies the server's answers into its edit state once, when
+// the template and the answers have both loaded (respInitialized). The restore
+// prompt and the form can be on screen before that. Driven here with a server
+// response held back by the test, through the page's own rules: the copy
+// (initialResponses) and the restore (restoreDraftResponses), and the gate on
+// the prompt (editsReady), checked in the page's source.
+console.log("9) the server's answers arriving late");
+{
+  type Deferred<T> = { promise: Promise<T>; resolve: (v: T) => void };
+  const deferred = <T,>(): Deferred<T> => { let resolve!: (v: T) => void; const promise = new Promise<T>((r) => { resolve = r; }); return { promise, resolve }; };
+  const FIELD = "f-count", OTHER = "f-note";
+
+  // The page, reduced to its edit state and the effect that copies the
+  // server's answers in. `copy` is the rule under test.
+  const page = (copy: (server: Record<string, unknown>, onScreen: Record<string, unknown>) => Record<string, unknown>) => {
+    let responses: Record<string, unknown> = {};
+    let initialized = false;
+    return {
+      get responses() { return responses; },
+      get editsReady() { return initialized; },
+      type(id: string, v: unknown) { responses = { ...responses, [id]: v }; },
+      restore(draft: Record<string, unknown>) { responses = restoreDraftResponses({ draft, draftSavedAt: "2026-10-28T09:00:00.000Z", current: responses, saved: {}, photoFieldIds: [] }); },
+      async load(server: Promise<Record<string, unknown>>) { const rows = await server; responses = copy(rows, responses); initialized = true; },
+    };
+  };
+
+  // Typing while the server's answers are still on their way.
+  {
+    const server = deferred<Record<string, unknown>>();
+    const p = page(initialResponses);
+    const loading = p.load(server.promise);
+    await tick(5);
+    p.type(FIELD, 7);                                         // the form is up; the answers are not
+    server.resolve({ [FIELD]: 3, [OTHER]: "saved note" });   // they arrive late
+    await loading;
+    eq("typed before the server's answers arrived: the typed value is kept, the rest filled in",
+       p.responses, { [FIELD]: 7, [OTHER]: "saved note" });
+
+    const old = page((serverRows) => ({ ...serverRows }));   // the copy as it was
+    const loadingOld = old.load(Promise.resolve({ [FIELD]: 3 }).then(async (r) => { await tick(5); return r; }));
+    old.type(FIELD, 7);
+    await loadingOld;
+    eq("(the copy as it was replaced it with the server's value)", old.responses, { [FIELD]: 3 });
+  }
+
+  // Restoring while the server's answers are still on their way.
+  {
+    const server = deferred<Record<string, unknown>>();
+    const p = page(initialResponses);
+    const loading = p.load(server.promise);
+    await tick(5);
+    eq("before the server's answers arrive, the restore is not offered (editsReady is false)", p.editsReady, false);
+    server.resolve({ [FIELD]: 3, [OTHER]: "saved note" });
+    await loading;
+    eq("once they have, it is", p.editsReady, true);
+    p.restore({ [FIELD]: 12 });
+    eq("…and restoring then keeps the draft's value, with nothing left to overwrite it", p.responses, { [FIELD]: 12, [OTHER]: "saved note" });
+
+    const old = page((serverRows) => ({ ...serverRows }));
+    const slow = deferred<Record<string, unknown>>();
+    const loadingOld = old.load(slow.promise);
+    old.restore({ [FIELD]: 12 });                            // what an ungated prompt allowed
+    slow.resolve({ [FIELD]: 3 });
+    await loadingOld;
+    eq("(restored before they arrived, the draft's value used to be replaced)", old.responses, { [FIELD]: 3 });
+  }
+
+  eq("initialResponses: on-screen values win, server values fill the rest",
+     initialResponses({ a: 1, b: 2 }, { b: 20, c: null }), { a: 1, b: 20, c: null });
+
+  // The page's wiring.
+  const src  = readFileSync(join(import.meta.dirname, "..", "src", "app", "(dashboard)", "visits", "[id]", "page.tsx"), "utf8");
+  ok("the copy of the server's answers merges under what is on screen",
+     src.includes("setResponses((onScreen) => initialResponses(initial, onScreen) as FieldResponses);") && !/\n\s+setResponses\(initial\);/.test(src));
+  ok("the restore prompt is shown only once the server's values are on screen",
+     src.includes("{pendingDraft && !isReadOnly && editsReady && ("));
+  ok("…and the restore handler refuses earlier too",
+     /function handleRestoreDraft\(\) \{[\s\S]{0,250}if \(!pendingDraft \|\| !editsReady\) return;/.test(src));
+  ok("editsReady waits for the server's answers whenever the visit has a template",
+     src.includes("const editsReady = prodInitialized.current && (!templateId || respInitialized.current);"));
+  ok("products: rows (and so their inputs) render only after they load, and the copy runs on that load — nothing to type into before it",
+     src.includes("{!productsLoading && visitProducts.length > 0 && (") &&
+     src.includes("if (prodInitialized.current || productsLoading || !visit) return;"));
+  ok("the form itself can show before the server's answers (it waits only for the template) — why the merge is needed",
+     /\{templateId && template && template\.fields\.length > 0 && \(\s+<TemplateFieldSection/.test(src) && !/responsesLoading && \(\s+<TemplateFieldSection/.test(src));
 }

@@ -163,6 +163,21 @@ export function responseSaveItems(
   return items;
 }
 
+/**
+ * The screen's answers once the server's have loaded: the server's, with
+ * whatever is already on screen on top.
+ *
+ * The form can show before the server's answers arrive (it needs only the
+ * template, which may load first). Copying the server's answers in used to
+ * replace the screen's state, discarding anything typed in that window.
+ */
+export function initialResponses(
+  server:   Record<string, unknown>,
+  onScreen: Record<string, unknown>,
+): Record<string, unknown> {
+  return { ...server, ...onScreen };
+}
+
 /** When a photo answer was uploaded, if it says (PhotoMeta.uploaded_at). */
 function photoUploadedAt(v: unknown): number | null {
   if (typeof v !== "object" || v === null || typeof (v as { path?: unknown }).path !== "string") return null;
